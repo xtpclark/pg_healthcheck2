@@ -1,4 +1,19 @@
 import json
+from decimal import Decimal # Import Decimal
+from datetime import datetime # Import datetime
+
+# Helper function to convert Decimal and datetime objects to JSON-serializable types recursively
+def convert_to_json_serializable(obj):
+    if isinstance(obj, Decimal):
+        return float(obj) # Convert Decimal to float
+    elif isinstance(obj, datetime):
+        return obj.isoformat() # Convert datetime to ISO 8601 string
+    elif isinstance(obj, dict):
+        return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_json_serializable(elem) for elem in obj]
+    else:
+        return obj
 
 def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
@@ -14,15 +29,16 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
         adoc_content.append("----")
 
     # --- Step 1: Construct the AI Prompt ---
-    # This is a crucial step. The quality of AI recommendations depends heavily
-    # on how well the input data is presented in the prompt.
-    
     prompt_parts = []
     prompt_parts.append("Analyze the following PostgreSQL health check report data and provide actionable, prioritized recommendations.\n\n")
     prompt_parts.append("--- PostgreSQL Health Check Findings ---\n\n")
 
+    # Prepare findings for prompt by converting non-JSON-serializable types
+    # Create a copy to avoid modifying the original all_structured_findings in place
+    findings_for_prompt = convert_to_json_serializable(all_structured_findings)
+
     # Iterate through all collected structured findings
-    for module_name, module_findings in all_structured_findings.items():
+    for module_name, module_findings in findings_for_prompt.items():
         prompt_parts.append(f"** Module: {module_name.replace('_', ' ').title()} **\n")
         
         if module_findings.get("status") == "failed_to_load":
@@ -33,7 +49,7 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
             prompt_parts.append(f"  Status: Not Applicable. Reason: {module_findings.get('reason', 'N/A')}\n")
         elif module_findings.get("status") == "error":
             prompt_parts.append(f"  Status: Query Error. Details: {json.dumps(module_findings.get('details', {}), indent=2)}\n")
-        elif module_findings.get("status") == "success" and module_findings.get("data"):
+        elif module_findings.get("status") == "success" and module_findings.get("data") is not None: # Check for None explicitly
             # For successful data, dump the raw JSON data
             prompt_parts.append(f"  Data:\n{json.dumps(module_findings['data'], indent=2)}\n")
         else:
@@ -46,24 +62,6 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
     structured_data["prompt_sent"] = full_prompt # Store the prompt that was sent
 
     # --- Step 2: Make the AI API Call (Placeholder) ---
-    # In a real Canvas environment, you would use the 'fetch' API as per guidelines.
-    # For a Python script, you would use a library like 'requests' or 'google-generativeai'.
-    # Since this is a local Python script, we'll simulate the AI response.
-
-    # Example of how the fetch call would look in a web-based JS environment (conceptual for Python):
-    # let chatHistory = [];
-    # chatHistory.push({ role: "user", parts: [{ text: full_prompt }] });
-    # const payload = { contents: chatHistory };
-    # const apiKey = ""; // Canvas will provide this for JS fetch
-    # const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-    # const response = await fetch(apiUrl, {
-    #            method: 'POST',
-    #            headers: { 'Content-Type': 'application/json' },
-    #            body: JSON.stringify(payload)
-    #        });
-    # const result = response.json();
-    # ai_recommendations = result.candidates[0].content.parts[0].text;
-
     # For now, simulate AI response for local testing:
     ai_recommendations = """
     **Prioritized Recommendations:**
