@@ -5,15 +5,29 @@ import psycopg2
 import csv
 import subprocess
 import importlib
+import inspect # Import inspect to check function signatures
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime # Import datetime type
 from report_config import REPORT_SECTIONS
+import json # Import json for structured data output
+from decimal import Decimal # Import Decimal type
+
+# Custom JSON Encoder to handle Decimal and datetime objects
+class CustomJsonEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj) # Convert Decimal to float
+        if isinstance(obj, datetime):
+            return obj.isoformat() # Convert datetime to ISO 8601 string
+        # Let the base class default method raise the TypeError for other types
+        return json.JSONEncoder.default(self, obj)
 
 class HealthCheck:
     def __init__(self, config_file):
         self.settings = self.load_settings(config_file)
         self.paths = self.get_paths()
         self.adoc_content = []
+        self.all_structured_findings = {} # New attribute to store structured data
         self.conn = None
         self.cursor = None
 
@@ -61,8 +75,11 @@ class HealthCheck:
             print(f"Error connecting to database: {e}")
             sys.exit(1)
 
-    def execute_query(self, query, params=None, is_check=False):
-        """Execute a query and return formatted results."""
+    def execute_query(self, query, params=None, is_check=False, return_raw=False):
+        """
+        Execute a query and return formatted results.
+        If return_raw is True, returns a tuple (formatted_string, list_of_dicts).
+        """
         try:
             if params is not None:
                 # Case 1: Named parameters (params is a dict and query contains named placeholders)
@@ -72,32 +89,48 @@ class HealthCheck:
                 elif isinstance(params, (list, tuple)):
                     self.cursor.execute(query, params)
                 # Case 3: params is not None, but not a valid dict for named params AND not a sequence.
-                # This catches cases like:
-                #   - params is a dict, but the query *does not* have named placeholders (e.g., SELECT * FROM foo; params={'a': 1})
-                #   - params is some other unexpected type (e.g., an integer, a string).
                 else:
                     print(f"Warning: Invalid or unhandled params type {type(params)} for query: {query[:100]}... Executing query without parameters.")
-                    # In this case, we explicitly do NOT pass params to avoid TypeError if params is a dict without named placeholders.
-                    self.cursor.execute(query) # THIS IS THE CORRECTED LINE: NO 'params' ARGUMENT
+                    self.cursor.execute(query) 
             # Case 4: params is None, execute query without parameters.
             else:
                 self.cursor.execute(query)
 
             if is_check:
-                return str(self.cursor.fetchone()[0]) if self.cursor.rowcount > 0 else ""
+                result_value = str(self.cursor.fetchone()[0]) if self.cursor.rowcount > 0 else ""
+                if return_raw:
+                    # For is_check, raw is just the value
+                    return result_value, result_value 
+                return result_value
+            
             columns = [desc[0] for desc in self.cursor.description]
             results = self.cursor.fetchall()
+
+            # Prepare raw results as a list of dictionaries
+            raw_results_dicts = [dict(zip(columns, row)) for row in results]
+
             if not results:
-                return "[NOTE]\n====\nNo results returned.\n====\n"
+                formatted_string = "[NOTE]\n====\nNo results returned.\n====\n"
+                if return_raw:
+                    return formatted_string, [] # Return empty list for raw if no results
+                return formatted_string
+            
             table = ['|===', '|' + '|'.join(columns)]
             for row in results:
                 table.append('|' + '|'.join(str(v) for v in row))
             table.append('|===')
-            return '\n'.join(table)
+            formatted_string = '\n'.join(table)
+
+            if return_raw:
+                return formatted_string, raw_results_dicts
+            return formatted_string
         except psycopg2.Error as e:
             self.conn.rollback()
-            return f"[ERROR]\n====\nQuery failed: {e}\n====\n"
-
+            error_string = f"[ERROR]\n====\nQuery failed: {e}\n====\n"
+            if return_raw:
+                # For errors, store the error message and the query that failed
+                return error_string, {"error": str(e), "query": query} 
+            return error_string
 
     def execute_pgbouncer(self, command):
         """Execute a PgBouncer command."""
@@ -119,13 +152,41 @@ class HealthCheck:
             return f"[ERROR]\n====\nComments file {comments_file} not found.\n====\n"
 
     def run_module(self, module_name, function_name):
-        """Run a module function and return AsciiDoc content."""
+        """
+        Run a module function and handle its return.
+        Supports modules returning (adoc_content, structured_data) or just adoc_content.
+        """
         try:
             module = importlib.import_module(f"modules.{module_name}")
             func = getattr(module, function_name)
-            return func(self.cursor, self.settings, self.execute_query, self.execute_pgbouncer)
+            
+            # Inspect the function signature to determine if it accepts all_structured_findings
+            func_signature = inspect.signature(func)
+            
+            # Check if 'all_structured_findings' is a parameter in the function's signature
+            if 'all_structured_findings' in func_signature.parameters:
+                module_output = func(self.cursor, self.settings, self.execute_query, self.execute_pgbouncer, self.all_structured_findings)
+            else:
+                # For modules not yet refactored to accept all_structured_findings
+                module_output = func(self.cursor, self.settings, self.execute_query, self.execute_pgbouncer)
+
+            # Handle the module's return: tuple (adoc_string, structured_data) or just adoc_string
+            if isinstance(module_output, tuple) and len(module_output) == 2:
+                adoc_content, structured_data = module_output
+                self.all_structured_findings[module_name] = {"status": "success", "data": structured_data}
+                return adoc_content
+            else:
+                self.all_structured_findings[module_name] = {"status": "warning", "note": "Module not yet refactored for structured output."}
+                return module_output
         except (ImportError, AttributeError) as e:
-            return f"[ERROR]\n====\nModule {module_name}.{function_name} failed: {e}\n====\n"
+            error_msg = f"[ERROR]\n====\nModule {module_name}.{function_name} failed: {e}\n====\n"
+            self.all_structured_findings[module_name] = {"status": "error", "error": str(e), "details": "Failed to load or execute module."}
+            return error_msg
+        except Exception as e: # Catch any other unexpected errors from the module
+            error_msg = f"[ERROR]\n====\nModule {module_name}.{function_name} failed unexpectedly: {e}\n====\n"
+            self.all_structured_findings[module_name] = {"status": "error", "error": str(e), "details": "Unexpected error during module execution."}
+            return error_msg
+
 
     def run_report(self):
         """Run the report generation process."""
@@ -139,6 +200,7 @@ class HealthCheck:
                 if action['type'] == 'module':
                     if action.get('condition') and not self.settings.get(action['condition']['var'].lower()) == action['condition']['value']:
                         continue
+                    # run_module now handles passing self.all_structured_findings conditionally
                     content = self.run_module(action['module'], action['function'])
                     self.adoc_content.append({'type': 'text', 'content': content})
                 elif action['type'] == 'comments':
@@ -146,6 +208,18 @@ class HealthCheck:
                     self.adoc_content.append({'type': 'text', 'content': f"== {action['file'].replace('.txt', '').title()}\n{content}\n"})
                 elif action['type'] == 'image':
                     self.adoc_content.append({'type': 'text', 'content': f"image::{self.paths['adoc_image']}/{action['file']}[{action['alt']},300,300]"})
+        
+        # After all modules run, you can save self.all_structured_findings here
+        # For example, save to a JSON file for later AI analysis
+        structured_output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
+        try:
+            # Use the custom encoder here
+            with open(structured_output_path, 'w') as f:
+                json.dump(self.all_structured_findings, f, indent=2, cls=CustomJsonEncoder)
+            print(f"\nStructured health check findings saved to: {structured_output_path}")
+        except Exception as e:
+            print(f"\nError saving structured findings: {e}")
+
         self.conn.close()
 
     def write_adoc(self, output_file):

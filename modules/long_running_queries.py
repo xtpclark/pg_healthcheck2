@@ -1,8 +1,9 @@
-def run_long_running_queries(cursor, settings, execute_query, execute_pgbouncer):
+def run_long_running_queries(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
     Identifies long-running queries that may contribute to performance issues.
     """
-    content = ["=== Long-Running Queries", "Identifies long-running queries that may contribute to performance issues."]
+    adoc_content = ["=== Long-Running Queries", "Identifies long-running queries that may contribute to performance issues."]
+    structured_data = {} # Dictionary to hold structured findings for this module
     
     # Define the base query string with named parameters, including the autovacuum pattern
     long_running_query_string = """
@@ -16,18 +17,24 @@ def run_long_running_queries(cursor, settings, execute_query, execute_pgbouncer)
     """
 
     if settings['show_qry'] == 'true':
-        content.append("Long-running queries:")
-        content.append("[,sql]\n----")
-        content.append(long_running_query_string)
-        content.append("----")
+        adoc_content.append("Long-running queries:")
+        adoc_content.append("[,sql]\n----")
+        adoc_content.append(long_running_query_string)
+        adoc_content.append("----")
 
     queries = [
-        ("Long-Running Queries", long_running_query_string, True)
+        (
+            "Long-Running Queries", 
+            long_running_query_string, 
+            True,
+            "long_running_queries_list" # Data key
+        )
     ]
 
-    for title, query, condition in queries:
+    for title, query, condition, data_key in queries:
         if not condition:
-            content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====")
+            adoc_content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====\n")
+            structured_data[data_key] = {"status": "not_applicable", "reason": "Query not applicable due to condition."}
             continue
         
         # Standardized parameter passing pattern:
@@ -38,16 +45,20 @@ def run_long_running_queries(cursor, settings, execute_query, execute_pgbouncer)
             'autovacuum_pattern': 'autovacuum:%' # Pass the pattern as a named parameter
         }
         
-        result = execute_query(query, params=params_for_query)
+        formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
         
-        if "[ERROR]" in result or "[NOTE]" in result:
-            content.append(f"{title}\n{result}")
+        if "[ERROR]" in formatted_result:
+            adoc_content.append(f"{title}\n{formatted_result}")
+            structured_data[data_key] = {"status": "error", "details": raw_result}
         else:
-            content.append(title)
-            content.append(result)
+            adoc_content.append(title)
+            adoc_content.append(formatted_result)
+            structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
     
-    content.append("[TIP]\n====\nLong-running queries (duration > 1 minute) may cause CPU or I/O bottlenecks. Investigate and optimize these queries, or terminate them if necessary (e.g., using pg_terminate_backend(pid)). For Aurora, monitor long-running queries via CloudWatch and consider query optimization or scaling.\n====")
+    adoc_content.append("[TIP]\n====\nLong-running queries (duration > 1 minute) may cause CPU or I/O bottlenecks. Investigate and optimize these queries, or terminate them if necessary (e.g., using pg_terminate_backend(pid)). For Aurora, monitor long-running queries via CloudWatch and consider query optimization or scaling.\n====")
     if settings['is_aurora'] == 'true':
-        content.append("[NOTE]\n====\nAWS RDS Aurora can experience CPU saturation from long-running queries. Use CloudWatch to set alerts for high CPUUsage or QueryLatency.\n====")
+        adoc_content.append("[NOTE]\n====\nAWS RDS Aurora can experience CPU saturation from long-running queries. Use CloudWatch to set alerts for high CPUUsage or QueryLatency.\n====")
     
-    return "\n".join(content)
+    # Return both formatted AsciiDoc content and structured data
+    return "\n".join(adoc_content), structured_data
+

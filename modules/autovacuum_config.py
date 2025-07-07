@@ -1,15 +1,16 @@
-def run_autovacuum_config(cursor, settings, execute_query, execute_pgbouncer):
+def run_autovacuum_config(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
     Analyzes PostgreSQL autovacuum configuration settings to ensure optimal
     performance and bloat prevention.
     """
-    content = ["=== Autovacuum Configuration Analysis", "Analyzes key autovacuum settings to ensure efficient bloat management and performance."]
+    adoc_content = ["=== Autovacuum Configuration Analysis", "Analyzes key autovacuum settings to ensure efficient bloat management and performance."]
+    structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':
-        content.append("Autovacuum configuration queries:")
-        content.append("[,sql]\n----")
-        content.append("SELECT name, setting, unit, short_desc FROM pg_settings WHERE name LIKE 'autovacuum_%' ORDER BY name;")
-        content.append("""
+        adoc_content.append("Autovacuum configuration queries:")
+        adoc_content.append("[,sql]\n----")
+        adoc_content.append("SELECT name, setting, unit, short_desc FROM pg_settings WHERE name LIKE 'autovacuum_%' ORDER BY name;")
+        adoc_content.append("""
 SELECT
     n.nspname AS schema_name,
     c.relname AS table_name,
@@ -48,13 +49,14 @@ ORDER BY
     schema_name, table_name
 LIMIT %(limit)s;
 """)
-        content.append("----")
+        adoc_content.append("----")
 
     queries = [
         (
             "Global Autovacuum Settings", 
             "SELECT name, setting, unit, short_desc FROM pg_settings WHERE name LIKE 'autovacuum_%' ORDER BY name;", 
-            True
+            True,
+            "global_autovacuum_settings" # Data key
         ),
         (
             "Tables with Custom Autovacuum Settings (or explicitly disabled)", 
@@ -97,27 +99,31 @@ ORDER BY
     schema_name, table_name
 LIMIT %(limit)s;
 """, 
-            True
+            True,
+            "custom_table_autovacuum_settings" # Data key
         )
     ]
 
-    for title, query, condition in queries:
+    for title, query, condition, data_key in queries:
         if not condition:
-            content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====\n")
+            adoc_content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====\n")
+            structured_data[data_key] = {"status": "not_applicable", "reason": "Query not applicable due to condition."}
             continue
         
         # Standardized parameter passing pattern:
         params_for_query = {'limit': settings['row_limit']} if '%(limit)s' in query else None
         
-        result = execute_query(query, params=params_for_query)
+        formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
         
-        if "[ERROR]" in result or "[NOTE]" in result:
-            content.append(f"{title}\n{result}")
+        if "[ERROR]" in formatted_result:
+            adoc_content.append(f"{title}\n{formatted_result}")
+            structured_data[data_key] = {"status": "error", "details": raw_result}
         else:
-            content.append(title)
-            content.append(result)
+            adoc_content.append(title)
+            adoc_content.append(formatted_result)
+            structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
     
-    content.append("[TIP]\n====\n"
+    adoc_content.append("[TIP]\n====\n"
                    "Autovacuum is critical for maintaining database health and performance by reclaiming dead tuples and preventing transaction ID wraparound. "
                    "Ensure `autovacuum` is `on` globally. "
                    "Review `autovacuum_vacuum_scale_factor` and `autovacuum_analyze_scale_factor` for appropriate thresholds. "
@@ -126,11 +132,12 @@ LIMIT %(limit)s;
                    "For Aurora, autovacuum parameters are managed via the DB cluster parameter group.\n"
                    "====\n")
     if settings['is_aurora'] == 'true':
-        content.append("[NOTE]\n====\n"
+        adoc_content.append("[NOTE]\n====\n"
                        "AWS RDS Aurora handles autovacuum internally, but you can still tune parameters like `autovacuum_vacuum_cost_delay` via the DB cluster parameter group. "
                        "Monitoring `FreeStorageSpace` and `CPUUtilization` in CloudWatch can help assess autovacuum effectiveness. "
                        "Ensure your autovacuum settings are optimized for your workload to prevent performance degradation.\n"
                        "====\n")
     
-    return "\n".join(content)
+    # Return both formatted AsciiDoc content and structured data
+    return "\n".join(adoc_content), structured_data
 

@@ -102,7 +102,7 @@ REPORT_SECTIONS = [
     {
         "title": "Connections and Security for db: ${PGDB}",
         "actions": [
-    #        {"type": "module", "module": "users", "function": "run_users"},
+            {"type": "module", "module": "users", "function": "run_users"},
             {"type": "module", "module": "stat_ssl", "function": "run_stat_ssl"},
             {"type": "module", "module": "security_audit", "function": "run_security_audit"},
             {"type": "module", "module": "connection_metrics", "function": "run_connection_metrics"},

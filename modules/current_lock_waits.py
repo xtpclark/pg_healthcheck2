@@ -1,9 +1,10 @@
-def run_current_lock_waits(cursor, settings, execute_query, execute_pgbouncer):
+def run_current_lock_waits(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
     Identifies current sessions that are waiting for locks, indicating
     potential contention or deadlock situations.
     """
-    content = ["=== Current Lock Waits", "Identifies current sessions waiting for locks."]
+    adoc_content = ["=== Current Lock Waits", "Identifies current sessions waiting for locks."]
+    structured_data = {} # Dictionary to hold structured findings for this module
     
     # Modified query to join with pg_locks for lock details
     current_lock_waits_query = """
@@ -27,10 +28,10 @@ def run_current_lock_waits(cursor, settings, execute_query, execute_pgbouncer):
     """
 
     if settings['show_qry'] == 'true':
-        content.append("Current lock waits query:")
-        content.append("[,sql]\n----")
-        content.append(current_lock_waits_query)
-        content.append("----")
+        adoc_content.append("Current lock waits query:")
+        adoc_content.append("[,sql]\n----")
+        adoc_content.append(current_lock_waits_query)
+        adoc_content.append("----")
 
     # Standardized parameter passing pattern:
     params_for_query = {
@@ -38,27 +39,29 @@ def run_current_lock_waits(cursor, settings, execute_query, execute_pgbouncer):
         'limit': settings['row_limit'],
         'autovacuum_pattern': 'autovacuum:%' # Pass the pattern as a named parameter
     }
-
-    result = execute_query(current_lock_waits_query, params=params_for_query)
     
-    if "[ERROR]" in result or "[NOTE]" in result:
-        content.append(f"Current Lock Waits\n{result}")
+    formatted_result, raw_result = execute_query(current_lock_waits_query, params=params_for_query, return_raw=True)
+    
+    if "[ERROR]" in formatted_result:
+        adoc_content.append(f"Current Lock Waits\n{formatted_result}")
+        structured_data["current_lock_waits"] = {"status": "error", "details": raw_result}
     else:
-        content.append("Current Lock Waits")
-        content.append(result)
+        adoc_content.append("Current Lock Waits")
+        adoc_content.append(formatted_result)
+        structured_data["current_lock_waits"] = {"status": "success", "data": raw_result}
     
-    content.append("[TIP]\n====\n"
+    adoc_content.append("[TIP]\n====\n"
                    "Sessions in a 'waiting' state for a lock indicate active contention. "
                    "Investigate the `query` of the waiting session and the session holding the lock (which will have `pl.granted = true` for the same lock). "
                    "Optimize conflicting queries with better indexing, reduce transaction isolation levels if appropriate, or implement proper transaction management. "
                    "Persistent lock waits can degrade performance and lead to deadlocks.\n"
                    "====\n")
     if settings['is_aurora'] == 'true':
-        content.append("[NOTE]\n====\n"
+        adoc_content.append("[NOTE]\n====\n"
                        "AWS RDS Aurora provides enhanced monitoring metrics for lock contention. "
                        "Use CloudWatch to set alarms for high `LockWaits` or `Deadlocks` metrics. "
                        "Query optimization remains the primary method to reduce lock contention in Aurora.\n"
                        "====\n")
     
-    return "\n".join(content)
-
+    # Return both formatted AsciiDoc content and structured data
+    return "\n".join(adoc_content), structured_data

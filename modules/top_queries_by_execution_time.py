@@ -1,9 +1,10 @@
-def run_top_queries_by_execution_time(cursor, settings, execute_query, execute_pgbouncer):
+def run_top_queries_by_execution_time(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
     Analyzes top queries by total execution time from pg_stat_statements
     to identify resource-intensive queries.
     """
-    content = ["=== Top Queries by Execution Time", "Identifies resource-intensive queries based on total execution time."]
+    adoc_content = ["=== Top Queries by Execution Time", "Identifies resource-intensive queries based on total execution time."]
+    structured_data = {} # Dictionary to hold structured findings for this module
     
     # Define the query string
     top_queries_query = """
@@ -14,37 +15,41 @@ def run_top_queries_by_execution_time(cursor, settings, execute_query, execute_p
     """
 
     if settings['show_qry'] == 'true':
-        content.append("Top queries by execution time query:")
-        content.append("[,sql]\n----")
-        content.append(top_queries_query)
-        content.append("----")
+        adoc_content.append("Top queries by execution time query:")
+        adoc_content.append("[,sql]\n----")
+        adoc_content.append(top_queries_query)
+        adoc_content.append("----")
 
     # Check condition for pg_stat_statements
     condition = settings['has_pgstat'] == 't'
 
     if not condition:
-        content.append("[NOTE]\n====\npg_stat_statements extension is not installed or enabled. Install pg_stat_statements to analyze top queries.\n====\n")
+        note_msg = "pg_stat_statements extension is not installed or enabled. Install pg_stat_statements to analyze top queries."
+        adoc_content.append(f"[NOTE]\n====\n{note_msg}\n====\n")
+        structured_data["top_queries"] = {"status": "not_applicable", "reason": note_msg}
     else:
         # Standardized parameter passing pattern:
         params_for_query = {'limit': settings['row_limit']}
-        result = execute_query(top_queries_query, params=params_for_query)
+        formatted_result, raw_result = execute_query(top_queries_query, params=params_for_query, return_raw=True)
         
-        if "[ERROR]" in result or "[NOTE]" in result:
-            content.append(f"Top Queries by Execution Time\n{result}")
+        if "[ERROR]" in formatted_result:
+            adoc_content.append(f"Top Queries by Execution Time\n{formatted_result}")
+            structured_data["top_queries"] = {"status": "error", "details": raw_result}
         else:
-            content.append("Top Queries by Execution Time")
-            content.append(result)
+            adoc_content.append("Top Queries by Execution Time")
+            adoc_content.append(formatted_result)
+            structured_data["top_queries"] = {"status": "success", "data": raw_result}
     
-    content.append("[TIP]\n====\n"
+    adoc_content.append("[TIP]\n====\n"
                    "Queries with high `total_exec_time` or `mean_exec_time` are consuming significant database resources. "
                    "Investigate these queries for optimization opportunities, such as adding appropriate indexes, rewriting inefficient parts, or adjusting application logic. "
                    "For Aurora, optimizing these queries directly reduces `CPUUtilization` and improves overall performance.\n"
                    "====\n")
     if settings['is_aurora'] == 'true':
-        content.append("[NOTE]\n====\n"
+        adoc_content.append("[NOTE]\n====\n"
                        "AWS RDS Aurora integrates `pg_stat_statements` for detailed query performance monitoring. "
                        "Use CloudWatch to correlate high `CPUUtilization` or `DatabaseConnections` with specific long-running or frequently executed queries identified here.\n"
                        "====\n")
     
-    return "\n".join(content)
-
+    # Return both formatted AsciiDoc content and structured data
+    return "\n".join(adoc_content), structured_data
