@@ -1,0 +1,26 @@
+host: 192.168.1.30
+port: 5432
+database: your_db
+user: postgres
+password: postgres
+company_name: My Test Co
+report_title: Test Co Health Check
+load_dba_views: true
+create_history_db: true
+show_qry: true
+row_limit: 5
+logo_image: logo.svg[900,900]
+run_osinfo: true
+run_settings: true
+show_avail_ext: true
+statio_type: user
+pgbouncer_cmd: psql -h localhost -p 6432 -U pgbouncer_user pgbouncer
+is_aurora: false
+background: |
+  == Background
+  Placeholder statement about the environment, customer, etc
+
+  [TIP]
+  ====
+  Monitor CPUUsage and WriteIOPS in AWS CloudWatch to identify saturation patterns. Consider scaling up or optimizing queries.
+  ====
