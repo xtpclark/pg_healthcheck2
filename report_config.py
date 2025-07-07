@@ -68,7 +68,10 @@ REPORT_SECTIONS = [
     {
         "title": "Index Analysis for db: ${PGDB}",
         "actions": [
-            {"type": "module", "module": "idx_queries", "function": "run_idx_queries"},
+            {"type": "module", "module": "unused_idx", "function": "run_unused_idx"},
+            {"type": "module", "module": "dupe_idx", "function": "run_dupe_idx"},
+            {"type": "module", "module": "missing_idx", "function": "run_missing_idx"},
+            {"type": "module", "module": "large_idx", "function": "run_large_idx"},
             {"type": "module", "module": "idx_brin", "function": "run_brin_idx"},
             {"type": "comments", "file": "indexes.txt"}
         ]
@@ -82,21 +85,24 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "partitioned_tbl", "function": "run_list_part"},
             {"type": "module", "module": "n_tuples_in", "function": "run_tuples_in"},
             {"type": "module", "module": "table_metrics", "function": "run_table_metrics"},
+            {"type": "module", "module": "foreign_key_audit", "function": "run_foreign_key_audit"},
             {"type": "comments", "file": "tables.txt"}
         ]
     },
     {
         "title": "Query Analysis",
         "actions": [
-            {"type": "module", "module": "section_query_analysis", "function": "run_query_analysis"},
+            {"type": "module", "module": "top_queries_by_execution_time", "function": "run_top_queries_by_execution_time"},
+            {"type": "module", "module": "active_query_states", "function": "run_active_query_states"},
             {"type": "module", "module": "long_running_queries", "function": "run_long_running_queries"},
-            {"type": "module", "module": "deadlocks", "function": "run_deadlocks"}
+            {"type": "module", "module": "lock_wait_config", "function": "run_lock_wait_config"},
+            {"type": "module", "module": "current_lock_waits", "function": "run_current_lock_waits"}
         ]
     },
     {
         "title": "Connections and Security for db: ${PGDB}",
         "actions": [
-            {"type": "module", "module": "users", "function": "run_users"},
+    #        {"type": "module", "module": "users", "function": "run_users"},
             {"type": "module", "module": "stat_ssl", "function": "run_stat_ssl"},
             {"type": "module", "module": "security_audit", "function": "run_security_audit"},
             {"type": "module", "module": "connection_metrics", "function": "run_connection_metrics"},

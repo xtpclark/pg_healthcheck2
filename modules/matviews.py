@@ -12,6 +12,10 @@ def run_matview(cursor, settings, execute_query, execute_pgbouncer):
         content.append("SELECT mvname, age(relfrozenxid) AS xid_age, last_refresh FROM pg_stat_matviews ORDER BY xid_age DESC LIMIT %(limit)s;")
         content.append("----")
 
+    # Check if pg_stat_matviews exists before attempting to query it
+    chk_pg_stat_matviews_query = "SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'pg_stat_matviews' AND relkind = 'v');"
+    pg_stat_matviews_exists = execute_query(chk_pg_stat_matviews_query, is_check=True)
+    
     queries = [
         (
             "Materialized View Sizes and Population Status", 
@@ -21,13 +25,17 @@ def run_matview(cursor, settings, execute_query, execute_pgbouncer):
         (
             "Materialized View XID Age and Last Refresh", 
             "SELECT mvname, age(relfrozenxid) AS xid_age, last_refresh FROM pg_stat_matviews ORDER BY xid_age DESC LIMIT %(limit)s;", 
-            True
+            pg_stat_matviews_exists == 't' # Condition based on existence check
         )
     ]
 
     for title, query, condition in queries:
         if not condition:
-            content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====")
+            # Provide a more specific note if pg_stat_matviews is missing
+            if "pg_stat_matviews" in query and pg_stat_matviews_exists == 'f':
+                content.append(f"{title}\n[NOTE]\n====\nQuery not applicable. The 'pg_stat_matviews' view does not exist in this PostgreSQL version or is not accessible. This view is typically available in PostgreSQL 9.4 and later.\n====\n")
+            else:
+                content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====\n")
             continue
         
         # Standardized parameter passing pattern:

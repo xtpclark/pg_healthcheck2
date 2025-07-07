@@ -17,8 +17,13 @@ def run_bgwriter(cursor, settings, execute_query, execute_pgbouncer):
         if not condition:
             content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====")
             continue
-        params = None  # No named placeholders in these queries
-        result = execute_query(query, params=params)
+        
+        # Standardized parameter passing pattern:
+        # In this module, none of the queries use named placeholders like %(limit)s or %(database)s.
+        # Therefore, params_for_query will always be None for these queries.
+        params_for_query = None 
+        result = execute_query(query, params=params_for_query)
+        
         if "[ERROR]" in result or "[NOTE]" in result:
             content.append(f"{title}\n{result}")
         else:

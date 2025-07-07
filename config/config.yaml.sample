@@ -15,6 +15,7 @@ run_settings: true
 show_avail_ext: true
 statio_type: user
 pgbouncer_cmd: psql -h localhost -p 6432 -U pgbouncer_user pgbouncer
+min_tup_ins_threshold: 500000 # Example: set your desired threshold here
 is_aurora: false
 background: |
   == Background

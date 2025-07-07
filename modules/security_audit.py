@@ -10,7 +10,7 @@ def run_security_audit(cursor, settings, execute_query, execute_pgbouncer):
         content.append("[,sql]\n----")
         content.append("SELECT rolname FROM pg_roles WHERE rolsuper = true AND rolname NOT LIKE 'pg_%';")
         content.append("SELECT rolname, rolvaliduntil FROM pg_roles WHERE rolcanlogin = true AND (rolpassword IS NULL OR rolvaliduntil IS NOT NULL) AND rolname NOT LIKE 'pg_%';")
-        content.append("SELECT grantee, privilege_type FROM information_schema.schema_privileges WHERE schema_name = 'public' AND privilege_type IN ('CREATE', 'USAGE') ORDER BY grantee, privilege_type;")
+        content.append("SELECT grantee, privilege_type FROM information_schema.usage_privileges WHERE object_schema = 'public' AND object_type = 'SCHEMA' AND privilege_type IN ('CREATE', 'USAGE') ORDER BY grantee, privilege_type;")
         content.append("SELECT name, setting, short_desc FROM pg_settings WHERE name IN ('log_connections', 'log_disconnections', 'log_statement', 'ssl', 'password_encryption', 'db_user_namespace') ORDER BY name;")
         content.append("----")
 
@@ -27,7 +27,7 @@ def run_security_audit(cursor, settings, execute_query, execute_pgbouncer):
         ),
         (
             "Public Schema Permissions", 
-            "SELECT grantee, privilege_type FROM information_schema.schema_privileges WHERE schema_name = 'public' AND privilege_type IN ('CREATE', 'USAGE') ORDER BY grantee, privilege_type;", 
+            "SELECT grantee, privilege_type FROM information_schema.usage_privileges WHERE object_schema = 'public' AND object_type = 'SCHEMA' AND privilege_type IN ('CREATE', 'USAGE') ORDER BY grantee, privilege_type;", 
             True
         ),
         (

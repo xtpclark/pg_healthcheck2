@@ -65,15 +65,24 @@ class HealthCheck:
         """Execute a query and return formatted results."""
         try:
             if params is not None:
+                # Case 1: Named parameters (params is a dict and query contains named placeholders)
                 if isinstance(params, dict) and '%(' in query:
                     self.cursor.execute(query, params)
+                # Case 2: Positional parameters (params is a list or tuple)
                 elif isinstance(params, (list, tuple)):
                     self.cursor.execute(query, params)
+                # Case 3: params is not None, but not a valid dict for named params AND not a sequence.
+                # This catches cases like:
+                #   - params is a dict, but the query *does not* have named placeholders (e.g., SELECT * FROM foo; params={'a': 1})
+                #   - params is some other unexpected type (e.g., an integer, a string).
                 else:
-                    print(f"Warning: Invalid params type {type(params)} for query: {query[:100]}... Falling back to no params.")
-                    self.cursor.execute(query)
+                    print(f"Warning: Invalid or unhandled params type {type(params)} for query: {query[:100]}... Executing query without parameters.")
+                    # In this case, we explicitly do NOT pass params to avoid TypeError if params is a dict without named placeholders.
+                    self.cursor.execute(query) # THIS IS THE CORRECTED LINE: NO 'params' ARGUMENT
+            # Case 4: params is None, execute query without parameters.
             else:
                 self.cursor.execute(query)
+
             if is_check:
                 return str(self.cursor.fetchone()[0]) if self.cursor.rowcount > 0 else ""
             columns = [desc[0] for desc in self.cursor.description]
@@ -88,6 +97,7 @@ class HealthCheck:
         except psycopg2.Error as e:
             self.conn.rollback()
             return f"[ERROR]\n====\nQuery failed: {e}\n====\n"
+
 
     def execute_pgbouncer(self, command):
         """Execute a PgBouncer command."""
