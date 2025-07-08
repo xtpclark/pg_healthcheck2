@@ -1,6 +1,7 @@
 import json
-from decimal import Decimal # Import Decimal
-from datetime import datetime # Import datetime
+from decimal import Decimal
+from datetime import datetime
+import requests # Import requests for making HTTP calls
 
 # Helper function to convert Decimal and datetime objects to JSON-serializable types recursively
 def convert_to_json_serializable(obj):
@@ -49,7 +50,7 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
             prompt_parts.append(f"  Status: Not Applicable. Reason: {module_findings.get('reason', 'N/A')}\n")
         elif module_findings.get("status") == "error":
             prompt_parts.append(f"  Status: Query Error. Details: {json.dumps(module_findings.get('details', {}), indent=2)}\n")
-        elif module_findings.get("status") == "success" and module_findings.get("data") is not None: # Check for None explicitly
+        elif module_findings.get("status") == "success" and module_findings.get("data") is not None:
             # For successful data, dump the raw JSON data
             prompt_parts.append(f"  Data:\n{json.dumps(module_findings['data'], indent=2)}\n")
         else:
@@ -61,35 +62,59 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
     full_prompt = "".join(prompt_parts)
     structured_data["prompt_sent"] = full_prompt # Store the prompt that was sent
 
-    # --- Step 2: Make the AI API Call (Placeholder) ---
-    # For now, simulate AI response for local testing:
-    ai_recommendations = """
-    **Prioritized Recommendations:**
+    # --- Step 2: Make the AI API Call ---
+    # Retrieve generic AI settings from the 'settings' dictionary
+    API_KEY = settings.get('ai_api_key', '')
+    AI_USER = settings.get('ai_user', 'anonymous')
+    AI_ENDPOINT = settings.get('ai_endpoint', 'https://generativelanguage.googleapis.com/v1beta/models/') # Default for Gemini
+    AI_MODEL = settings.get('ai_model', 'gemini-2.0-flash') # Default model
 
-    1.  **Enable `pg_stat_statements`**:
-        * **Importance**: Critical for detailed query performance analysis. Without it, sections like "Top CPU-Intensive Queries" and "Top Queries by Execution Time" are empty, limiting insights into performance bottlenecks.
-        * **Action**: Add `pg_stat_statements` to `shared_preload_libraries` in your `postgresql.conf` (or parameter group for RDS/Aurora) and restart the database. Then, run `CREATE EXTENSION pg_stat_statements;` in your database.
+    API_URL = f"{AI_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}"
 
-    2.  **Index `public.orders_unindexed_fk.product_id`**:
-        * **Importance**: Prevents write amplification. When parent table `public.parent_products` is updated or deleted, PostgreSQL performs a full table scan on `public.orders_unindexed_fk` to check for referencing rows, consuming excessive I/O and CPU.
-        * **Action**: Execute `CREATE INDEX CONCURRENTLY idx_orders_unindexed_fk_product_id_fk ON public.orders_unindexed_fk (product_id);` (as recommended in the Foreign Key Audit section).
+    ai_recommendations = "Failed to get AI recommendations."
+    if not API_KEY:
+        ai_recommendations = "AI analysis skipped: AI API key not found in config.yaml."
+        print("Warning: AI API key not found in config.yaml. AI analysis skipped.")
+        structured_data["ai_analysis"]["status"] = "skipped"
+        structured_data["ai_analysis"]["reason"] = "API key missing"
+    else:
+        try:
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": full_prompt}]}]
+            }
+            headers = {'Content-Type': 'application/json'}
 
-    3.  **Review Unused and Duplicate Indexes**:
-        * **Importance**: Unused indexes consume storage and add overhead to write operations. Duplicate indexes are redundant and waste resources.
-        * **Action**: Analyze the listed unused and duplicate indexes (e.g., `orders_indexed_fk_pkey`, `idx_orders_indexed_fk_product_id`) and drop them if confirmed unnecessary. Always test thoroughly.
+            # Make the POST request to the AI API
+            response = requests.post(API_URL, headers=headers, data=json.dumps(payload))
+            response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
 
-    4.  **Investigate Tables with Potentially Missing Indexes**:
-        * **Importance**: Tables like `public.sales_data` and `public.orders_indexed_fk` show sequential scans. While not necessarily an error, it suggests queries might benefit from new indexes to reduce I/O.
-        * **Action**: Analyze the queries hitting these tables (e.g., using `pg_stat_statements` once enabled) and create appropriate indexes on frequently queried columns.
+            result = response.json()
+            
+            if result and result.get('candidates') and result['candidates'][0].get('content') and result['candidates'][0]['content'].get('parts'):
+                ai_recommendations = result['candidates'][0]['content']['parts'][0]['text']
+                structured_data["ai_analysis"]["status"] = "success"
+            else:
+                ai_recommendations = f"AI response structure unexpected: {json.dumps(result)}"
+                structured_data["ai_analysis"]["status"] = "error"
+                structured_data["ai_analysis"]["details"] = f"Unexpected response: {json.dumps(result)}"
+                print(f"Warning: AI response structure unexpected: {json.dumps(result)}")
 
-    5.  **Address Missing Comments Files**:
-        * **Importance**: These files provide crucial context, tips, and recommendations within the report, making it more comprehensive and user-friendly.
-        * **Action**: Create the missing files: `indexes.txt`, `tables.txt`, `users.txt`, `security.txt`, `connections.txt`, `recommendations.txt`, `ha.txt`.
+        except requests.exceptions.RequestException as e:
+            ai_recommendations = f"Error communicating with AI API: {e}"
+            structured_data["ai_analysis"]["status"] = "error"
+            structured_data["ai_analysis"]["details"] = str(e)
+            print(f"Error communicating with AI API: {e}")
+        except json.JSONDecodeError as e:
+            ai_recommendations = f"Error decoding AI response JSON: {e}. Response text: {response.text}"
+            structured_data["ai_analysis"]["status"] = "error"
+            structured_data["ai_analysis"]["details"] = f"JSON decode error: {e}, Response: {response.text}"
+            print(f"Error decoding AI response JSON: {e}. Response text: {response.text}")
+        except Exception as e:
+            ai_recommendations = f"An unexpected error occurred during AI processing: {e}"
+            structured_data["ai_analysis"]["status"] = "error"
+            structured_data["ai_analysis"]["details"] = str(e)
+            print(f"An unexpected error occurred during AI processing: {e}")
 
-    6.  **Complete Missing Modules**:
-        * **Importance**: Several sections are currently incomplete, limiting the scope of the health check.
-        * **Action**: Implement `datadog_setup.py`, `monitoring_metrics.py`, `monitoring_recommendations.py`, `high_availability.py`, `connection_pooling.py`, `rds_upgrade.py`, `check_aws_reg.py`, `get_osinfo.py`, `pgset.py`, and `systemwide_extensions.py`.
-    """
     structured_data["ai_analysis"]["recommendations"] = ai_recommendations # Store the AI's raw response
 
     # --- Step 3: Integrate AI Response into AsciiDoc Content ---

@@ -38,6 +38,16 @@ class HealthCheck:
                 settings = yaml.safe_load(f)
             if 'is_aurora' not in settings:
                 settings['is_aurora'] = 'true' if 'aurora' in settings.get('host', '').lower() else 'false'
+            
+            # Ensure ai_analyze is a boolean, default to False if not specified
+            settings['ai_analyze'] = settings.get('ai_analyze', False)
+            
+            # Read generic AI settings
+            settings['ai_user'] = settings.get('ai_user', 'anonymous')
+            settings['ai_api_key'] = settings.get('ai_api_key', '')
+            settings['ai_endpoint'] = settings.get('ai_endpoint', 'https://generativelanguage.googleapis.com/v1beta/models/') # Default for Gemini
+            settings['ai_model'] = settings.get('ai_model', 'gemini-2.0-flash') # Default for Gemini
+
             return settings
         except FileNotFoundError:
             print(f"Error: Config file {config_file} not found.")
@@ -163,12 +173,12 @@ class HealthCheck:
             # Inspect the function signature to determine if it accepts all_structured_findings
             func_signature = inspect.signature(func)
             
-            # Check if 'all_structured_findings' is a parameter in the function's signature
+            # Prepare arguments to pass to the module function
+            func_args = [self.cursor, self.settings, self.execute_query, self.execute_pgbouncer]
             if 'all_structured_findings' in func_signature.parameters:
-                module_output = func(self.cursor, self.settings, self.execute_query, self.execute_pgbouncer, self.all_structured_findings)
-            else:
-                # For modules not yet refactored to accept all_structured_findings
-                module_output = func(self.cursor, self.settings, self.execute_query, self.execute_pgbouncer)
+                func_args.append(self.all_structured_findings)
+
+            module_output = func(*func_args)
 
             # Handle the module's return: tuple (adoc_string, structured_data) or just adoc_string
             if isinstance(module_output, tuple) and len(module_output) == 2:
@@ -198,9 +208,15 @@ class HealthCheck:
                 self.adoc_content.append({'type': 'text', 'content': f"== {section['title'].replace('${PGDB}', self.settings['database'])}"})
             for action in section['actions']:
                 if action['type'] == 'module':
+                    # Check the 'ai_analyze' condition here for the run_recommendation module
+                    if action['module'] == 'run_recommendation' and not self.settings.get('ai_analyze', False):
+                        self.adoc_content.append({'type': 'text', 'content': "[NOTE]\n====\nAI analysis skipped as 'ai_analyze' is set to false in config.yaml.\n====\n"})
+                        self.all_structured_findings['run_recommendation'] = {"status": "skipped", "note": "AI analysis skipped by configuration."}
+                        continue # Skip running the module
+                    
                     if action.get('condition') and not self.settings.get(action['condition']['var'].lower()) == action['condition']['value']:
                         continue
-                    # run_module now handles passing self.all_structured_findings conditionally
+                    
                     content = self.run_module(action['module'], action['function'])
                     self.adoc_content.append({'type': 'text', 'content': content})
                 elif action['type'] == 'comments':

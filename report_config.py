@@ -116,7 +116,7 @@ REPORT_SECTIONS = [
     {
         "title": "Recommendations",
         "actions": [
-            {"type": "module", "module": "run_recommendation", "function": "run_recommendation"},
+            {"type": "module", "module": "run_recommendation", "function": "run_recommendation", "condition": {"var": "ai_analyze", "value": True}},
             {"type": "comments", "file": "recommendations.txt"},
             {"type": "image", "file": "example.png", "alt": "Example Image"}
         ]
@@ -124,8 +124,8 @@ REPORT_SECTIONS = [
     {
         "title": "Appendix",
         "actions": [
-            {"type": "module", "module": "pgset", "function": "run_pgset", "condition": {"var": "run_settings", "value": "true"}},
-            {"type": "module", "module": "systemwide_extensions", "function": "run_systemwide_extensions", "condition": {"var": "show_avail_ext", "value": "true"}},
+            {"type": "module", "module": "pgset", "function": "run_pgset", "condition": {"var": "run_settings", "value": True}},
+            {"type": "module", "module": "systemwide_extensions", "function": "run_systemwide_extensions", "condition": {"var": "show_avail_ext", "value": True}},
             {"type": "module", "module": "rds_upgrade", "function": "run_rds_upgrade"},
             {"type": "module", "module": "check_aws_reg", "function": "run_check_aws_reg"},
             {"type": "comments", "file": "ha.txt"}
