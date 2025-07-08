@@ -12,7 +12,7 @@ REPORT_SECTIONS = [
         ]
     },
     {
-        "condition": {"var": "run_osinfo", "value": "true"},
+        "condition": {"var": "run_osinfo", "value": True},
         "title": "System Details",
         "actions": [
             {"type": "module", "module": "get_osinfo", "function": "run_osinfo"}
@@ -96,7 +96,8 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "active_query_states", "function": "run_active_query_states"},
             {"type": "module", "module": "long_running_queries", "function": "run_long_running_queries"},
             {"type": "module", "module": "lock_wait_config", "function": "run_lock_wait_config"},
-            {"type": "module", "module": "current_lock_waits", "function": "run_current_lock_waits"}
+            {"type": "module", "module": "current_lock_waits", "function": "run_current_lock_waits"},
+            {"type": "module", "module": "hot_queries", "function": "run_hot_queries"}
         ]
     },
     {

@@ -9,7 +9,7 @@ def run_physical_replication(cursor, settings, execute_query, execute_pgbouncer,
     if settings['show_qry'] == 'true':
         adoc_content.append("Physical replication queries:")
         adoc_content.append("[,sql]\n----")
-        adoc_content.append("SELECT pid, usename, application_name, state, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)) AS sent_lag, pg_size_pretty(pg_wal_lsn_diff(sent_lsn, write_lsn)) AS write_lag, pg_size_pretty(pg_wal_lsn_diff(write_lsn, flush_lsn)) AS flush_lag, pg_size_pretty(pg_wal_lsn_diff(flush_lsn, replay_lsn)) AS replay_lag FROM pg_stat_replication WHERE state != 'startup';")
+        adoc_content.append("SELECT pid, usename, application_name, state, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)) AS sent_lag, pg_size_pretty(pg_wal_lsn_diff(sent_lsn, write_lsn)) AS write_lag, pg_size_pretty(pg_wal_lsn_diff(flush_lsn, replay_lsn)) AS flush_lag, pg_size_pretty(pg_wal_lsn_diff(flush_lsn, replay_lsn)) AS replay_lag FROM pg_stat_replication WHERE state != 'startup';")
         adoc_content.append("SELECT pid, status, pg_size_pretty(pg_wal_lsn_diff(written_lsn, flushed_lsn)) AS write_flush_lag, pg_size_pretty(pg_wal_lsn_diff(flushed_lsn, latest_end_lsn)) AS flush_end_lag, received_tli, last_msg_send_time, last_msg_receipt_time FROM pg_stat_wal_receiver WHERE status IS NOT NULL;")
         adoc_content.append("----")
 
