@@ -3,7 +3,7 @@ def run_high_availability(cursor, settings, execute_query, execute_pgbouncer, al
     Analyzes high availability (HA) configurations, including standby settings,
     failover mechanisms, and cloud-specific HA features.
     """
-    adoc_content = ["=== High Availability Analysis", "Analyzes high availability configurations to ensure database resilience and continuity."]
+    adoc_content = ["=== High Availability Analysis", "Analyzes high availability configurations to ensure database resilience and continuity.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

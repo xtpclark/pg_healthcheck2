@@ -1,4 +1,11 @@
 REPORT_SECTIONS = [
+    # Special section for report header
+    {
+        "title": "Report Header", # This title is internal, won't be rendered as a section header
+        "actions": [
+            {"type": "header", "file": "report_header.txt"} # New type 'header'
+        ]
+    },
     {
         "title": "Background",
         "actions": [
@@ -67,18 +74,18 @@ REPORT_SECTIONS = [
         ]
     },
     {
-        "title": "Index Analysis for db: ${PGDB}",
+        "title": "Index Analysis",
         "actions": [
             {"type": "module", "module": "unused_idx", "function": "run_unused_idx"},
             {"type": "module", "module": "dupe_idx", "function": "run_dupe_idx"},
             {"type": "module", "module": "missing_idx", "function": "run_missing_idx"},
             {"type": "module", "module": "large_idx", "function": "run_large_idx"},
             {"type": "module", "module": "idx_brin", "function": "run_brin_idx"},
-            {"type": "comments", "file": "indexes.txt"}
+            {"type": "module", "module": "idx_gin", "function": "run_gin_idx"}
         ]
     },
     {
-        "title": "Table Analysis for db: ${PGDB}",
+        "title": "Table Analysis",
         "actions": [
             {"type": "module", "module": "large_tbl", "function": "run_large_tbl"},
             {"type": "module", "module": "table_object_counts", "function": "run_table_object_counts"},
@@ -87,7 +94,7 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "n_tuples_in", "function": "run_tuples_in"},
             {"type": "module", "module": "table_metrics", "function": "run_table_metrics"},
             {"type": "module", "module": "foreign_key_audit", "function": "run_foreign_key_audit"},
-            {"type": "comments", "file": "tables.txt"}
+            {"type": "module", "module": "no_pk_uk_tables", "function": "run_no_pk_uk_tables"}
         ]
     },
     {
@@ -102,16 +109,13 @@ REPORT_SECTIONS = [
         ]
     },
     {
-        "title": "Connections and Security for db: ${PGDB}",
+        "title": "Connections and Security",
         "actions": [
             {"type": "module", "module": "users", "function": "run_users"},
             {"type": "module", "module": "stat_ssl", "function": "run_stat_ssl"},
             {"type": "module", "module": "security_audit", "function": "run_security_audit"},
             {"type": "module", "module": "connection_metrics", "function": "run_connection_metrics"},
-            {"type": "module", "module": "connection_pooling", "function": "run_connection_pooling"},
-            {"type": "comments", "file": "users.txt"},
-            {"type": "comments", "file": "security.txt"},
-            {"type": "comments", "file": "connections.txt"}
+            {"type": "module", "module": "connection_pooling", "function": "run_connection_pooling"}
         ]
     },
     {
@@ -119,7 +123,29 @@ REPORT_SECTIONS = [
         "actions": [
             {"type": "module", "module": "run_recommendation", "function": "run_recommendation", "condition": {"var": "ai_analyze", "value": True}},
             {"type": "comments", "file": "recommendations.txt"},
-            {"type": "image", "file": "example.png", "alt": "Example Image"}
+            {"type": "comments", "file": "pgbadger_setup.txt"}
+        #    {"type": "image", "file": "example.png", "alt": "Example Image"}
+        ]
+    },
+    # New section for General PostgreSQL Best Practices
+    {
+        "title": "General PostgreSQL Best Practices",
+        "actions": [
+            {"type": "comments", "file": "indexes.txt", "display_title": "Index Management Best Practices"},
+            {"type": "comments", "file": "tables.txt", "display_title": "Table Management Best Practices"},
+            {"type": "comments", "file": "users.txt", "display_title": "User and Role Management Best Practices"},
+            {"type": "comments", "file": "security.txt", "display_title": "General Security Best Practices"},
+            {"type": "comments", "file": "connections.txt", "display_title": "Connection Management Best Practices"},
+            {"type": "comments", "file": "ha.txt", "display_title": "High Availability (HA) Best Practices"}
+        ]
+    },
+    # New section for Platform-Specific Best Practices
+    {
+        "title": "Platform-Specific Best Practices",
+        "actions": [
+            {"type": "comments", "file": "rds_aurora_best_practices.txt", "display_title": "AWS RDS/Aurora Best Practices"},
+            {"type": "comments", "file": "instaclustr_best_practices.txt", "display_title": "Instaclustr Managed PostgreSQL Best Practices"},
+            {"type": "comments", "file": "netapp_anf_best_practices.txt", "display_title": "NetApp ANF Storage Best Practices for PostgreSQL"}
         ]
     },
     {
@@ -128,8 +154,7 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "pgset", "function": "run_pgset", "condition": {"var": "run_settings", "value": True}},
             {"type": "module", "module": "systemwide_extensions", "function": "run_systemwide_extensions", "condition": {"var": "show_avail_ext", "value": True}},
             {"type": "module", "module": "rds_upgrade", "function": "run_rds_upgrade"},
-            {"type": "module", "module": "check_aws_reg", "function": "run_check_aws_reg"},
-            {"type": "comments", "file": "ha.txt"}
+            {"type": "module", "module": "check_aws_reg", "function": "run_check_aws_reg"}
         ]
     }
 ]

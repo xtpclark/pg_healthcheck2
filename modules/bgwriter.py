@@ -2,7 +2,7 @@ def run_bgwriter(cursor, settings, execute_query, execute_pgbouncer, all_structu
     """
     Analyzes background writer activity to optimize buffer management and reduce I/O load.
     """
-    adoc_content = ["=== Background Writer Statistics", "Analyzes background writer activity to optimize buffer management and reduce I/O load."]
+    adoc_content = ["=== Background Writer Statistics", "Analyzes background writer activity to optimize buffer management and reduce I/O load.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

@@ -1,0 +1,17 @@
+=== General Security Best Practices
+
+Database security extends beyond user management to encompass network access, encryption, and logging.
+
+.  **Network Access Control**: Restrict database access to only trusted IP addresses or networks using `pg_hba.conf` (for self-hosted) or Security Groups/Network ACLs (for cloud environments).
+.  **SSL/TLS Encryption**: Always enforce SSL/TLS for all client connections to encrypt data in transit. This prevents eavesdropping and tampering. Ensure you are using strong ciphers and modern TLS versions (e.g., TLSv1.2 or higher).
+.  **Regular Patching**: Keep your PostgreSQL server and underlying operating system (for self-hosted) up-to-date with the latest security patches and minor version releases.
+.  **Audit Logging**: Configure comprehensive logging (`log_connections`, `log_disconnections`, `log_min_duration_statement`, `log_statement`) to capture security-relevant events. Centralize logs for easier analysis and alerting.
+.  **Principle of Least Privilege**: Apply this not only to users but also to database objects. Restrict `CREATE` privileges on the `public` schema to prevent unauthorized object creation by regular users.
+.  **Backup and Recovery**: Implement a robust backup and recovery strategy. Encrypt backups at rest.
+.  **Vulnerability Scanning**: Regularly scan your database and surrounding infrastructure for known vulnerabilities.
+.  **Physical Security**: For self-hosted servers, ensure physical access to the database server is strictly controlled.
+
+[TIP]
+====
+A layered security approach, combining network controls, strong authentication, encryption, and diligent auditing, provides the best defense.
+====

@@ -2,7 +2,7 @@ def run_cache_analysis(cursor, settings, execute_query, execute_pgbouncer, all_s
     """
     Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks.
     """
-    adoc_content = ["=== Cache Analysis", "Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks."]
+    adoc_content = ["Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

@@ -43,10 +43,12 @@ class HealthCheck:
             settings['ai_analyze'] = settings.get('ai_analyze', False)
             
             # Read generic AI settings
-            settings['ai_user'] = settings.get('ai_user', 'anonymous')
             settings['ai_api_key'] = settings.get('ai_api_key', '')
             settings['ai_endpoint'] = settings.get('ai_endpoint', 'https://generativelanguage.googleapis.com/v1beta/models/') # Default for Gemini
             settings['ai_model'] = settings.get('ai_model', 'gemini-2.0-flash') # Default for Gemini
+            settings['ai_user'] = settings.get('ai_user', 'anonymous') # Default for AI user
+            settings['ai_run_integrated'] = settings.get('ai_run_integrated', True) # Default to True for integrated run
+            settings['ai_user_header'] = settings.get('ai_user_header', '') # Default to empty string
 
             return settings
         except FileNotFoundError:
@@ -204,15 +206,22 @@ class HealthCheck:
         for section in REPORT_SECTIONS:
             if section.get('condition') and not self.settings.get(section['condition']['var'].lower()) == section['condition']['value']:
                 continue
+            
+            # Special handling for 'header' type
+            if section['actions'] and section['actions'][0]['type'] == 'header':
+                header_file = section['actions'][0]['file']
+                content = self.read_comments_file(header_file)
+                self.adoc_content.append({'type': 'text', 'content': content})
+                continue # Skip adding section title and processing other actions for header section
+
             if section.get('title'):
                 self.adoc_content.append({'type': 'text', 'content': f"== {section['title'].replace('${PGDB}', self.settings['database'])}"})
-            for action in section['actions']:
+            
+            for action in section['actions']: # Iterate through actions within the section
                 if action['type'] == 'module':
-                    # Check the 'ai_analyze' condition here for the run_recommendation module
-                    if action['module'] == 'run_recommendation' and not self.settings.get('ai_analyze', False):
-                        self.adoc_content.append({'type': 'text', 'content': "[NOTE]\n====\nAI analysis skipped as 'ai_analyze' is set to false in config.yaml.\n====\n"})
-                        self.all_structured_findings['run_recommendation'] = {"status": "skipped", "note": "AI analysis skipped by configuration."}
-                        continue # Skip running the module
+                    # Removed the 'ai_run_integrated' check here.
+                    # run_recommendation.py will now always be called if ai_analyze is true.
+                    # The decision to make the API call or not is moved into run_recommendation.py itself.
                     
                     if action.get('condition') and not self.settings.get(action['condition']['var'].lower()) == action['condition']['value']:
                         continue
@@ -220,8 +229,11 @@ class HealthCheck:
                     content = self.run_module(action['module'], action['function'])
                     self.adoc_content.append({'type': 'text', 'content': content})
                 elif action['type'] == 'comments':
-                    content = self.read_comments_file(action['file']) if action['file'] != 'background.txt' else self.settings.get('background', '')
-                    self.adoc_content.append({'type': 'text', 'content': f"== {action['file'].replace('.txt', '').title()}\n{content}\n"})
+                    # Determine the display title for the comments section
+                    display_title = action.get('display_title', action['file'].replace('.txt', '').title())
+                    content = self.read_comments_file(action['file'])
+                    # Render as === (level 3) heading for sub-sections within a main section
+                    self.adoc_content.append({'type': 'text', 'content': f"=== {display_title}\n{content}\n"})
                 elif action['type'] == 'image':
                     self.adoc_content.append({'type': 'text', 'content': f"image::{self.paths['adoc_image']}/{action['file']}[{action['alt']},300,300]"})
         

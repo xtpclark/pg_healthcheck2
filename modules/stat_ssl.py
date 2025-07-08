@@ -3,7 +3,7 @@ def run_stat_ssl(cursor, settings, execute_query, execute_pgbouncer, all_structu
     Analyzes PostgreSQL SSL connection statistics to ensure secure communication
     and identify non-SSL connections.
     """
-    adoc_content = ["=== SSL Connection Statistics", "Analyzes SSL connection usage to ensure secure communication with the database."]
+    adoc_content = ["=== SSL Connection Statistics", "Analyzes SSL connection usage to ensure secure communication with the database.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

@@ -3,7 +3,7 @@ def run_active_query_states(cursor, settings, execute_query, execute_pgbouncer, 
     Analyzes the states of active queries in pg_stat_activity to identify
     potential contention, idle sessions, or long-running operations.
     """
-    adoc_content = ["=== Active Query States", "Analyzes the states of active queries to identify contention or idle sessions."]
+    adoc_content = ["=== Active Query States", "Analyzes the states of active queries to identify contention or idle sessions.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Define the query string with named parameters for robustness

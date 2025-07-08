@@ -3,7 +3,8 @@ def run_connection_pooling(cursor, settings, execute_query, execute_pgbouncer, a
     Analyzes connection pooling statistics (e.g., PgBouncer) to optimize
     connection management and reduce overhead.
     """
-    adoc_content = ["=== Connection Pooling Analysis", "Analyzes connection pooling statistics to optimize connection management."]
+#    adoc_content = ["=== Connection Pooling Analysis", "Analyzes connection pooling statistics to optimize connection management."]
+    adoc_content = ["Analyzes connection pooling statistics to optimize connection management.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Check if pgbouncer_cmd is configured in settings

@@ -4,7 +4,7 @@ def run_vacstat2(cursor, settings, execute_query, execute_pgbouncer, all_structu
     and infrequent autovacuuming, and also covers general vacuum progress and statistics.
     """
     adoc_content = ["=== Vacuum Progress and Statistics & Per-Table Stats Suggestions",
-                    "Analyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates."]
+                    "Analyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Define the autovacuum pattern for LIKE clauses

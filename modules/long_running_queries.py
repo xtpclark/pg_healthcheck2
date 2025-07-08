@@ -2,7 +2,7 @@ def run_long_running_queries(cursor, settings, execute_query, execute_pgbouncer,
     """
     Identifies long-running queries that may contribute to performance issues.
     """
-    adoc_content = ["=== Long-Running Queries", "Identifies long-running queries that may contribute to performance issues."]
+    adoc_content = ["=== Long-Running Queries", "Identifies long-running queries that may contribute to performance issues.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Define the base query string with named parameters, including the autovacuum pattern

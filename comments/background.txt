@@ -1,0 +1,3 @@
+
+Healthcheck for database ESDB.  Experiencing issues stemming from roughly 100,000 IoT devices sending metrics to the database.
+

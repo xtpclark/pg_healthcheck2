@@ -3,7 +3,7 @@ def run_lock_wait_config(cursor, settings, execute_query, execute_pgbouncer, all
     Analyzes the 'log_lock_waits' configuration setting, which is crucial
     for detecting and diagnosing deadlocks and lock contention.
     """
-    adoc_content = ["=== Lock Wait Configuration", "Analyzes the 'log_lock_waits' setting for deadlock detection."]
+    adoc_content = ["=== Lock Wait Configuration", "Analyzes the 'log_lock_waits' setting for deadlock detection.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Define the query string

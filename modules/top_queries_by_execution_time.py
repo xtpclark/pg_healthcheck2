@@ -3,7 +3,7 @@ def run_top_queries_by_execution_time(cursor, settings, execute_query, execute_p
     Analyzes top queries by total execution time from pg_stat_statements
     to identify resource-intensive queries.
     """
-    adoc_content = ["=== Top Queries by Execution Time", "Identifies resource-intensive queries based on total execution time."]
+    adoc_content = ["=== Top Queries by Execution Time", "Identifies resource-intensive queries based on total execution time.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Define the query string

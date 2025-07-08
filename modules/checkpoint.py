@@ -2,7 +2,7 @@ def run_checkpoint(cursor, settings, execute_query, execute_pgbouncer, all_struc
     """
     Analyzes checkpoint activity to optimize WAL performance and reduce I/O load.
     """
-    adoc_content = ["=== Checkpoint Activity", "Analyzes checkpoint activity to optimize WAL performance and reduce I/O load."]
+    adoc_content = ["=== Checkpoint Activity", "Analyzes checkpoint activity to optimize WAL performance and reduce I/O load.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

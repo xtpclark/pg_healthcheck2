@@ -58,7 +58,7 @@ execute_pgbench "pgbench -i -s 1 -h $DB_HOST -p $DB_PORT -U $DB_USER -d $PGBENCH
 # -t 1000: 1000 transactions per client
 # This will create significant n_tup_ins and other activity
 echo "Running pgbench for load generation (this might take a moment)..."
-execute_pgbench "pgbench -c 10 -j 2 -t 1000 -h $DB_HOST -p $DB_PORT -U $DB_USER -d $PGBENCH_TEST_DB"
+execute_pgbench "pgbench -c 20 -j 4 -t 1000 -h $DB_HOST -p $DB_PORT -U $DB_USER -d $PGBENCH_TEST_DB"
 echo "pgbench load generation complete."
 
 # --- 2. Create a Partitioned Table ---

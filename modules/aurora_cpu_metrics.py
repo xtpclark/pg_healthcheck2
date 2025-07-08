@@ -4,7 +4,7 @@ def run_aurora_cpu_metrics(cursor, settings, execute_query, execute_pgbouncer, a
     Note: Direct CPU/IOPS metrics are typically from CloudWatch, these queries
     provide database-internal indicators.
     """
-    adoc_content = ["=== Aurora CPU and IOPS Metrics", "Analyzes CPU and IOPS usage to identify saturation issues on the writer node."]
+    adoc_content = ["=== Aurora CPU and IOPS Metrics", "Analyzes CPU and IOPS usage to identify saturation issues on the writer node.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
 
     # Define the autovacuum pattern for LIKE clauses

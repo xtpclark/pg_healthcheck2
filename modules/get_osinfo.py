@@ -5,7 +5,7 @@ def run_osinfo(cursor, settings, execute_query, execute_pgbouncer, all_structure
     Gathers basic operating system information (e.g., hostname, OS, uptime, CPU, memory)
     for the machine where the health check script is executed.
     """
-    adoc_content = ["=== System Details", "Provides an overview of the operating system and hardware resources of the machine running this health check script."]
+    adoc_content = ["Provides an overview of the operating system and hardware resources of the machine running this health check script.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

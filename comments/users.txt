@@ -1,0 +1,18 @@
+=== User and Role Management Best Practices
+
+Proper user and role management is a cornerstone of database security. Adhering to best practices minimizes the risk of unauthorized access and data breaches.
+
+.  **Principle of Least Privilege**: Grant users and roles only the minimum set of permissions necessary to perform their required tasks. Avoid granting excessive privileges (e.g., `SUPERUSER`, `CREATEDB`, `CREATEROLE`) unless absolutely essential for administrative accounts.
+.  **Strong Passwords**: Enforce strong, complex passwords for all database users. Consider using a password manager.
+.  **Password Expiration**: Implement password expiration policies and force regular password rotations.
+.  **Separate Roles for Applications**: Create distinct roles for different applications or microservices. Do not use a single shared user for multiple applications.
+.  **Audit User Activity**: Configure logging to capture connection attempts, disconnections, and potentially all executed statements to maintain an audit trail of user activity.
+.  **Remove Unused Roles**: Regularly review `pg_roles` and remove any obsolete or unused user accounts.
+.  **Role Inheritance**: Use role inheritance (`GRANT role_a TO role_b`) to simplify permission management, granting privileges to a base role and then granting that base role to specific users.
+.  **Authentication Methods**: Prefer secure authentication methods like `SCRAM-SHA-256`, `cert`, or external authentication systems (e.g., LDAP, Kerberos) over weaker methods like `MD5` or `password`.
+.  **Monitor Superusers**: Keep a very close eye on activities performed by superuser roles.
+
+[TIP]
+====
+Security is an ongoing process. Regularly audit user privileges and authentication mechanisms to adapt to evolving threats.
+====

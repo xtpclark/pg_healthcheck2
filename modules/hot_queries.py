@@ -4,7 +4,7 @@ def run_hot_queries(cursor, settings, execute_query, execute_pgbouncer, all_stru
     analyzing their call frequency and average execution time to pinpoint
     potential performance bottlenecks due to high volume.
     """
-    adoc_content = ["=== Hot Queries", "Identifies frequently executed queries to pinpoint potential performance bottlenecks due to high volume."]
+    adoc_content = ["=== Hot Queries", "Identifies frequently executed queries to pinpoint potential performance bottlenecks due to high volume.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Explanation of Hot Queries for the report

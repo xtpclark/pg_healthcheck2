@@ -3,7 +3,7 @@ def run_current_lock_waits(cursor, settings, execute_query, execute_pgbouncer, a
     Identifies current sessions that are waiting for locks, indicating
     potential contention or deadlock situations.
     """
-    adoc_content = ["=== Current Lock Waits", "Identifies current sessions waiting for locks."]
+    adoc_content = ["=== Current Lock Waits", "Identifies current sessions waiting for locks.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Modified query to join with pg_locks for lock details

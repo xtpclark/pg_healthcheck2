@@ -2,7 +2,7 @@ def run_users(cursor, settings, execute_query, execute_pgbouncer, all_structured
     """
     Analyzes database user roles and permissions to ensure secure access control.
     """
-    adoc_content = ["=== User Analysis", "Analyzes database user roles and permissions to ensure secure access control."]
+    adoc_content = ["=== User Analysis", "Analyzes database user roles and permissions to ensure secure access control.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

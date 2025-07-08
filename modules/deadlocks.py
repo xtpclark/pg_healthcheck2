@@ -1,5 +1,6 @@
 def run_deadlocks(cursor, settings, execute_query, execute_pgbouncer):
-    content = ["=== Deadlock Analysis", "Analyzes deadlock occurrences to identify contention issues impacting performance."]
+#    content = ["=== Deadlock Analysis", "Analyzes deadlock occurrences to identify contention issues impacting performance."]
+    content = ["Analyzes deadlock occurrences to identify contention issues impacting performance.\n"]
     
     # Define the base query strings with named parameters
     lock_wait_config_query = "SELECT name, setting, unit, short_desc FROM pg_settings WHERE name = 'log_lock_waits';"

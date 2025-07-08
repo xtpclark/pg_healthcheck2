@@ -5,7 +5,7 @@ def run_datadog_setup(cursor, settings, execute_query, execute_pgbouncer, all_st
     Note: This module primarily provides conceptual checks as direct file system
     access or external API calls are not typically allowed from within PostgreSQL.
     """
-    adoc_content = ["=== Datadog Monitoring Setup", "Analyzes PostgreSQL configuration relevant to Datadog monitoring."]
+    adoc_content = ["=== Datadog Monitoring Setup", "Analyzes PostgreSQL configuration relevant to Datadog monitoring.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

@@ -3,7 +3,8 @@ def run_dupe_idx(cursor, settings, execute_query, execute_pgbouncer, all_structu
     Identifies duplicate indexes in the PostgreSQL database.
     Duplicate indexes are redundant and waste storage and write overhead.
     """
-    adoc_content = ["=== Duplicate Indexes", "Identifies duplicate indexes in the PostgreSQL database."]
+#    adoc_content = ["=== Duplicate Indexes", "Identifies duplicate indexes in the PostgreSQL database."]
+    adoc_content = ["Identifies duplicate indexes in the PostgreSQL database.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

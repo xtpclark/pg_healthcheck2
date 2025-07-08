@@ -3,7 +3,7 @@ def run_postgres_overview(cursor, settings, execute_query, execute_pgbouncer):
     Provides an overview of the PostgreSQL database, including version, uptime,
     size, and key configuration settings.
     """
-    adoc_content = ["=== PostgreSQL Overview", "Provides an overview of the PostgreSQL database, including version, uptime, size, and key configuration settings."]
+    adoc_content = ["Provides an overview of the PostgreSQL database, including version, uptime, size, and key configuration settings.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':
