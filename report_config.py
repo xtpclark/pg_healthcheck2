@@ -21,7 +21,8 @@ REPORT_SECTIONS = [
     {
         "title": "PostgreSQL Settings",
         "actions": [
-            {"type": "module", "module": "section_postgresql_settings", "function": "run_settings"},
+            {"type": "module", "module": "general_config_settings", "function": "run_general_config_settings"},
+            {"type": "module", "module": "critical_performance_settings", "function": "run_critical_performance_settings"},
             {"type": "module", "module": "aurora_cpu_metrics", "function": "run_aurora_cpu_metrics"},
             {"type": "module", "module": "datadog_setup", "function": "run_datadog_setup"}
         ]

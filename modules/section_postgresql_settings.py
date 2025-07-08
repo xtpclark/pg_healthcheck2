@@ -9,17 +9,17 @@ def run_settings(cursor, settings, execute_query, execute_pgbouncer, all_structu
     if settings['show_qry'] == 'true':
         adoc_content.append("Settings queries:")
         adoc_content.append("[,sql]\n----")
-        # Corrected category names for the query: 'Memory' and 'Query Planning'
-        adoc_content.append("SELECT name, setting, unit, category, short_desc FROM pg_settings WHERE category IN ('Connections and Authentication', 'Memory', 'Query Planning') ORDER BY category, name LIMIT %(limit)s;")
+        # Corrected and expanded category names based on PostgreSQL 15 output
+        adoc_content.append("SELECT name, setting, unit, category, short_desc FROM pg_settings WHERE category IN ('Connections and Authentication / Connection Settings', 'Connections and Authentication / Authentication', 'Connections and Authentication / SSL', 'Resource Usage / Memory', 'Query Tuning / Planner Cost Constants', 'Query Tuning / Other Planner Options', 'Query Tuning / Planner Method Configuration', 'Reporting and Logging / What to Log', 'Reporting and Logging / Where to Log', 'Reporting and Logging / When to Log', 'Write-Ahead Log / Settings', 'Write-Ahead Log / Checkpoints', 'Resource Usage / Asynchronous Behavior', 'Resource Usage / Background Writer', 'Resource Usage / Disk', 'Resource Usage / Kernel Resources') ORDER BY category, name LIMIT %(limit)s;")
         adoc_content.append("SELECT name, setting, unit, short_desc FROM pg_settings WHERE name IN ('max_connections', 'work_mem', 'shared_buffers', 'effective_cache_size', 'maintenance_work_mem', 'autovacuum', 'checkpoint_timeout', 'wal_level', 'max_wal_size') ORDER BY name;")
         adoc_content.append("----")
 
     queries = [
         (
-            "Connection and Memory Settings", 
-            "SELECT name, setting, unit, category, short_desc FROM pg_settings WHERE category IN ('Connections and Authentication', 'Memory', 'Query Planning') ORDER BY category, name LIMIT %(limit)s;", 
+            "General Configuration Settings", # Renamed title for broader scope
+            "SELECT name, setting, unit, category, short_desc FROM pg_settings WHERE category IN ('Connections and Authentication / Connection Settings', 'Connections and Authentication / Authentication', 'Connections and Authentication / SSL', 'Resource Usage / Memory', 'Query Tuning / Planner Cost Constants', 'Query Tuning / Other Planner Options', 'Query Tuning / Planner Method Configuration', 'Reporting and Logging / What to Log', 'Reporting and Logging / Where to Log', 'Reporting and Logging / When to Log', 'Write-Ahead Log / Settings', 'Write-Ahead Log / Checkpoints', 'Resource Usage / Asynchronous Behavior', 'Resource Usage / Background Writer', 'Resource Usage / Disk', 'Resource Usage / Kernel Resources') ORDER BY category, name LIMIT %(limit)s;", 
             True, 
-            "connection_memory_settings" # Data key
+            "general_configuration_settings" # Data key
         ),
         (
             "Critical Performance Settings", 
