@@ -12,7 +12,7 @@ def convert_to_json_serializable(obj):
     elif isinstance(obj, dict):
         return {k: convert_to_json_serializable(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [convert_to_json_serializable(elem) for elem in obj]
+        return [convert_to_json_serializable(item) for item in obj] # Corrected: 'item' for elements in the list 'obj'
     else:
         return obj
 
@@ -72,13 +72,18 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
             API_KEY = settings.get('ai_api_key', '')
             AI_ENDPOINT = settings.get('ai_endpoint', 'https://generativelanguage.googleapis.com/v1beta/models/')
             AI_MODEL = settings.get('ai_model', 'gemini-2.0-flash')
+            AI_USER = settings.get('ai_user', 'anonymous') # Get AI user
+            AI_USER_HEADER_NAME = settings.get('ai_user_header', '') # Get custom user header name
+            SSL_CERT_PATH = settings.get('ssl_cert_path', '') # NEW: Get SSL cert path
 
             # Prepare common headers
             headers = {'Content-Type': 'application/json'}
-            # Add ai_user_header if configured
-            ai_user_header_name = settings.get('ai_user_header', '')
-            if ai_user_header_name and settings.get('ai_user'):
-                headers[ai_user_header_name] = settings['ai_user']
+            # Add custom ai_user_header if configured
+            if AI_USER_HEADER_NAME and AI_USER:
+                headers[AI_USER_HEADER_NAME] = AI_USER
+
+            # Set SSL verification
+            verify_ssl = SSL_CERT_PATH if SSL_CERT_PATH else True # NEW: Add this
 
             if not API_KEY:
                 ai_recommendations = "AI analysis skipped: AI API key not found in config.yaml."
@@ -95,28 +100,19 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
                             "contents": [{"role": "user", "parts": [{"text": full_prompt}]}]
                         }
                         # Headers already prepared
-                    elif "api.openai.com" in AI_ENDPOINT:
-                        # OpenAI API (or compatible endpoint)
-                        # Assumes AI_MODEL is like "gpt-3.5-turbo" or "gpt-4"
-                        API_URL = f"{AI_ENDPOINT}v1/chat/completions"
+                    else: # Assume OpenAI-compatible for any other endpoint
+                        # OpenAI API (or compatible endpoint, including corporate proxy)
+                        API_URL = f"{AI_ENDPOINT}v1/chat/completions" # Standard OpenAI chat completions path
                         payload = {
                             "model": AI_MODEL,
-                            "messages": [{"role": "user", "content": full_prompt}]
+                            "messages": [{"role": "user", "content": full_prompt}],
+                            "user": AI_USER # Add 'user' field to payload body
                         }
-                        # Add OpenAI specific Authorization header
+                        # Add Authorization header for OpenAI/compatible
                         headers['Authorization'] = f'Bearer {API_KEY}'
-                    else:
-                        ai_recommendations = f"AI analysis skipped: Unsupported AI endpoint '{AI_ENDPOINT}'."
-                        print(ai_recommendations)
-                        structured_data["ai_analysis"]["status"] = "skipped"
-                        structured_data["ai_analysis"]["reason"] = "Unsupported AI endpoint"
-                        # Skip further processing if endpoint is not supported
-                        adoc_content.append("\n=== AI-Generated Recommendations\n")
-                        adoc_content.append(ai_recommendations)
-                        return "\n".join(adoc_content), structured_data
 
                     # Make the POST request to the AI API
-                    response = requests.post(API_URL, headers=headers, data=json.dumps(payload))
+                    response = requests.post(API_URL, headers=headers, data=json.dumps(payload), verify=verify_ssl) # NEW: Add verify
                     response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
 
                     result = response.json()
@@ -132,16 +128,16 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
                             structured_data["ai_analysis"]["status"] = "error"
                             structured_data["ai_analysis"]["details"] = f"Unexpected response: {json.dumps(result)}"
                             print(f"Warning: AI response structure unexpected (Gemini): {json.dumps(result)}")
-                    elif "api.openai.com" in AI_ENDPOINT:
-                        # Parse OpenAI response
+                    else: # Assume OpenAI-compatible for any other endpoint
+                        # Parse OpenAI/compatible response
                         if result and result.get('choices') and result['choices'][0].get('message') and result['choices'][0]['message'].get('content'):
                             ai_recommendations = result['choices'][0]['message']['content']
                             structured_data["ai_analysis"]["status"] = "success"
                         else:
-                            ai_recommendations = f"AI response structure unexpected (OpenAI): {json.dumps(result)}"
+                            ai_recommendations = f"AI response structure unexpected (OpenAI-compatible): {json.dumps(result)}"
                             structured_data["ai_analysis"]["status"] = "error"
                             structured_data["ai_analysis"]["details"] = f"Unexpected response: {json.dumps(result)}"
-                            print(f"Warning: AI response structure unexpected (OpenAI): {json.dumps(result)}")
+                            print(f"Warning: AI response structure unexpected (OpenAI-compatible): {json.dumps(result)}")
 
                 except requests.exceptions.RequestException as e:
                     ai_recommendations = f"Error communicating with AI API: {e}"
@@ -160,7 +156,7 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
                     print(f"An unexpected error occurred during AI processing: {e}")
         else:
             # AI analysis is enabled but configured for offline/separate run
-            ai_recommendations = "[NOTE]\n====\nAI analysis is enabled but configured for offline processing. The AI prompt has been generated and saved to 'structured_health_check_findings.json'.\n\nTo get AI recommendations from this data:\n\n1.  **Ensure you have network access** to your chosen AI provider's API (e.g., via VPN if necessary).\n2.  **Use a separate script or tool** to read `structured_health_check_findings.json`.\n3.  **Extract the `prompt_sent` field** from the JSON. This contains the full prompt prepared for the AI.\n4.  **Send this `prompt_sent` string to your AI API endpoint** (e.g., Google Gemini or OpenAI).\n5.  **Integrate the AI's response** into your report or review it separately.\n\nExample (Python conceptual for offline script):\n```python\nimport json\nimport requests\n\n# --- Configuration for your offline script ---\nAPI_KEY = \"YOUR_AI_API_KEY\"\nAI_ENDPOINT = \"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)\" # Or [https://api.openai.com/](https://api.openai.com/)\nAI_MODEL = \"gemini-2.0-flash\" # Or \"gpt-3.5-turbo\"\n\n# --- Load the saved structured findings ---\nwith open('adoc_out/nuance/structured_health_check_findings.json', 'r') as f:\n    findings = json.load(f)\n\n# Extract the prompt that was prepared by the main script\nfull_prompt = findings.get('run_recommendation', {}).get('data', {}).get('prompt_sent', '')\n\nif full_prompt:\n    print(\"\\n--- Sending to AI for offline analysis ---\")\n    API_URL = f\"{AI_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}\"\n    payload = {\"contents\": [{\"role\": \"user\", \"parts\": [{\"text\": full_prompt}]}]}\n    headers = {'Content-Type': 'application/json'}\n\n    try:\n        response = requests.post(API_URL, headers=headers, data=json.dumps(payload))\n        response.raise_for_status()\n        result = response.json()\n        \n        if \"generativelanguage.googleapis.com\" in AI_ENDPOINT:\n            ai_response = result['candidates'][0]['content']['parts'][0]['text']\n        elif \"api.openai.com\" in AI_ENDPOINT:\n            ai_response = result['choices'][0]['message']['content']\n        else:\n            ai_response = \"Unsupported endpoint for offline processing.\"\n\n        print(\"\\n--- AI Recommendations (Offline) ---\")\n        print(ai_response)\n    except requests.exceptions.RequestException as e:\n        print(f\"Error during offline AI call: {e}\")\n    except Exception as e:\n        print(f\"An unexpected error occurred: {e}\")\nelse:\n    print(\"No AI prompt found in the structured findings for offline analysis.\")\n```\n====\n"
+            ai_recommendations = "[NOTE]\n====\nAI analysis is enabled but configured for offline processing. The AI prompt has been generated and saved to 'structured_health_check_findings.json'.\n\nTo get AI recommendations from this data:\n\n1.  **Ensure you have network access** to your chosen AI provider's API (e.g., via VPN if necessary).\n2.  **Use a separate script or tool** to read `structured_health_check_findings.json`.\n3.  **Extract the `prompt_sent` field** from the JSON. This contains the full prompt prepared for the AI.\n4.  **Send this `prompt_sent` string to your AI API endpoint** (e.g., Google Gemini or an OpenAI-compatible endpoint).\n5.  **Integrate the AI's response** into your report or review it separately.\n\nExample (Python conceptual for offline script):\n```python\nimport json\nimport requests\n\n# --- Configuration for your offline script ---\nAPI_KEY = \"YOUR_AI_API_KEY\"\nAI_ENDPOINT = \"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)\" # Or your OpenAI-compatible endpoint\nAI_MODEL = \"gemini-2.0-flash\" # Or \"gpt-3.5-turbo\"\nAI_USER = \"offline_user\" # Default user for offline processing\nAI_USER_HEADER_NAME = \"X-User-ID\" # Custom user header name for proxy\nSSL_CERT_PATH = \"\" # Or '/path/to/your/cert.pem' for SSL verification\n\n# --- Load the saved structured findings ---\nwith open('adoc_out/nuance/structured_health_check_findings.json', 'r') as f:\n    findings = json.load(f)\n\n# Extract the prompt that was prepared by the main script\nfull_prompt = findings.get('run_recommendation', {}).get('data', {}).get('prompt_sent', '')\n\nif full_prompt:\n    print(\"\\n--- Sending to AI for offline analysis ---\")\n    # Prepare headers for offline script\n    offline_headers = {'Content-Type': 'application/json'}\n    if AI_USER_HEADER_NAME and AI_USER:\n        offline_headers[AI_USER_HEADER_NAME] = AI_USER\n\n    # Set SSL verification for offline script\n    offline_verify_ssl = SSL_CERT_PATH if SSL_CERT_PATH else True\n\n    # Determine AI Provider and Construct Request for offline script\n    if \"generativelanguage.googleapis.com\" in AI_ENDPOINT:\n        API_URL_OFFLINE = f\"{AI_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}\"\n        payload_offline = {\"contents\": [{\"role\": \"user\", \"parts\": [{\"text\": full_prompt}]}]}\n    else: # Assume OpenAI-compatible for any other endpoint\n        API_URL_OFFLINE = f\"{AI_ENDPOINT}v1/chat/completions\"\n        payload_offline = {\n            \"model\": AI_MODEL,\n            \"messages\": [{\"role\": \"user\", \"content\": full_prompt}],\n            \"user\": AI_USER # Add 'user' field to payload body for offline\n        }\n        offline_headers['Authorization'] = f'Bearer {API_KEY}'\n\n    try:\n        response = requests.post(API_URL_OFFLINE, headers=offline_headers, data=json.dumps(payload_offline), verify=offline_verify_ssl)\n        response.raise_for_status()\n        result = response.json()\n        \n        if \"generativelanguage.googleapis.com\" in AI_ENDPOINT:\n            ai_response = result['candidates'][0]['content']['parts'][0]['text']\n        else: # Assume OpenAI-compatible for any other endpoint\n            ai_response = result['choices'][0]['message']['content']\n\n        print(\"\\n--- AI Recommendations (Offline) ---\")\n        print(ai_response)\n    except requests.exceptions.RequestException as e:\n        print(f\"Error during offline AI call: {e}\")\n    except Exception as e:\n        print(f\"An unexpected error occurred: {e}\")\nelse:\n    print(\"No AI prompt found in the structured findings for offline analysis.\")\n```\n====\n"
             structured_data["ai_analysis"]["status"] = "offline_mode"
             structured_data["ai_analysis"]["note"] = "AI analysis skipped for integrated run; prompt saved for offline processing."
     else:
