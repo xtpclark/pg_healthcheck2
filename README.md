@@ -35,7 +35,7 @@ The PostgreSQL Health Check program is a powerful diagnostic tool for PostgreSQL
 * **AI-Powered Recommendations**: Integrates with large language models (LLMs) like Google Gemini or OpenAI to provide intelligent, prioritized, and actionable recommendations based on a holistic view of the collected data.
 * **Flexible AI Execution**: Supports both integrated (online) AI analysis during report generation and offline/separate AI processing for environments with network restrictions (e.g., corporate VPNs).
 * **Test Case Generation**: Includes a script (`create_test_cases.sh`) to easily populate a test database with diverse scenarios for comprehensive testing.
-* **Platform-Aware Advice**: Provides general and platform-specific best practices (e.g., for AWS RDS/Aurora, Instaclustr, NetApp ANF).
+* **Platform-Aware Advice**: Provides general and platform-specific best practices (e.g., for AWS RDS/Aurora, and others).
 
 ## 3. Installation and Setup
 
@@ -50,6 +50,10 @@ Ensure you have the following installed on the machine where you will run the he
 * **`boto3`**: AWS SDK for Python (required for AWS CloudWatch/RDS metrics integration if `is_aurora: true`).
     * `pip install boto3`
 * **AWS Credentials**: If connecting to AWS RDS/Aurora, ensure your AWS credentials are configured (e.g., via environment variables `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, or `~/.aws/credentials` file).
+    * **Required IAM Permissions for Cloud Metrics**:
+        * `cloudwatch:GetMetricStatistics`
+        * `rds:DescribeDBInstances` (to get DB instance/cluster identifier from endpoint)
+        * `rds:DescribeDBClusters` (for Aurora clusters)
 
 ### 3.2. Clone the Repository
 
@@ -115,7 +119,7 @@ load_dba_views: true        # Set to true if you have custom DBA views to load (
 create_history_db: true     # Set to true to create a history database (not fully implemented in current modules)
 show_qry: true              # Set to true to include SQL queries in the report
 row_limit: 10               # Maximum number of rows to display for tabular query results
-logo_image: Mylogo.svg[900,900] # Path to a logo image (relative to adoc_out/company_name/images)
+logo_image: MyLogo.svg[900,900] # Path to a logo image (relative to adoc_out/company_name/images)
 run_osinfo: true            # Set to true to run OS information collection (from the client machine)
 run_settings: true          # Set to true to run the pgset module in Appendix
 show_avail_ext: true        # Set to true to show available extensions in Appendix
@@ -133,6 +137,9 @@ ai_user: "healthcheck_runner" # Optional: User identifier for AI analysis contex
 ai_run_integrated: true     # Set to true for AI analysis during main report generation; false for offline processing
 ai_user_header: "X-User-ID" # Optional: Custom HTTP header name for ai_user (e.g., for corporate proxies/AIs)
 
+# Background text (now loaded from comments/background.txt)
+# background: |
+#   Your background text here...
 ```
 
 ## 5. Running the Health Check
@@ -162,6 +169,7 @@ The script will print the AI's recommendations to the console. You can then manu
 ## 6. Test Case Generation (`create_test_cases.sh`)
 
 The `create_test_cases.sh` script is provided to populate your test database with various objects and activity, allowing you to test the full functionality of the health check report.
+
 **WARNING**: This script will modify your database. It is highly recommended to run this on a non-production or test database.
 
 ```bash
@@ -253,7 +261,7 @@ The health check report is structured into several key sections, each providing 
 * **Platform-Specific Best Practices**:
     * **AWS RDS/Aurora Best Practices** (from `comments/rds_aurora_best_practices.txt`)
     * **Instaclustr Managed PostgreSQL Best Practices** (from `comments/instaclustr_best_practices.txt`)
-    * **NetApp ANF Storage Best Practices for PostgreSQL** (from `comments/netapp_anf_best_practices.txt`)
+    * **NetApp ANF / FSx Storage Best Practices for PostgreSQL** (from `comments/netapp_anf_best_practices.txt`)
 
 ### 7.5. Appendix
 
@@ -277,7 +285,7 @@ The AI analysis feature is a core differentiator of this health check program, p
 
 * The `run_recommendation.py` module is responsible for orchestrating the AI analysis.
 * It iterates through the `self.all_structured_findings` dictionary.
-* It constructs a comprehensive text prompt string, embedding the collected structured data (formatted as JSON snippets) along with a clear request for prioritized recommendations. This prompt provides the AI with a holistic view of the database's state across all analyzed areas, including the `ai_user` for context.
+* It constructs a comprehensive text prompt string, embedding the collected structured data (formatted as JSON snippets) along with a clear request for prioritized recommendations. This prompt provides the AI with a holistic view of the database's state across all analyzed areas.
 
 ### 8.3. AI API Interaction (Conditional)
 
