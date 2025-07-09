@@ -2,6 +2,7 @@ import json
 from decimal import Decimal
 from datetime import datetime
 import requests # Import requests for making HTTP calls
+import time # NEW: Import time module for measuring analysis duration
 
 # Helper function to convert Decimal and datetime objects to JSON-serializable types recursively
 def convert_to_json_serializable(obj):
@@ -74,7 +75,7 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
             AI_MODEL = settings.get('ai_model', 'gemini-2.0-flash')
             AI_USER = settings.get('ai_user', 'anonymous') # Get AI user
             AI_USER_HEADER_NAME = settings.get('ai_user_header', '') # Get custom user header name
-            SSL_CERT_PATH = settings.get('ssl_cert_path', '') # NEW: Get SSL cert path
+            SSL_CERT_PATH = settings.get('ssl_cert_path', '') # Get SSL cert path
 
             # Prepare common headers
             headers = {'Content-Type': 'application/json'}
@@ -83,7 +84,7 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
                 headers[AI_USER_HEADER_NAME] = AI_USER
 
             # Set SSL verification
-            verify_ssl = SSL_CERT_PATH if SSL_CERT_PATH else True # NEW: Add this
+            verify_ssl = SSL_CERT_PATH if SSL_CERT_PATH else True
 
             if not API_KEY:
                 ai_recommendations = "AI analysis skipped: AI API key not found in config.yaml."
@@ -111,18 +112,32 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
                         # Add Authorization header for OpenAI/compatible
                         headers['Authorization'] = f'Bearer {API_KEY}'
 
+                    # Record start time for analysis
+                    start_time = time.time()
+
                     # Make the POST request to the AI API
-                    response = requests.post(API_URL, headers=headers, data=json.dumps(payload), verify=verify_ssl) # NEW: Add verify
+                    response = requests.post(API_URL, headers=headers, data=json.dumps(payload), verify=verify_ssl)
                     response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+
+                    # Record end time for analysis
+                    end_time = time.time()
+                    time_taken = end_time - start_time # Calculate time taken
 
                     result = response.json()
                     
+                    # Store request/response details
+                    structured_data["ai_analysis"]["endpoint"] = AI_ENDPOINT
+                    structured_data["ai_analysis"]["model"] = AI_MODEL
+                    structured_data["ai_analysis"]["prompt_characters"] = len(full_prompt)
+                    structured_data["ai_analysis"]["analysis_time_seconds"] = round(time_taken, 2)
+
                     # --- Parse AI Response based on Provider ---
                     if "generativelanguage.googleapis.com" in AI_ENDPOINT:
                         # Parse Gemini response
                         if result and result.get('candidates') and result['candidates'][0].get('content') and result['candidates'][0]['content'].get('parts'):
                             ai_recommendations = result['candidates'][0]['content']['parts'][0]['text']
                             structured_data["ai_analysis"]["status"] = "success"
+                            structured_data["ai_analysis"]["response_characters"] = len(ai_recommendations)
                         else:
                             ai_recommendations = f"AI response structure unexpected (Gemini): {json.dumps(result)}"
                             structured_data["ai_analysis"]["status"] = "error"
@@ -133,6 +148,12 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
                         if result and result.get('choices') and result['choices'][0].get('message') and result['choices'][0]['message'].get('content'):
                             ai_recommendations = result['choices'][0]['message']['content']
                             structured_data["ai_analysis"]["status"] = "success"
+                            structured_data["ai_analysis"]["response_characters"] = len(ai_recommendations)
+                            # Attempt to get token usage if available in OpenAI-compatible response
+                            if 'usage' in result:
+                                structured_data["ai_analysis"]["prompt_tokens"] = result['usage'].get('prompt_tokens')
+                                structured_data["ai_analysis"]["completion_tokens"] = result['usage'].get('completion_tokens')
+                                structured_data["ai_analysis"]["total_tokens"] = result['usage'].get('total_tokens')
                         else:
                             ai_recommendations = f"AI response structure unexpected (OpenAI-compatible): {json.dumps(result)}"
                             structured_data["ai_analysis"]["status"] = "error"
@@ -156,7 +177,7 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
                     print(f"An unexpected error occurred during AI processing: {e}")
         else:
             # AI analysis is enabled but configured for offline/separate run
-            ai_recommendations = "[NOTE]\n====\nAI analysis is enabled but configured for offline processing. The AI prompt has been generated and saved to 'structured_health_check_findings.json'.\n\nTo get AI recommendations from this data:\n\n1.  **Ensure you have network access** to your chosen AI provider's API (e.g., via VPN if necessary).\n2.  **Use a separate script or tool** to read `structured_health_check_findings.json`.\n3.  **Extract the `prompt_sent` field** from the JSON. This contains the full prompt prepared for the AI.\n4.  **Send this `prompt_sent` string to your AI API endpoint** (e.g., Google Gemini or an OpenAI-compatible endpoint).\n5.  **Integrate the AI's response** into your report or review it separately.\n\nExample (Python conceptual for offline script):\n```python\nimport json\nimport requests\n\n# --- Configuration for your offline script ---\nAPI_KEY = \"YOUR_AI_API_KEY\"\nAI_ENDPOINT = \"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)\" # Or your OpenAI-compatible endpoint\nAI_MODEL = \"gemini-2.0-flash\" # Or \"gpt-3.5-turbo\"\nAI_USER = \"offline_user\" # Default user for offline processing\nAI_USER_HEADER_NAME = \"X-User-ID\" # Custom user header name for proxy\nSSL_CERT_PATH = \"\" # Or '/path/to/your/cert.pem' for SSL verification\n\n# --- Load the saved structured findings ---\nwith open('adoc_out/nuance/structured_health_check_findings.json', 'r') as f:\n    findings = json.load(f)\n\n# Extract the prompt that was prepared by the main script\nfull_prompt = findings.get('run_recommendation', {}).get('data', {}).get('prompt_sent', '')\n\nif full_prompt:\n    print(\"\\n--- Sending to AI for offline analysis ---\")\n    # Prepare headers for offline script\n    offline_headers = {'Content-Type': 'application/json'}\n    if AI_USER_HEADER_NAME and AI_USER:\n        offline_headers[AI_USER_HEADER_NAME] = AI_USER\n\n    # Set SSL verification for offline script\n    offline_verify_ssl = SSL_CERT_PATH if SSL_CERT_PATH else True\n\n    # Determine AI Provider and Construct Request for offline script\n    if \"generativelanguage.googleapis.com\" in AI_ENDPOINT:\n        API_URL_OFFLINE = f\"{AI_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}\"\n        payload_offline = {\"contents\": [{\"role\": \"user\", \"parts\": [{\"text\": full_prompt}]}]}\n    else: # Assume OpenAI-compatible for any other endpoint\n        API_URL_OFFLINE = f\"{AI_ENDPOINT}v1/chat/completions\"\n        payload_offline = {\n            \"model\": AI_MODEL,\n            \"messages\": [{\"role\": \"user\", \"content\": full_prompt}],\n            \"user\": AI_USER # Add 'user' field to payload body for offline\n        }\n        offline_headers['Authorization'] = f'Bearer {API_KEY}'\n\n    try:\n        response = requests.post(API_URL_OFFLINE, headers=offline_headers, data=json.dumps(payload_offline), verify=offline_verify_ssl)\n        response.raise_for_status()\n        result = response.json()\n        \n        if \"generativelanguage.googleapis.com\" in AI_ENDPOINT:\n            ai_response = result['candidates'][0]['content']['parts'][0]['text']\n        else: # Assume OpenAI-compatible for any other endpoint\n            ai_response = result['choices'][0]['message']['content']\n\n        print(\"\\n--- AI Recommendations (Offline) ---\")\n        print(ai_response)\n    except requests.exceptions.RequestException as e:\n        print(f\"Error during offline AI call: {e}\")\n    except Exception as e:\n        print(f\"An unexpected error occurred: {e}\")\nelse:\n    print(\"No AI prompt found in the structured findings for offline analysis.\")\n```\n====\n"
+            ai_recommendations = "[NOTE]\n====\nAI analysis is enabled but configured for offline processing. The AI prompt has been generated and saved to 'structured_health_check_findings.json'.\n\nTo get AI recommendations from this data:\n\n1.  **Ensure you have network access** to your chosen AI provider's API (e.g., via VPN if necessary).\n2.  **Use a separate script or tool** to read `structured_health_check_findings.json`.\n3.  **Extract the `prompt_sent` field** from the JSON. This contains the full prompt prepared for the AI.\n4.  **Send this `prompt_sent` string to your AI API endpoint** (e.g., Google Gemini or an OpenAI-compatible endpoint).\n5.  **Integrate the AI's response** into your report or review it separately.\n\nExample (Python conceptual for offline script):\n```python\nimport json\nimport requests\nimport time # NEW: Import time for offline example\n\n# --- Configuration for your offline script ---\nAPI_KEY = \"YOUR_AI_API_KEY\"\nAI_ENDPOINT = \"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)\" # Or your OpenAI-compatible endpoint\nAI_MODEL = \"gemini-2.0-flash\" # Or \"gpt-3.5-turbo\"\nAI_USER = \"offline_user\" # Default user for offline processing\nAI_USER_HEADER_NAME = \"X-User-ID\" # Custom user header name for proxy\nSSL_CERT_PATH = \"\" # Or '/path/to/your/cert.pem' for SSL verification\n\n# --- Load the saved structured findings ---\nwith open('adoc_out/nuance/structured_health_check_findings.json', 'r') as f:\n    findings = json.load(f)\n\n# Extract the prompt that was prepared by the main script\nfull_prompt = findings.get('run_recommendation', {}).get('data', {}).get('prompt_sent', '')\n\nif full_prompt:\n    print(\"\\n--- Sending to AI for offline analysis ---\")\n    # Prepare headers for offline script\n    offline_headers = {'Content-Type': 'application/json'}\n    if AI_USER_HEADER_NAME and AI_USER:\n        offline_headers[AI_USER_HEADER_NAME] = AI_USER\n\n    # Set SSL verification for offline script\n    offline_verify_ssl = SSL_CERT_PATH if SSL_CERT_PATH else True\n\n    # Determine AI Provider and Construct Request for offline script\n    if \"generativelanguage.googleapis.com\" in AI_ENDPOINT:\n        API_URL_OFFLINE = f\"{AI_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}\"\n        payload_offline = {\"contents\": [{\"role\": \"user\", \"parts\": [{\"text\": full_prompt}]}]}\n    else: # Assume OpenAI-compatible for any other endpoint\n        API_URL_OFFLINE = f\"{AI_ENDPOINT}v1/chat/completions\"\n        payload_offline = {\n            \"model\": AI_MODEL,\n            \"messages\": [{\"role\": \"user\", \"content\": full_prompt}],\n            \"user\": AI_USER # Add 'user' field to payload body for offline\n        }\n        offline_headers['Authorization'] = f'Bearer {API_KEY}'\n\n    try:\n        # Record start time for offline analysis\n        offline_start_time = time.time()\n\n        response = requests.post(API_URL_OFFLINE, headers=offline_headers, data=json.dumps(payload_offline), verify=offline_verify_ssl)\n        response.raise_for_status()\n\n        # Record end time for offline analysis\n        offline_end_time = time.time()\n        offline_time_taken = offline_end_time - offline_start_time\n\n        result = response.json()\n        \n        offline_ai_response = \"\"\n        offline_response_chars = 0\n        offline_prompt_tokens = \"N/A\"\n        offline_completion_tokens = \"N/A\"\n        offline_total_tokens = \"N/A\"\n\n        if \"generativelanguage.googleapis.com\" in AI_ENDPOINT:\n            offline_ai_response = result['candidates'][0]['content']['parts'][0]['text']\n            offline_response_chars = len(offline_ai_response)\n        else: # Assume OpenAI-compatible for any other endpoint\n            offline_ai_response = result['choices'][0]['message']['content']\n            offline_response_chars = len(offline_ai_response)\n            if 'usage' in result:\n                offline_prompt_tokens = result['usage'].get('prompt_tokens')\n                offline_completion_tokens = result['usage'].get('completion_tokens')\n                offline_total_tokens = result['usage'].get('total_tokens')\n\n        print(\"\\n--- AI Recommendations (Offline) ---\")\n        print(f\"AI Endpoint: {AI_ENDPOINT}\")\n        print(f\"AI Model: {AI_MODEL}\")\n        print(f\"Prompt Characters: {len(full_prompt)}\")\n        print(f\"Response Characters: {offline_response_chars}\")\n        print(f\"Analysis Time: {round(offline_time_taken, 2)} seconds\")\n        if offline_prompt_tokens != \"N/A\":\n            print(f\"Prompt Tokens: {offline_prompt_tokens}\")\n            print(f\"Completion Tokens: {offline_completion_tokens}\")\n            print(f\"Total Tokens: {offline_total_tokens}\")\n        print(offline_ai_response)\n    except requests.exceptions.RequestException as e:\n        print(f\"Error during offline AI call: {e}\")\n    except Exception as e:\n        print(f\"An unexpected error occurred: {e}\")\nelse:\n    print(\"No AI prompt found in the structured findings for offline analysis.\")\n```\n====\n"
             structured_data["ai_analysis"]["status"] = "offline_mode"
             structured_data["ai_analysis"]["note"] = "AI analysis skipped for integrated run; prompt saved for offline processing."
     else:
@@ -169,6 +190,25 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
 
     # --- Step 3: Integrate AI Response into AsciiDoc Content ---
     adoc_content.append("\n=== AI-Generated Recommendations\n")
+    # NEW: Add AI Endpoint, Model, and Statistics below the heading
+    ai_info_str = f"AI Endpoint: `{structured_data['ai_analysis'].get('endpoint', 'N/A')}`\n"
+    ai_info_str += f"AI Model: `{structured_data['ai_analysis'].get('model', 'N/A')}`\n"
+    ai_info_str += f"Prompt Characters: `{structured_data['ai_analysis'].get('prompt_characters', 'N/A')}`\n"
+    ai_info_str += f"Response Characters: `{structured_data['ai_analysis'].get('response_characters', 'N/A')}`\n"
+    ai_info_str += f"Analysis Time: `{structured_data['ai_analysis'].get('analysis_time_seconds', 'N/A')}` seconds\n"
+    
+    if structured_data['ai_analysis'].get('prompt_tokens') is not None:
+        ai_info_str += f"Prompt Tokens: `{structured_data['ai_analysis'].get('prompt_tokens', 'N/A')}`\n"
+        ai_info_str += f"Completion Tokens: `{structured_data['ai_analysis'].get('completion_tokens', 'N/A')}`\n"
+        ai_info_str += f"Total Tokens: `{structured_data['ai_analysis'].get('total_tokens', 'N/A')}`\n"
+
+    adoc_content.append(f"[cols=\"1,1\",options=\"header\"]\n|===\n|Metric | Value\n|AI Endpoint | `{structured_data['ai_analysis'].get('endpoint', 'N/A')}`\n|AI Model | `{structured_data['ai_analysis'].get('model', 'N/A')}`\n|Prompt Characters | `{structured_data['ai_analysis'].get('prompt_characters', 'N/A')}`\n|Response Characters | `{structured_data['ai_analysis'].get('response_characters', 'N/A')}`\n|Analysis Time | `{structured_data['ai_analysis'].get('analysis_time_seconds', 'N/A')}` seconds\n")
+    if structured_data['ai_analysis'].get('prompt_tokens') is not None:
+        adoc_content.append(f"|Prompt Tokens | `{structured_data['ai_analysis'].get('prompt_tokens', 'N/A')}`\n")
+        adoc_content.append(f"|Completion Tokens | `{structured_data['ai_analysis'].get('completion_tokens', 'N/A')}`\n")
+        adoc_content.append(f"|Total Tokens | `{structured_data['ai_analysis'].get('total_tokens', 'N/A')}`\n")
+    adoc_content.append("|===\n\n")
+
     adoc_content.append(ai_recommendations)
     
     adoc_content.append("[TIP]\n====\n"
