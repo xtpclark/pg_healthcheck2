@@ -16,6 +16,7 @@ def load_config(config_file_path):
         settings['ai_model'] = settings.get('ai_model', 'gemini-2.0-flash')
         settings['ai_user'] = settings.get('ai_user', 'anonymous')
         settings['ai_user_header'] = settings.get('ai_user_header', '')
+        settings['ssl_cert_path'] = settings.get('ssl_cert_path', '') # NEW: Load SSL cert path
 
         return settings
     except FileNotFoundError:
@@ -25,7 +26,7 @@ def load_config(config_file_path):
         print(f"Error parsing config.yaml: {e}")
         sys.exit(1)
 
-def run_offline_ai_analysis(config_file='config/config.yaml', structured_findings_file='adoc_out/nuance/structured_health_check_findings.json'):
+def run_offline_ai_analysis(config_file='config/config.yaml', structured_findings_file='structured_health_check_findings.json'):
     """
     Performs AI analysis offline by reading a structured findings JSON file
     and sending its prompt to the configured AI endpoint.
@@ -74,19 +75,25 @@ def run_offline_ai_analysis(config_file='config/config.yaml', structured_finding
     API_KEY = settings.get('ai_api_key', '')
     AI_ENDPOINT = settings.get('ai_endpoint', 'https://generativelanguage.googleapis.com/v1beta/models/')
     AI_MODEL = settings.get('ai_model', 'gemini-2.0-flash')
+    AI_USER = settings.get('ai_user', 'anonymous') # Get AI user from settings
+    AI_USER_HEADER_NAME = settings.get('ai_user_header', '') # Get custom AI user header name
+    SSL_CERT_PATH = settings.get('ssl_cert_path', '') # Get SSL cert path
 
     if not API_KEY:
         print("Error: AI API key not found in config.yaml. Cannot perform offline AI analysis.")
         sys.exit(1)
 
+    # Set SSL verification
+    # If ssl_cert_path is provided, use it. Otherwise, use default (True for SSL verification).
+    verify_ssl = SSL_CERT_PATH if SSL_CERT_PATH else True
+
     ai_recommendations = "Failed to get AI recommendations."
     try:
         # Prepare common headers
         headers = {'Content-Type': 'application/json'}
-        # Add ai_user_header if configured
-        ai_user_header_name = settings.get('ai_user_header', '')
-        if ai_user_header_name and settings.get('ai_user'):
-            headers[ai_user_header_name] = settings['ai_user']
+        # Add custom AI user header if configured
+        if AI_USER_HEADER_NAME and AI_USER:
+            headers[AI_USER_HEADER_NAME] = AI_USER
 
         # --- Determine AI Provider and Construct Request ---
         if "generativelanguage.googleapis.com" in AI_ENDPOINT:
@@ -95,21 +102,19 @@ def run_offline_ai_analysis(config_file='config/config.yaml', structured_finding
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": full_prompt}]}]
             }
-        elif "api.openai.com" in AI_ENDPOINT:
-            # OpenAI API (or compatible endpoint)
-            API_URL = f"{AI_ENDPOINT}v1/chat/completions"
+        else:
+            # Assume OpenAI API (or compatible endpoint)
+            API_URL = f"{AI_ENDPOINT}v1/chat/completions" # Assuming standard OpenAI chat completions path
             payload = {
                 "model": AI_MODEL,
-                "messages": [{"role": "user", "content": full_prompt}]
+                "messages": [{"role": "user", "content": full_prompt}],
+                "user": AI_USER # Add user field for OpenAI-compatible APIs
             }
-            # Add OpenAI specific Authorization header
+            # Add Authorization header for OpenAI-compatible APIs
             headers['Authorization'] = f'Bearer {API_KEY}'
-        else:
-            print(f"Error: Unsupported AI endpoint '{AI_ENDPOINT}'.")
-            sys.exit(1)
 
         print(f"\n--- Sending prompt to AI model: {AI_MODEL} at {API_URL} ---")
-        response = requests.post(API_URL, headers=headers, data=json.dumps(payload))
+        response = requests.post(API_URL, headers=headers, data=json.dumps(payload), verify=verify_ssl)
         response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
 
         result = response.json()
@@ -121,12 +126,13 @@ def run_offline_ai_analysis(config_file='config/config.yaml', structured_finding
             else:
                 ai_recommendations = f"AI response structure unexpected (Gemini): {json.dumps(result)}"
                 print(f"Warning: AI response structure unexpected (Gemini): {json.dumps(result)}")
-        elif "api.openai.com" in AI_ENDPOINT:
+        else:
+            # OpenAI API (or compatible endpoint)
             if result and result.get('choices') and result['choices'][0].get('message') and result['choices'][0]['message'].get('content'):
                 ai_recommendations = result['choices'][0]['message']['content']
             else:
-                ai_recommendations = f"AI response structure unexpected (OpenAI): {json.dumps(result)}"
-                print(f"Warning: AI response structure unexpected (OpenAI): {json.dumps(result)}")
+                ai_recommendations = f"AI response structure unexpected (OpenAI-compatible): {json.dumps(result)}"
+                print(f"Warning: AI response structure unexpected (OpenAI-compatible): {json.dumps(result)}")
 
     except requests.exceptions.RequestException as e:
         print(f"Error communicating with AI API: {e}")
@@ -149,9 +155,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run offline AI analysis on PostgreSQL health check findings.")
     parser.add_argument('--config', type=str, default='config/config.yaml',
                         help='Path to the config.yaml file.')
-    parser.add_argument('--findings', type=str, default='adoc_out/nuance/structured_health_check_findings.json',
+    parser.add_argument('--findings', type=str, default='structured_health_check_findings.json',
                         help='Path to the structured_health_check_findings.json file.')
     args = parser.parse_args()
 
     run_offline_ai_analysis(args.config, args.findings)
-

@@ -49,6 +49,7 @@ class HealthCheck:
             settings['ai_user'] = settings.get('ai_user', 'anonymous') # Default for AI user
             settings['ai_run_integrated'] = settings.get('ai_run_integrated', True) # Default to True for integrated run
             settings['ai_user_header'] = settings.get('ai_user_header', '') # Default to empty string
+            settings['ssl_cert_path'] = settings.get('ssl_cert_path', '') # NEW: Load SSL cert path
 
             return settings
         except FileNotFoundError:

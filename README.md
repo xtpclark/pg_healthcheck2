@@ -36,6 +36,8 @@ The PostgreSQL Health Check program is a powerful diagnostic tool for PostgreSQL
 * **Flexible AI Execution**: Supports both integrated (online) AI analysis during report generation and offline/separate AI processing for environments with network restrictions (e.g., corporate VPNs).
 * **Test Case Generation**: Includes a script (`create_test_cases.sh`) to easily populate a test database with diverse scenarios for comprehensive testing.
 * **Platform-Aware Advice**: Provides general and platform-specific best practices (e.g., for AWS RDS/Aurora, and others).
+* **Detailed AI Metrics**: Reports on the AI endpoint, model used, prompt/response character counts, and analysis time directly within the generated report.
+* **Custom SSL Certificate Support**: Allows specifying a custom SSL certificate for secure communication with AI API endpoints that require it.
 
 ## 3. Installation and Setup
 
@@ -130,16 +132,14 @@ min_tup_ins_threshold: 500000 # Minimum tuples inserted for a table to be consid
 
 # AI Configuration
 ai_analyze: true            # Master switch: Set to true to enable AI analysis (whether integrated or offline)
-ai_api_key: "YOUR_AI_API_KEY" # Your AI API key (e.g., Google Gemini, OpenAI)
-ai_endpoint: "[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)" # AI API endpoint (e.g., for Gemini)
-ai_model: "gemini-2.0-flash" # AI model to use (e.g., "gemini-2.0-flash" or "gpt-3.5-turbo")
-ai_user: "healthcheck_runner" # Optional: User identifier for AI analysis context
+ai_api_key: "YOUR_AI_API_KEY" # Your AI API key for authentication with the AI endpoint
+ai_endpoint: "[https://your-ai-api-endpoint.com/v1](https://your-ai-api-endpoint.com/v1)" # The URL of your AI API (e.g., Google Gemini, OpenAI-compatible proxy)
+ai_model: "your-ai-model-name" # The specific AI model to use (e.g., "gemini-2.0-flash", "gpt-4.1")
+ai_user: "healthcheck_runner" # Optional: User identifier to send with AI requests for context/logging
 ai_run_integrated: true     # Set to true for AI analysis during main report generation; false for offline processing
 ai_user_header: "X-User-ID" # Optional: Custom HTTP header name for ai_user (e.g., for corporate proxies/AIs)
+ssl_cert_path: "/path/to/your/custom/cert.pem" # Optional: Path to a custom SSL certificate for verifying AI endpoint (e.g., for corporate proxies)
 
-# Background text (now loaded from comments/background.txt)
-# background: |
-#   Your background text here...
 ```
 
 ## 5. Running the Health Check
@@ -164,7 +164,7 @@ python3 ./offline_ai_processor.py --config config/config.yaml --findings adoc_ou
 * Replace `config/config.yaml` with the path to your configuration file.
 * Replace `adoc_out/YourCompany/structured_health_check_findings.json` with the actual path to your generated JSON findings file.
 
-The script will print the AI's recommendations to the console. You can then manually integrate these into your `health_check.adoc` report if desired.
+The script will print the AI's recommendations and analysis statistics to the console. You can then manually integrate these into your `health_check.adoc` report if desired.
 
 ## 6. Test Case Generation (`create_test_cases.sh`)
 
@@ -199,6 +199,7 @@ The health check report is structured into several key sections, each providing 
     * **Critical Performance Settings**: Focused analysis of key performance-impacting parameters.
     * **Aurora CPU and IOPS Metrics**: Database-internal indicators of CPU/IOPS usage, and if `is_aurora: true`, fetches actual CloudWatch metrics from AWS.
     * **Datadog Monitoring Setup**: Checks PostgreSQL configuration relevant to Datadog monitoring.
+    * **Monitoring Setup**: Checks PostgreSQL configuration relevant to general database monitoring solutions.
 * **Cache Analysis**: PostgreSQL buffer cache usage and hit ratios.
 * **Vacuum, Bloat and TXID Wrap Analysis**:
     * **Vacuum and Bloat Analysis**: Vacuum activity, dead tuples, and transaction ID wraparound risks.
@@ -209,6 +210,7 @@ The health check report is structured into several key sections, each providing 
     * **Checkpoint Activity**: Analysis of checkpoint activity to optimize WAL performance.
     * **WAL Usage and Archiving**: WAL usage and archiving status for recovery.
     * **Background Writer Statistics**: Performance metrics for the background writer process.
+    
 
 ### 7.2. Performance & Object Analysis
 
@@ -248,7 +250,7 @@ The health check report is structured into several key sections, each providing 
 ### 7.4. Recommendations & Best Practices
 
 * **Recommendations**:
-    * **AI-Generated Recommendations**: Provides aggregated, prioritized, and actionable recommendations based on the AI's analysis of all collected structured data.
+    * **AI-Generated Recommendations**: Provides aggregated, prioritized, and actionable recommendations based on the AI's analysis of all collected structured data, including details on the AI model and analysis metrics.
     * **General Recommendations Overview**: General best practices and advice (from `comments/recommendations.txt`).
     * **pgBadger Setup and Analysis Recommendations**: Guidance on configuring PostgreSQL logging for `pgBadger` and how to use the tool for log analysis (from `comments/pgbadger_setup.txt`).
 * **General PostgreSQL Best Practices**:
@@ -262,6 +264,7 @@ The health check report is structured into several key sections, each providing 
     * **AWS RDS/Aurora Best Practices** (from `comments/rds_aurora_best_practices.txt`)
     * **Instaclustr Managed PostgreSQL Best Practices** (from `comments/instaclustr_best_practices.txt`)
     * **NetApp ANF / FSx Storage Best Practices for PostgreSQL** (from `comments/netapp_anf_best_practices.txt`)
+
 
 ### 7.5. Appendix
 
@@ -293,17 +296,22 @@ The interaction with the AI API is conditional, based on settings in `config.yam
 
 * **`ai_analyze: true` (Master Switch)**: If this is `false`, AI analysis is entirely skipped, and a note is added to the report.
 * **`ai_run_integrated: true` (Integrated Mode)**: If `ai_analyze` is `true` and `ai_run_integrated` is `true`, the `run_recommendation.py` module makes an HTTP POST request directly to the configured AI endpoint during the main report generation.
-    * The `ai_api_key`, `ai_endpoint`, and `ai_model` are loaded from `config.yaml`.
-    * The prompt is sent as the user's message.
-    * Logic is included to handle both Google Gemini API and OpenAI-compatible API responses.
+    * The `ai_api_key`, `ai_endpoint`, `ai_model`, `ai_user`, `ai_user_header`, and `ssl_cert_path` are loaded from `config.yaml`.
+    * The prompt is sent as the user's message, and the `ai_user` is included in the payload for compatible APIs.
+    * The request uses the specified `ssl_cert_path` for SSL verification.
+    * Logic is included to handle both Google Gemini API and other OpenAI-compatible API responses.
     * Custom headers (like `ai_user_header`) can be configured for corporate proxy/AI authentication.
+    * Metrics such as prompt/response character counts, analysis time, and (if available) token usage are collected and included in the report.
 * **`ai_run_integrated: false` (Offline Mode)**: If `ai_analyze` is `true` but `ai_run_integrated` is `false`, the `run_recommendation.py` module *does not* make the API call. Instead, it generates a note in the report instructing the user to use the saved `structured_health_check_findings.json` file with a separate `offline_ai_processor.py` script to perform the AI analysis.
+
+
+
 
 ### 8.4. Recommendation Generation and Integration
 
 * The AI model processes the comprehensive prompt and generates a text response containing its analysis and prioritized recommendations.
 * This AI-generated text is then captured by the `run_recommendation.py` module (in integrated mode) or by the `offline_ai_processor.py` script (in offline mode).
-* Finally, the AI's recommendations are integrated directly into the AsciiDoc report under the "AI-Generated Recommendations" sub-section, providing actionable insights alongside the raw data.
+* Finally, the AI's recommendations, along with the collected AI analysis metrics, are integrated directly into the AsciiDoc report under the "AI-Generated Recommendations" sub-section, providing actionable insights alongside the raw data.
 
 This AI integration elevates the health check from a diagnostic tool to a prescriptive one, offering intelligent guidance to optimize your PostgreSQL database.
 
