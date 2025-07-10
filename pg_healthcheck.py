@@ -7,10 +7,11 @@ import subprocess
 import importlib
 import inspect # Import inspect to check function signatures
 from pathlib import Path
-from datetime import datetime # Import datetime type
+from datetime import datetime, timedelta # Import datetime and timedelta types
 from report_config import REPORT_SECTIONS
 import json # Import json for structured data output
 from decimal import Decimal # Import Decimal type
+import re # Import re module for regular expressions
 
 # Custom JSON Encoder to handle Decimal and datetime objects
 class CustomJsonEncoder(json.JSONEncoder):
@@ -19,6 +20,8 @@ class CustomJsonEncoder(json.JSONEncoder):
             return float(obj) # Convert Decimal to float
         if isinstance(obj, datetime):
             return obj.isoformat() # Convert datetime to ISO 8601 string
+        if isinstance(obj, timedelta): # Handle timedelta objects
+            return obj.total_seconds() # Convert timedelta to total seconds
         # Let the base class default method raise the TypeError for other types
         return json.JSONEncoder.default(self, obj)
 
@@ -49,7 +52,9 @@ class HealthCheck:
             settings['ai_user'] = settings.get('ai_user', 'anonymous') # Default for AI user
             settings['ai_run_integrated'] = settings.get('ai_run_integrated', True) # Default to True for integrated run
             settings['ai_user_header'] = settings.get('ai_user_header', '') # Default to empty string
-            settings['ssl_cert_path'] = settings.get('ssl_cert_path', '') # NEW: Load SSL cert path
+            settings['ssl_cert_path'] = settings.get('ssl_cert_path', '') # Load SSL cert path
+            settings['ai_temperature'] = settings.get('ai_temperature', 0.7) # Load AI temperature, default 0.7
+            settings['ai_max_output_tokens'] = settings.get('ai_max_output_tokens', 2048) # Load AI max output tokens, default 2048
 
             return settings
         except FileNotFoundError:
@@ -62,12 +67,16 @@ class HealthCheck:
     def get_paths(self):
         """Set up paths for modules, comments, and output."""
         workdir = Path.cwd()
+        # Sanitize company_name for use in file paths
+        # Convert to lowercase, replace spaces with underscores, remove non-alphanumeric (except underscores)
+        sanitized_company_name = re.sub(r'\W+', '_', self.settings['company_name'].lower()).strip('_')
+        
         return {
             'modules': workdir / 'modules',
             'comments': workdir / 'comments',
-            'adoc_out': workdir / 'adoc_out' / self.settings['company_name'].lower(),
-            'hist_out': workdir / 'health_history' / 'csv_out' / self.settings['company_name'].lower() / datetime.now().strftime('%Y-%m-%d_%H-%M-%S'),
-            'adoc_image': workdir / 'adoc_out' / self.settings['company_name'].lower() / 'images'
+            'adoc_out': workdir / 'adoc_out' / sanitized_company_name,
+            'hist_out': workdir / 'health_history' / 'csv_out' / sanitized_company_name / datetime.now().strftime('%Y-%m-%d_%H-%M-%S'),
+            'adoc_image': workdir / 'adoc_out' / sanitized_company_name / 'images'
         }
 
     def connect_db(self):
@@ -82,8 +91,22 @@ class HealthCheck:
             )
             self.conn.autocommit = True
             self.cursor = self.conn.cursor()
-            self.cursor.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');")
-            self.settings['has_pgstat'] = 't' if self.cursor.fetchone()[0] else 'f'
+            
+            # NEW: More robust check for pg_stat_statements.
+            # Try to query pg_stat_statements_info first (for newer PG versions), then pg_stat_statements.
+            self.settings['has_pgstat'] = 'f' # Default to false
+            try:
+                self.cursor.execute("SELECT count(*) FROM pg_stat_statements_info;")
+                self.settings['has_pgstat'] = 't'
+            except psycopg2.Error:
+                # If pg_stat_statements_info fails, try the older pg_stat_statements
+                try:
+                    self.cursor.execute("SELECT count(*) FROM pg_stat_statements;")
+                    self.settings['has_pgstat'] = 't'
+                except psycopg2.Error as e:
+                    print(f"Warning: Neither pg_stat_statements_info nor pg_stat_statements view is accessible or enabled for data collection: {e}")
+                    self.settings['has_pgstat'] = 'f'
+            
         except psycopg2.Error as e:
             print(f"Error connecting to database: {e}")
             sys.exit(1)
@@ -242,7 +265,8 @@ class HealthCheck:
         # For example, save to a JSON file for later AI analysis
         structured_output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
         try:
-            # Use the custom encoder here
+            # Ensure the parent directory exists before writing the file
+            structured_output_path.parent.mkdir(parents=True, exist_ok=True)
             with open(structured_output_path, 'w') as f:
                 json.dump(self.all_structured_findings, f, indent=2, cls=CustomJsonEncoder)
             print(f"\nStructured health check findings saved to: {structured_output_path}")

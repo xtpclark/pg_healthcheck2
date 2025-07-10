@@ -31,7 +31,8 @@ def run_pg_stat_statements_config(cursor, settings, execute_query, execute_pgbou
     # Check if pg_stat_statements extension is actually created in the current DB
     extension_exists_query = "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');"
     formatted_ext_exists, raw_ext_exists = execute_query(extension_exists_query, is_check=True, return_raw=True)
-    is_extension_created = (raw_ext_exists == 't') # True if extension is created
+    # NEW: Correctly interpret the boolean string 't' or 'True'
+    is_extension_created = (str(raw_ext_exists).lower() == 't' or str(raw_ext_exists).lower() == 'true')
 
     for title, query, condition, data_key in queries:
         if not condition:
@@ -103,4 +104,3 @@ def run_pg_stat_statements_config(cursor, settings, execute_query, execute_pgbou
     
     # Return both formatted AsciiDoc content and structured data
     return "\n".join(adoc_content), structured_data
-

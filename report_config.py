@@ -9,7 +9,7 @@ REPORT_SECTIONS = [
     {
         "title": "Background",
         "actions": [
-            {"type": "comments", "file": "background.txt"}
+            {"type": "comments", "display_title": "", "file": "background.txt"}
         ]
     },
     {
@@ -91,10 +91,18 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "table_object_counts", "function": "run_table_object_counts"},
             {"type": "module", "module": "matviews", "function": "run_matview"},
             {"type": "module", "module": "partitioned_tbl", "function": "run_list_part"},
-            {"type": "module", "module": "n_tuples_in", "function": "run_tuples_in"},
+            # {"type": "module", "module": "n_tuples_in", "function": "run_tuples_in"},
+            {"type": "module", "module": "high_insert_tables", "function": "run_high_insert_tables"}, #n_tuples_in
+            {"type": "module", "module": "top_write_queries", "function": "run_top_write_queries"}, #n_tuples_in
             {"type": "module", "module": "table_metrics", "function": "run_table_metrics"},
             {"type": "module", "module": "foreign_key_audit", "function": "run_foreign_key_audit"},
             {"type": "module", "module": "no_pk_uk_tables", "function": "run_no_pk_uk_tables"}
+        ]
+    },
+    {
+        'title': 'Function and Stored Procedure Audit',
+        'actions': [
+            {'type': 'module', 'module': 'function_audit', 'function': 'run_function_audit'},
         ]
     },
     {

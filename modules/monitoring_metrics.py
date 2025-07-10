@@ -6,13 +6,26 @@ def run_monitoring_metrics(cursor, settings, execute_query, execute_pgbouncer, a
     adoc_content = ["=== General Monitoring Metrics", "Gathers key performance metrics for overall database health monitoring."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
+    # Get PostgreSQL version
+    pg_version_query = "SHOW server_version_num;"
+    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
+    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
+
+    # Determine if it's PostgreSQL 17 or newer (version number 170000 and above)
+    is_pg17_or_newer = pg_version_num >= 170000
+
     if settings['show_qry'] == 'true':
         adoc_content.append("General monitoring metrics queries:")
         adoc_content.append("[,sql]\n----")
         adoc_content.append("SELECT numbackends, xact_commit, xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted FROM pg_stat_database WHERE datname = %(database)s;")
         adoc_content.append("SELECT sum(numbackends) AS total_connections, sum(xact_commit) AS total_commits, sum(xact_rollback) AS total_rollbacks FROM pg_stat_database;")
-        # Corrected query for pg_stat_bgwriter
-        adoc_content.append("SELECT checkpoints_timed, checkpoints_req, buffers_alloc, buffers_clean, buffers_backend, buffers_checkpoint, buffers_backend_fsync FROM pg_stat_bgwriter;")
+        
+        if is_pg17_or_newer:
+            # For PG17+, query pg_stat_checkpointer for checkpoint-related stats
+            adoc_content.append("SELECT num_timed AS checkpoints_timed, num_requested AS checkpoints_req, write_time AS checkpoint_write_time, sync_time AS checkpoint_sync_time, buffers_written AS buffers_checkpoint FROM pg_stat_checkpointer;")
+        else:
+            # For older PG versions, query pg_stat_bgwriter
+            adoc_content.append("SELECT checkpoints_timed, checkpoints_req, buffers_alloc, buffers_clean, buffers_backend, buffers_checkpoint, buffers_backend_fsync FROM pg_stat_bgwriter;")
         adoc_content.append("----")
 
     queries = [
@@ -27,15 +40,29 @@ def run_monitoring_metrics(cursor, settings, execute_query, execute_pgbouncer, a
             "SELECT sum(numbackends) AS total_connections, sum(xact_commit) AS total_commits, sum(xact_rollback) AS total_rollbacks FROM pg_stat_database;", 
             True,
             "overall_transaction_buffer_stats" # Data key
-        ),
-        (
-            "Background Writer & Checkpoint Summary", 
-            # Corrected column names for pg_stat_bgwriter
-            "SELECT checkpoints_timed, checkpoints_req, buffers_alloc, buffers_clean, buffers_backend, buffers_checkpoint, buffers_backend_fsync FROM pg_stat_bgwriter;", 
-            True,
-            "bgwriter_checkpoint_summary" # Data key
         )
     ]
+
+    # Add Background Writer & Checkpoint Summary based on PG version
+    if is_pg17_or_newer:
+        queries.append(
+            (
+                "Background Writer & Checkpoint Summary (PostgreSQL 17+)", 
+                "SELECT num_timed AS checkpoints_timed, num_requested AS checkpoints_req, write_time AS checkpoint_write_time, sync_time AS checkpoint_sync_time, buffers_written AS buffers_checkpoint FROM pg_stat_checkpointer;", 
+                True,
+                "bgwriter_checkpoint_summary" # Data key
+            )
+        )
+    else:
+        queries.append(
+            (
+                "Background Writer & Checkpoint Summary (PostgreSQL < 17)", 
+                "SELECT checkpoints_timed, checkpoints_req, buffers_alloc, buffers_clean, buffers_backend, buffers_checkpoint, buffers_backend_fsync FROM pg_stat_bgwriter;", 
+                True,
+                "bgwriter_checkpoint_summary" # Data key
+            )
+        )
+
 
     for title, query, condition, data_key in queries:
         if not condition:
@@ -70,4 +97,3 @@ def run_monitoring_metrics(cursor, settings, execute_query, execute_pgbouncer, a
     
     # Return both formatted AsciiDoc content and structured data
     return "\n".join(adoc_content), structured_data
-

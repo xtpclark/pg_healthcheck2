@@ -3,6 +3,7 @@ import requests
 import sys
 import yaml
 from pathlib import Path
+import time # Import time module for measuring analysis duration
 
 def load_config(config_file_path):
     """Loads configuration settings from config.yaml."""
@@ -16,7 +17,9 @@ def load_config(config_file_path):
         settings['ai_model'] = settings.get('ai_model', 'gemini-2.0-flash')
         settings['ai_user'] = settings.get('ai_user', 'anonymous')
         settings['ai_user_header'] = settings.get('ai_user_header', '')
-        settings['ssl_cert_path'] = settings.get('ssl_cert_path', '') # NEW: Load SSL cert path
+        settings['ssl_cert_path'] = settings.get('ssl_cert_path', '')
+        settings['ai_temperature'] = settings.get('ai_temperature', 0.7) # Load AI temperature
+        settings['ai_max_output_tokens'] = settings.get('ai_max_output_tokens', 2048) # Load AI max output tokens
 
         return settings
     except FileNotFoundError:
@@ -75,16 +78,17 @@ def run_offline_ai_analysis(config_file='config/config.yaml', structured_finding
     API_KEY = settings.get('ai_api_key', '')
     AI_ENDPOINT = settings.get('ai_endpoint', 'https://generativelanguage.googleapis.com/v1beta/models/')
     AI_MODEL = settings.get('ai_model', 'gemini-2.0-flash')
-    AI_USER = settings.get('ai_user', 'anonymous') # Get AI user from settings
-    AI_USER_HEADER_NAME = settings.get('ai_user_header', '') # Get custom AI user header name
-    SSL_CERT_PATH = settings.get('ssl_cert_path', '') # Get SSL cert path
+    AI_USER = settings.get('ai_user', 'anonymous')
+    AI_USER_HEADER_NAME = settings.get('ai_user_header', '')
+    SSL_CERT_PATH = settings.get('ssl_cert_path', '')
+    AI_TEMPERATURE = settings.get('ai_temperature', 0.7) # Get AI temperature
+    AI_MAX_OUTPUT_TOKENS = settings.get('ai_max_output_tokens', 2048) # Get AI max output tokens
 
     if not API_KEY:
         print("Error: AI API key not found in config.yaml. Cannot perform offline AI analysis.")
         sys.exit(1)
 
     # Set SSL verification
-    # If ssl_cert_path is provided, use it. Otherwise, use default (True for SSL verification).
     verify_ssl = SSL_CERT_PATH if SSL_CERT_PATH else True
 
     ai_recommendations = "Failed to get AI recommendations."
@@ -100,7 +104,11 @@ def run_offline_ai_analysis(config_file='config/config.yaml', structured_finding
             # Google Gemini API
             API_URL = f"{AI_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}"
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": full_prompt}]}]
+                "contents": [{"role": "user", "parts": [{"text": full_prompt}]}],
+                "generationConfig": { # Add generation config for Gemini
+                    "temperature": AI_TEMPERATURE,
+                    "maxOutputTokens": AI_MAX_OUTPUT_TOKENS
+                }
             }
         else:
             # Assume OpenAI API (or compatible endpoint)
@@ -108,28 +116,51 @@ def run_offline_ai_analysis(config_file='config/config.yaml', structured_finding
             payload = {
                 "model": AI_MODEL,
                 "messages": [{"role": "user", "content": full_prompt}],
-                "user": AI_USER # Add user field for OpenAI-compatible APIs
+                "user": AI_USER,
+                "temperature": AI_TEMPERATURE, # Add temperature for OpenAI-compatible
+                "max_tokens": AI_MAX_OUTPUT_TOKENS # Add max_tokens for OpenAI-compatible
             }
-            # Add Authorization header for OpenAI-compatible APIs
+            # Add OpenAI specific Authorization header
             headers['Authorization'] = f'Bearer {API_KEY}'
 
         print(f"\n--- Sending prompt to AI model: {AI_MODEL} at {API_URL} ---")
+        
+        # Record start time for analysis
+        start_time = time.time()
+
         response = requests.post(API_URL, headers=headers, data=json.dumps(payload), verify=verify_ssl)
         response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
 
+        # Record end time for analysis
+        end_time = time.time()
+        time_taken = end_time - start_time # Calculate time taken
+
         result = response.json()
         
+        # Print AI analysis statistics
+        print(f"AI Endpoint: {AI_ENDPOINT}")
+        print(f"AI Model: {AI_MODEL}")
+        print(f"AI Temperature: {AI_TEMPERATURE}")
+        print(f"AI Max Output Tokens: {AI_MAX_OUTPUT_TOKENS}")
+        print(f"Prompt Characters: {len(full_prompt)}")
+        print(f"Analysis Time: {round(time_taken, 2)} seconds")
+
         # --- Parse AI Response based on Provider ---
         if "generativelanguage.googleapis.com" in AI_ENDPOINT:
             if result and result.get('candidates') and result['candidates'][0].get('content') and result['candidates'][0]['content'].get('parts'):
                 ai_recommendations = result['candidates'][0]['content']['parts'][0]['text']
+                print(f"Response Characters: {len(ai_recommendations)}")
             else:
                 ai_recommendations = f"AI response structure unexpected (Gemini): {json.dumps(result)}"
                 print(f"Warning: AI response structure unexpected (Gemini): {json.dumps(result)}")
-        else:
-            # OpenAI API (or compatible endpoint)
+        else: # Assume OpenAI-compatible for any other endpoint
             if result and result.get('choices') and result['choices'][0].get('message') and result['choices'][0]['message'].get('content'):
                 ai_recommendations = result['choices'][0]['message']['content']
+                print(f"Response Characters: {len(ai_recommendations)}")
+                if 'usage' in result:
+                    print(f"Prompt Tokens: {result['usage'].get('prompt_tokens')}")
+                    print(f"Completion Tokens: {result['usage'].get('completion_tokens')}")
+                    print(f"Total Tokens: {result['usage'].get('total_tokens')}")
             else:
                 ai_recommendations = f"AI response structure unexpected (OpenAI-compatible): {json.dumps(result)}"
                 print(f"Warning: AI response structure unexpected (OpenAI-compatible): {json.dumps(result)}")
@@ -144,7 +175,7 @@ def run_offline_ai_analysis(config_file='config/config.yaml', structured_finding
         print(f"An unexpected error occurred during AI processing: {e}")
         ai_recommendations = f"An unexpected error occurred during AI processing: {e}"
 
-    print("\n--- AI Recommendations ---")
+    print("\n--- AI Recommendations ---\n")
     print(ai_recommendations)
     print("--------------------------")
 

@@ -1,30 +1,38 @@
 # config/config.yaml example
+# Report controls
+company_name: Your Company Name   # Will be sanitized names with spaces, special chars, etc.
+report_title: Database Health Check Report
+logo_image: MyLogo.svg[900,900] # Path to a logo image (relative to adoc_out/company_name/images)
+show_qry: true              # Set to true to include SQL queries in the report
+row_limit: 10               # Maximum number of rows to display for tabular query results
+run_osinfo: true            # Set to true to run OS information collection (from the client machine)
+run_settings: true          # Set to true to run the pgset module in Appendix
+show_avail_ext: true        # Set to true to show available extensions in Appendix
+
+# PostgreSQL Connection / Settings
 host: your_db_host
 port: 5432
 database: your_db_name
 user: your_db_user
 password: your_db_password
-company_name: YourCompany
-report_title: Database Health Check Report
+pgbouncer_cmd: psql -h localhost -p 6432 -U pgbouncer_user pgbouncer # Command for PgBouncer admin access
+
+is_aurora: false            # Set to true if analyzing an AWS RDS Aurora instance (enables boto3 calls for cloudwatch metrics)
+
+statio_type: user           # Type of statistics to collect (e.g., 'user' for user tables)
+min_tup_ins_threshold: 500000 # Minimum tuples inserted for a table to be considered "high insert activity"
 load_dba_views: true        # Set to true if you have custom DBA views to load (not implemented in current modules)
 create_history_db: true     # Set to true to create a history database (not fully implemented in current modules)
-show_qry: true              # Set to true to include SQL queries in the report
-row_limit: 10               # Maximum number of rows to display for tabular query results
-logo_image: MyLogo.svg[900,900] # Path to a logo image (relative to adoc_out/company_name/images)
-run_osinfo: true            # Set to true to run OS information collection (from the client machine)
-run_settings: true          # Set to true to run the pgset module in Appendix
-show_avail_ext: true        # Set to true to show available extensions in Appendix
-statio_type: user           # Type of statistics to collect (e.g., 'user' for user tables)
-pgbouncer_cmd: psql -h localhost -p 6432 -U pgbouncer_user pgbouncer # Command for PgBouncer admin access
-is_aurora: false            # Set to true if analyzing an AWS RDS Aurora instance (enables boto3 calls)
-min_tup_ins_threshold: 500000 # Minimum tuples inserted for a table to be considered "high insert activity"
 
 # AI Configuration
 ai_analyze: true            # Master switch: Set to true to enable AI analysis (whether integrated or offline)
+ai_run_integrated: true     # Set to true for AI analysis during main report generation; false for offline processing with offline_ai_processor.py
 ai_api_key: "YOUR_AI_API_KEY" # Your AI API key for authentication with the AI endpoint
 ai_endpoint: "https://your-ai-api-endpoint.com/v1" # The URL of your AI API (e.g., Google Gemini, OpenAI-compatible proxy)
 ai_model: "your-ai-model-name" # The specific AI model to use (e.g., "gemini-2.0-flash", "gpt-4.1")
 ai_user: "healthcheck_runner" # Optional: User identifier to send with AI requests for context/logging
-ai_run_integrated: true     # Set to true for AI analysis during main report generation; false for offline processing
 ai_user_header: "X-User-ID" # Optional: Custom HTTP header name for ai_user (e.g., for corporate proxies/AIs)
+ai_temperature: 0.7         # Controls randomness of AI output. Lower (e.g., 0.2) for more focused, higher (e.g., 0.9) for more creative.
+ai_max_output_tokens: 2048  # Maximum number of tokens (words/pieces of words) the AI should generate in its response.
+
 ssl_cert_path: "/path/to/your/custom/cert.pem" # Optional: Path to a custom SSL certificate for verifying AI endpoint (e.g., for corporate proxies)

@@ -138,6 +138,8 @@ ai_model: "your-ai-model-name" # The specific AI model to use (e.g., "gemini-2.0
 ai_user: "healthcheck_runner" # Optional: User identifier to send with AI requests for context/logging
 ai_run_integrated: true     # Set to true for AI analysis during main report generation; false for offline processing
 ai_user_header: "X-User-ID" # Optional: Custom HTTP header name for ai_user (e.g., for corporate proxies/AIs)
+ai_temperature: 0.7         # Controls randomness of AI output. Lower (e.g., 0.2) for more focused, higher (e.g., 0.9) for more creative.
+ai_max_output_tokens: 2048  # Maximum number of tokens (words/pieces of words) the AI should generate in its response.
 ssl_cert_path: "/path/to/your/custom/cert.pem" # Optional: Path to a custom SSL certificate for verifying AI endpoint (e.g., for corporate proxies)
 
 ```
