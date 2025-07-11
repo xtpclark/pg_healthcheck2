@@ -1,19 +1,22 @@
 def run_vacstat2(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Analyzes tables that may benefit from per-table statistics due to high insert rates
-    and infrequent autovacuuming, and also covers general vacuum progress and statistics.
+    Analyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates.
     """
-    adoc_content = ["=== Vacuum Progress and Statistics & Per-Table Stats Suggestions",
-                    "Analyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates.\n"]
+    adoc_content = ["Analyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
-    # Get PostgreSQL version
-    pg_version_query = "SHOW server_version_num;"
-    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
-    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
-
-    # Determine if it's PostgreSQL 17 or newer (version number 170000 and above)
-    is_pg17_or_newer = pg_version_num >= 170000
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, get_vacuum_progress_query, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
 
     # Define the autovacuum pattern for LIKE clauses
     autovacuum_pattern = 'autovacuum:%'
@@ -21,11 +24,9 @@ def run_vacstat2(cursor, settings, execute_query, execute_pgbouncer, all_structu
     if settings['show_qry'] == 'true':
         adoc_content.append("Vacuum progress and statistics queries:")
         adoc_content.append("[,sql]\n----")
-        if is_pg17_or_newer:
-            # For PG17+, use new columns for dead tuple info
-            adoc_content.append("SELECT n.nspname||'.'||c.relname AS table_name, v.phase, v.heap_blks_total, v.heap_blks_scanned, v.heap_blks_vacuumed, v.index_vacuum_count, v.max_dead_tuple_bytes, v.dead_tuple_bytes, v.num_dead_item_ids FROM pg_stat_progress_vacuum v JOIN pg_class c ON v.relid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid WHERE v.datname = %(database)s;")
-        else:
-            adoc_content.append("SELECT n.nspname||'.'||c.relname AS table_name, v.phase, v.heap_blks_total, v.heap_blks_scanned, v.heap_blks_vacuumed, v.index_vacuum_count, v.num_dead_tuples FROM pg_stat_progress_vacuum v JOIN pg_class c ON v.relid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid WHERE v.datname = %(database)s;")
+        # Get version-specific vacuum progress query
+        vacuum_query = get_vacuum_progress_query(compatibility)
+        adoc_content.append(vacuum_query)
         adoc_content.append("SELECT schemaname||'.'||relname AS table_name, autovacuum_count, last_autovacuum, autoanalyze_count, last_autoanalyze FROM pg_stat_user_tables WHERE autovacuum_count > 0 ORDER BY autovacuum_count DESC LIMIT %(limit)s;")
         adoc_content.append(f"SELECT relname, n_tup_ins FROM pg_stat_user_tables WHERE n_tup_ins > {settings.get('min_tup_ins_threshold', 1000000)} AND last_autovacuum IS NOT NULL AND last_autovacuum::date < now()::date ORDER BY n_tup_ins DESC LIMIT %(limit)s;")
         adoc_content.append("----")
@@ -33,13 +34,7 @@ def run_vacstat2(cursor, settings, execute_query, execute_pgbouncer, all_structu
     queries = [
         (
             "Ongoing Vacuum Operations", 
-            (
-                "SELECT n.nspname||'.'||c.relname AS table_name, v.phase, v.heap_blks_total, v.heap_blks_scanned, v.heap_blks_vacuumed, v.index_vacuum_count, v.max_dead_tuple_bytes, v.dead_tuple_bytes, v.num_dead_item_ids "
-                "FROM pg_stat_progress_vacuum v JOIN pg_class c ON v.relid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid WHERE v.datname = %(database)s;"
-            ) if is_pg17_or_newer else (
-                "SELECT n.nspname||'.'||c.relname AS table_name, v.phase, v.heap_blks_total, v.heap_blks_scanned, v.heap_blks_vacuumed, v.index_vacuum_count, v.num_dead_tuples "
-                "FROM pg_stat_progress_vacuum v JOIN pg_class c ON v.relid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid WHERE v.datname = %(database)s;"
-            ),
+            get_vacuum_progress_query(compatibility),
             True, 
             "ongoing_vacuum_operations" # Data key
         ),

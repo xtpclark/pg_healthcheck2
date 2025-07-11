@@ -1,9 +1,8 @@
 def run_systemwide_extensions(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Lists all installed PostgreSQL extensions in the current database,
-    providing an overview of available and used functionalities.
+    Lists all installed PostgreSQL extensions.
     """
-    adoc_content = ["=== System-Wide Extensions", "Lists all installed PostgreSQL extensions."]
+    adoc_content = ["Lists all installed PostgreSQL extensions."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

@@ -3,7 +3,7 @@ def run_pgset(cursor, settings, execute_query, execute_pgbouncer, all_structured
     Retrieves all PostgreSQL configuration settings from pg_settings,
     providing a comprehensive overview of the database's current configuration.
     """
-    adoc_content = ["=== All PostgreSQL Settings", "Provides a comprehensive list of all PostgreSQL configuration settings."]
+    adoc_content = ["Provides a comprehensive list of all PostgreSQL configuration settings."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

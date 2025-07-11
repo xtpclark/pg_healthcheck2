@@ -1,9 +1,9 @@
-def run_foreign_key_audit(cursor, settings, execute_query, execute_pgbouncer):
+def run_foreign_key_audit(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
     Performs an audit of foreign keys, focusing on identifying potential
     write-amplification issues, especially due to missing indexes on FK columns.
     """
-    adoc_content = ["=== Foreign Key Audit", "Audits foreign key constraints to identify potential write-amplification issues and ensure data integrity."]
+    adoc_content = ["Audits foreign key constraints to identify potential write-amplification issues and ensure data integrity."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':
@@ -155,7 +155,7 @@ LIMIT %(limit)s;
     
     # Generate SQL statements for missing FK indexes
     if missing_fk_indexes_raw: # Use the raw data collected above
-        adoc_content.append("\n=== Recommended SQL for Missing Foreign Key Indexes")
+        adoc_content.append("\n==== Recommended SQL for Missing Foreign Key Indexes")
         adoc_content.append("[IMPORTANT]\n====\n"
                        "The following `CREATE INDEX` statements are recommended to improve write performance "
                        "on parent tables with frequently updated/deleted rows, by adding indexes to the "

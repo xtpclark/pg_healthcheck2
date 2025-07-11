@@ -1,9 +1,8 @@
 def run_general_config_settings(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Analyzes a broad range of PostgreSQL configuration settings from various categories
-    to identify potential tuning opportunities for performance and stability.
+    Analyzes a broad range of PostgreSQL configuration settings.
     """
-    adoc_content = ["=== General Configuration Settings", "Analyzes a broad range of PostgreSQL configuration settings.\n"]
+    adoc_content = ["Analyzes a broad range of PostgreSQL configuration settings.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Corrected and expanded category names based on PostgreSQL 15 output

@@ -8,13 +8,18 @@ def run_top_write_queries(cursor, settings, execute_query, execute_pgbouncer, al
     adoc_content = ["=== Top Write-Intensive Queries", "Identifies queries that generate significant write activity."]
     structured_data = {} # Dictionary to hold structured findings for this module
 
-    # Get PostgreSQL version
-    pg_version_query = "SHOW server_version_num;"
-    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
-    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
-
-    # Determine if it's PostgreSQL 14 or newer (version number 140000 and above)
-    is_pg14_or_newer = pg_version_num >= 140000
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
 
     # Define a common query prefix for replacing newlines and truncating
     # NEW: Also replace pipe characters to prevent table formatting issues
@@ -23,19 +28,17 @@ def run_top_write_queries(cursor, settings, execute_query, execute_pgbouncer, al
     if settings['show_qry'] == 'true':
         adoc_content.append("Query for top write-intensive queries:")
         adoc_content.append("[,sql]\n----")
-        if is_pg14_or_newer:
-            # For PG14+, use columns available in pg_stat_statements for write activity
+        # Show version-specific write activity query
+        if compatibility['is_pg14_or_newer']:
             adoc_content.append(f"SELECT {query_select_prefix}, calls, total_exec_time, mean_exec_time, rows, shared_blks_written, local_blks_written, temp_blks_written, wal_bytes FROM pg_stat_statements ORDER BY rows DESC, wal_bytes DESC LIMIT %(limit)s;")
         else:
-            # For older versions, use columns that might have been present (adjust if specific columns are missing for older versions)
-            # Note: blk_read_time/blk_write_time were not consistently in pg_stat_statements across all older versions.
-            # We're focusing on common ones for write activity.
-            adoc_content.append(f"SELECT {query_select_prefix}, calls, total_exec_time, mean_exec_time, rows, temp_blks_written, blk_read_time, blk_write_time FROM pg_stat_statements ORDER BY rows DESC LIMIT %(limit)s;")
+            adoc_content.append(f"SELECT {query_select_prefix}, calls, total_time, mean_time, rows, temp_blks_written FROM pg_stat_statements ORDER BY rows DESC LIMIT %(limit)s;")
         adoc_content.append("----")
 
     # Query for top write-intensive queries
     if settings['has_pgstat'] == 't':
-        if is_pg14_or_newer:
+        # Build version-specific query
+        if compatibility['is_pg14_or_newer']:
             query_for_write_queries = f"""
                 SELECT {query_select_prefix}, calls, total_exec_time, mean_exec_time, rows,
                        shared_blks_written, local_blks_written, temp_blks_written, wal_bytes
@@ -43,12 +46,9 @@ def run_top_write_queries(cursor, settings, execute_query, execute_pgbouncer, al
                 ORDER BY rows DESC, wal_bytes DESC LIMIT %(limit)s;
             """
         else:
-            # For older versions (pre-PG14)
-            # Note: blk_read_time and blk_write_time were not universally present in pg_stat_statements
-            # in all pre-PG14 versions. This query might still fail on very old versions.
             query_for_write_queries = f"""
-                SELECT {query_select_prefix}, calls, total_exec_time, mean_exec_time, rows,
-                       temp_blks_written, blk_read_time, blk_write_time
+                SELECT {query_select_prefix}, calls, total_time, mean_time, rows,
+                       temp_blks_written
                 FROM pg_stat_statements
                 ORDER BY rows DESC LIMIT %(limit)s;
             """

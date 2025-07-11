@@ -1,10 +1,8 @@
 def run_rds_upgrade(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
     Provides recommendations and checks related to AWS RDS/Aurora PostgreSQL upgrades.
-    Note: Direct upgrade checks are complex and often require AWS API calls or
-    analysis of specific RDS/Aurora features. This module provides general guidance.
     """
-    adoc_content = ["=== RDS/Aurora Upgrade Considerations", "Provides recommendations and checks related to AWS RDS/Aurora PostgreSQL upgrades."]
+    adoc_content = ["Provides recommendations and checks related to AWS RDS/Aurora PostgreSQL upgrades."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

@@ -12,6 +12,7 @@ from report_config import REPORT_SECTIONS
 import json # Import json for structured data output
 from decimal import Decimal # Import Decimal type
 import re # Import re module for regular expressions
+import logging # Import logging for better error tracking
 
 # Custom JSON Encoder to handle Decimal and datetime objects
 class CustomJsonEncoder(json.JSONEncoder):
@@ -27,6 +28,17 @@ class CustomJsonEncoder(json.JSONEncoder):
 
 class HealthCheck:
     def __init__(self, config_file):
+        # Setup logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler('health_check.log'),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+        
         self.settings = self.load_settings(config_file)
         self.paths = self.get_paths()
         self.adoc_content = []
@@ -38,25 +50,35 @@ class HealthCheck:
         """Load configuration from config.yaml."""
         try:
             with open(config_file, 'r') as f:
-                settings = yaml.safe_load(f)
-            if 'is_aurora' not in settings:
-                settings['is_aurora'] = 'true' if 'aurora' in settings.get('host', '').lower() else 'false'
+                self.settings = yaml.safe_load(f)
+            # Standardize boolean settings
+            if 'is_aurora' not in self.settings:
+                self.settings['is_aurora'] = 'aurora' in self.settings.get('host', '').lower()
+            else:
+                self.settings['is_aurora'] = bool(self.settings['is_aurora'])
             
             # Ensure ai_analyze is a boolean, default to False if not specified
-            settings['ai_analyze'] = settings.get('ai_analyze', False)
+            self.settings['ai_analyze'] = bool(self.settings.get('ai_analyze', False))
             
             # Read generic AI settings
-            settings['ai_api_key'] = settings.get('ai_api_key', '')
-            settings['ai_endpoint'] = settings.get('ai_endpoint', 'https://generativelanguage.googleapis.com/v1beta/models/') # Default for Gemini
-            settings['ai_model'] = settings.get('ai_model', 'gemini-2.0-flash') # Default for Gemini
-            settings['ai_user'] = settings.get('ai_user', 'anonymous') # Default for AI user
-            settings['ai_run_integrated'] = settings.get('ai_run_integrated', True) # Default to True for integrated run
-            settings['ai_user_header'] = settings.get('ai_user_header', '') # Default to empty string
-            settings['ssl_cert_path'] = settings.get('ssl_cert_path', '') # Load SSL cert path
-            settings['ai_temperature'] = settings.get('ai_temperature', 0.7) # Load AI temperature, default 0.7
-            settings['ai_max_output_tokens'] = settings.get('ai_max_output_tokens', 2048) # Load AI max output tokens, default 2048
+            self.settings['ai_api_key'] = self.settings.get('ai_api_key', '')
+            self.settings['ai_endpoint'] = self.settings.get('ai_endpoint', 'https://generativelanguage.googleapis.com/v1beta/models/') # Default for Gemini
+            self.settings['ai_model'] = self.settings.get('ai_model', 'gemini-2.0-flash') # Default for Gemini
+            self.settings['ai_user'] = self.settings.get('ai_user', 'anonymous') # Default for AI user
+            self.settings['ai_run_integrated'] = self.settings.get('ai_run_integrated', True) # Default to True for integrated run
+            self.settings['ai_user_header'] = self.settings.get('ai_user_header', '') # Default to empty string
+            self.settings['ssl_cert_path'] = self.settings.get('ssl_cert_path', '') # Load SSL cert path
+            self.settings['ai_temperature'] = self.settings.get('ai_temperature', 0.7) # Load AI temperature, default 0.7
+            self.settings['ai_max_output_tokens'] = self.settings.get('ai_max_output_tokens', 2048) # Load AI max output tokens, default 2048
 
-            return settings
+            # Validate required settings
+            required_settings = ['host', 'port', 'database', 'user', 'password', 'company_name']
+            missing_settings = [setting for setting in required_settings if setting not in self.settings]
+            if missing_settings:
+                print(f"Error: Missing required settings in config.yaml: {missing_settings}")
+                sys.exit(1)
+
+            return self.settings
         except FileNotFoundError:
             print(f"Error: Config file {config_file} not found.")
             sys.exit(1)
@@ -89,7 +111,8 @@ class HealthCheck:
                 user=self.settings['user'],
                 password=self.settings['password']
             )
-            self.conn.autocommit = True
+            # Use autocommit for read-only health checks, but allow override
+            self.conn.autocommit = self.settings.get('autocommit', True)
             self.cursor = self.conn.cursor()
             
             # NEW: More robust check for pg_stat_statements.
@@ -109,12 +132,27 @@ class HealthCheck:
             
         except psycopg2.Error as e:
             print(f"Error connecting to database: {e}")
+            if self.conn:
+                self.conn.close()
             sys.exit(1)
 
     def execute_query(self, query, params=None, is_check=False, return_raw=False):
         """
         Execute a query and return formatted results.
-        If return_raw is True, returns a tuple (formatted_string, list_of_dicts).
+        
+        Args:
+            query (str): SQL query to execute
+            params (dict/list/tuple, optional): Query parameters for parameterized queries
+            is_check (bool): If True, returns single value instead of table format
+            return_raw (bool): If True, returns tuple (formatted_string, raw_data)
+            
+        Returns:
+            str or tuple: Formatted AsciiDoc string, or (formatted_string, raw_data) if return_raw=True
+            
+        Note:
+            - Supports both named (%(name)s) and positional (%s) parameter styles
+            - Handles various parameter types (dict, list, tuple, None)
+            - Returns structured error messages for failed queries
         """
         try:
             if params is not None:
@@ -238,8 +276,13 @@ class HealthCheck:
                 self.adoc_content.append({'type': 'text', 'content': content})
                 continue # Skip adding section title and processing other actions for header section
 
+            # Add section title for all sections except header
             if section.get('title'):
                 self.adoc_content.append({'type': 'text', 'content': f"== {section['title'].replace('${PGDB}', self.settings['database'])}"})
+            
+            # Check if this section has only one module action
+            module_actions = [action for action in section['actions'] if action['type'] == 'module']
+            has_single_module = len(module_actions) == 1
             
             for action in section['actions']: # Iterate through actions within the section
                 if action['type'] == 'module':
@@ -256,8 +299,13 @@ class HealthCheck:
                     # Determine the display title for the comments section
                     display_title = action.get('display_title', action['file'].replace('.txt', '').title())
                     content = self.read_comments_file(action['file'])
-                    # Render as === (level 3) heading for sub-sections within a main section
-                    self.adoc_content.append({'type': 'text', 'content': f"=== {display_title}\n{content}\n"})
+                    
+                    # Only add subheading if display_title is not empty AND this is not a best practices section
+                    # Best practices sections should not have subheadings as they're all at the same level
+                    if display_title.strip() and not any(bp in display_title.lower() for bp in ['best practices', 'practices']):
+                        self.adoc_content.append({'type': 'text', 'content': f"=== {display_title}\n{content}\n"})
+                    else:
+                        self.adoc_content.append({'type': 'text', 'content': f"{content}\n"})
                 elif action['type'] == 'image':
                     self.adoc_content.append({'type': 'text', 'content': f"image::{self.paths['adoc_image']}/{action['file']}[{action['alt']},300,300]"})
         

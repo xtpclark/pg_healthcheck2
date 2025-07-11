@@ -13,23 +13,48 @@ def run_hot_queries(cursor, settings, execute_query, execute_pgbouncer, all_stru
                         "and impact overall database performance. These queries could potentially impact performance and are likely to also "
                         "show up in the 'Missing Indexes' section or other analyses dealing with `pg_stat_user_tables` if they are inefficient.\n")
 
-    # Define the query string for Hot Queries
-    # Removed ::varchar(100) cast from the query column to prevent truncation
-    hot_queries_query = """
-        SELECT
-            trim(regexp_replace(query, '\\s+',' ','g')) AS query, -- Removed ::varchar(100)
-            calls,
-            total_exec_time,
-            CASE
-                WHEN calls > 0 THEN (total_exec_time / calls)
-                ELSE 0
-            END AS mean_exec_time_ms, -- Renamed for clarity and consistency
-            shared_blks_hit,
-            shared_blks_read
-        FROM pg_stat_statements
-        WHERE calls > 0
-        ORDER BY calls DESC LIMIT %(limit)s;
-    """
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
+    
+    # Build version-specific query for hot queries
+    if compatibility['is_pg14_or_newer']:
+        hot_queries_query = """
+            SELECT
+                trim(regexp_replace(query, '\\s+',' ','g')) AS query,
+                calls,
+                total_exec_time,
+                mean_exec_time,
+                rows,
+                shared_blks_hit,
+                shared_blks_read
+            FROM pg_stat_statements
+            WHERE calls > 0
+            ORDER BY calls DESC LIMIT %(limit)s;
+        """
+    else:
+        hot_queries_query = """
+            SELECT
+                trim(regexp_replace(query, '\\s+',' ','g')) AS query,
+                calls,
+                total_time,
+                mean_time,
+                rows,
+                shared_blks_hit,
+                shared_blks_read
+            FROM pg_stat_statements
+            WHERE calls > 0
+            ORDER BY calls DESC LIMIT %(limit)s;
+        """
 
     if settings['show_qry'] == 'true':
         adoc_content.append("Hot Queries query:")

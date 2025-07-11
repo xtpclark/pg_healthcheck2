@@ -25,7 +25,7 @@ def run_recommendation(cursor, settings, execute_query, execute_pgbouncer, all_s
     sends it to an AI for analysis, and integrates the AI's recommendations
     into the report.
     """
-    adoc_content = ["=== Recommendations", "Provides aggregated recommendations based on the health check findings."]
+    adoc_content = ["Provides aggregated recommendations based on the health check findings."]
     structured_data = {"ai_analysis": {}, "prompt_sent": ""} # To store AI related data
 
     if settings['show_qry'] == 'true':
@@ -204,6 +204,8 @@ To get AI recommendations from this data:
 5.  **Integrate the AI's response** into your report or review it separately.
 
 For offline processing, use the `offline_ai_processor.py` script provided with this tool.
+
+**Note:** The prompt may be stored under either 'run_recommendation_enhanced' or 'run_recommendation' in the JSON file.
 ====
 '''
             structured_data["ai_analysis"]["status"] = "offline_mode"
@@ -217,7 +219,7 @@ For offline processing, use the `offline_ai_processor.py` script provided with t
     structured_data["ai_analysis"]["recommendations_output"] = ai_recommendations # Store the AI's raw response or status
 
     # --- Step 3: Integrate AI Response into AsciiDoc Content ---
-    adoc_content.append("\n=== AI-Generated Recommendations\n")
+    adoc_content.append("\n==== AI-Generated Recommendations\n")
     # Add AI Endpoint, Model, and Statistics below the heading
     adoc_content.append(f"[cols=\"1,1\",options=\"header\"]\n|===\n|Metric | Value\n|AI Endpoint | `{structured_data['ai_analysis'].get('endpoint', 'N/A')}`\n|AI Model | `{structured_data['ai_analysis'].get('model', 'N/A')}`\n|AI Temperature | `{structured_data['ai_analysis'].get('temperature', 'N/A')}`\n|AI Max Output Tokens | `{structured_data['ai_analysis'].get('max_output_tokens_requested', 'N/A')}`\n|Prompt Characters | `{structured_data['ai_analysis'].get('prompt_characters', 'N/A')}`\n|Response Characters | `{structured_data['ai_analysis'].get('response_characters', 'N/A')}`\n|Analysis Time | `{structured_data['ai_analysis'].get('analysis_time_seconds', 'N/A')}` seconds\n")
     if structured_data['ai_analysis'].get('prompt_tokens') is not None:

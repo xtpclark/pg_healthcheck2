@@ -7,14 +7,18 @@ def run_high_insert_tables(cursor, settings, execute_query, execute_pgbouncer, a
     adoc_content = ["=== Tables with High Insert Activity", "Identifies tables experiencing a high volume of new row insertions."]
     structured_data = {} # Dictionary to hold structured findings for this module
 
-    # Get PostgreSQL version
-    pg_version_query = "SHOW server_version_num;"
-    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
-    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
-
-    # Determine if it's PostgreSQL 14 or newer (version number 140000 and above)
-    # For pg_stat_user_tables, columns are generally stable, but including version check for consistency.
-    is_pg14_or_newer = pg_version_num >= 140000 
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data 
 
     # Get the configurable threshold for high tuple inserts, default to 1,000,000
     min_tup_ins_threshold = settings.get('min_tup_ins_threshold', 1000000)
@@ -22,32 +26,19 @@ def run_high_insert_tables(cursor, settings, execute_query, execute_pgbouncer, a
     if settings['show_qry'] == 'true':
         adoc_content.append("Query for tables with high insert rates:")
         adoc_content.append("[,sql]\n----")
-        if is_pg14_or_newer:
-            # Columns in pg_stat_user_tables are stable for n_tup_ins related metrics across PG14+
-            adoc_content.append(f"SELECT schemaname||'.'||relname AS table_name, n_tup_ins, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE n_tup_ins > {min_tup_ins_threshold} ORDER BY n_tup_ins DESC LIMIT %(limit)s;")
-        else:
-            # For older PostgreSQL versions, use the same query if columns are compatible
-            adoc_content.append(f"SELECT schemaname||'.'||relname AS table_name, n_tup_ins, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE n_tup_ins > {min_tup_ins_threshold} ORDER BY n_tup_ins DESC LIMIT %(limit)s;")
+        # Show query for high insert tables (pg_stat_user_tables is stable across versions)
+        adoc_content.append(f"SELECT schemaname||'.'||relname AS table_name, n_tup_ins, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE n_tup_ins > {min_tup_ins_threshold} ORDER BY n_tup_ins DESC LIMIT %(limit)s;")
         adoc_content.append("----")
 
     # Query to find tables with high insert rates (top N based on row_limit)
-    # The query is defined here, using the version-aware approach for future proofing.
-    if is_pg14_or_newer:
-        high_insert_tables_query = f"""
-            SELECT schemaname||'.'||relname AS table_name, n_tup_ins, n_dead_tup,
-                   last_autovacuum, autovacuum_count
-            FROM pg_stat_user_tables
-            WHERE n_tup_ins > {min_tup_ins_threshold}
-            ORDER BY n_tup_ins DESC LIMIT %(limit)s;
-        """
-    else:
-        high_insert_tables_query = f"""
-            SELECT schemaname||'.'||relname AS table_name, n_tup_ins, n_dead_tup,
-                   last_autovacuum, autovacuum_count
-            FROM pg_stat_user_tables
-            WHERE n_tup_ins > {min_tup_ins_threshold}
-            ORDER BY n_tup_ins DESC LIMIT %(limit)s;
-        """
+    # pg_stat_user_tables is stable across PostgreSQL versions
+    high_insert_tables_query = f"""
+        SELECT schemaname||'.'||relname AS table_name, n_tup_ins, n_dead_tup,
+               last_autovacuum, autovacuum_count
+        FROM pg_stat_user_tables
+        WHERE n_tup_ins > {min_tup_ins_threshold}
+        ORDER BY n_tup_ins DESC LIMIT %(limit)s;
+    """
     
     # Execute the query for high insert tables, requesting raw data
     params_for_query = {'limit': settings['row_limit']}

@@ -3,7 +3,7 @@ def run_settings(cursor, settings, execute_query, execute_pgbouncer, all_structu
     Analyzes key PostgreSQL configuration settings to identify potential tuning
     opportunities for performance and stability.
     """
-    adoc_content = ["=== PostgreSQL Settings", "Analyzes key PostgreSQL configuration settings to identify potential tuning opportunities for performance and stability."]
+    adoc_content = ["Analyzes key PostgreSQL configuration settings to identify potential tuning opportunities for performance and stability."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

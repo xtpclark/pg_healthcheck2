@@ -1,0 +1,126 @@
+# Trend Database Configuration
+# This file contains settings for storing health check data for trend analysis
+
+# Enable trend storage (set to true to store data in trend database)
+trend_storage_enabled: false
+
+# Trend database connection settings
+trend_database:
+  host: "trend-db.example.com"
+  port: 5432
+  database: "health_check_trends"
+  user: "trend_user"
+  password: "your_secure_password"
+  
+  # Optional: SSL settings for trend database
+  ssl_mode: "require"  # Options: disable, allow, prefer, require, verify-ca, verify-full
+  ssl_cert: "/path/to/client-cert.pem"  # Optional
+  ssl_key: "/path/to/client-key.pem"    # Optional
+  ssl_rootcert: "/path/to/ca-cert.pem"  # Optional
+
+# Trend analysis settings
+trend_analysis:
+  # Default number of days to analyze for trends
+  default_days_back: 30
+  
+  # Key metrics to track for trend analysis
+  key_metrics:
+    - "active_connections"
+    - "max_connections"
+    - "unused_indexes"
+    - "large_table_count"
+    - "avg_query_execution_time"
+    - "failed_modules"
+    - "successful_modules"
+  
+  # Alert thresholds for trend analysis
+  alert_thresholds:
+    connection_utilization: 0.8  # Alert if connections > 80%
+    query_performance_degradation: 0.2  # Alert if query time increases > 20%
+    failed_modules_increase: 0.1  # Alert if failed modules increase > 10%
+
+# Data retention settings
+data_retention:
+  # Keep detailed data for this many days
+  detailed_data_days: 90
+  
+  # Keep summary data for this many days
+  summary_data_days: 365
+  
+  # Archive old data to separate table
+  archive_enabled: true
+  archive_after_days: 90
+
+# Schema organization options
+schema_organization:
+  # Option 1: Separate schema per company (recommended for multi-tenant)
+  use_company_schemas: true
+  
+  # Option 2: Single schema with company identification
+  # use_company_schemas: false
+  # shared_schema_name: "health_check_trends"
+  
+  # Schema naming convention
+  schema_name_template: "{company_name}_trends"  # Default: sanitized company name
+  
+  # Maximum schema name length
+  max_schema_name_length: 63
+
+# Performance settings
+performance:
+  # Batch size for bulk inserts
+  batch_size: 1000
+  
+  # Connection pool settings
+  max_connections: 10
+  min_connections: 2
+  
+  # Query timeout (seconds)
+  query_timeout: 30
+  
+  # Enable connection pooling
+  use_connection_pool: true
+
+# Monitoring and logging
+monitoring:
+  # Enable detailed logging
+  enable_detailed_logging: true
+  
+  # Log slow queries (seconds)
+  slow_query_threshold: 5.0
+  
+  # Enable metrics collection
+  enable_metrics: true
+  
+  # Metrics collection interval (seconds)
+  metrics_interval: 60
+
+# Example configurations for different environments
+
+# Development environment
+development:
+  trend_storage_enabled: true
+  trend_database:
+    host: "localhost"
+    port: 5432
+    database: "health_check_trends_dev"
+    user: "dev_user"
+    password: "dev_password"
+  trend_analysis:
+    default_days_back: 7  # Shorter period for development
+
+# Production environment
+production:
+  trend_storage_enabled: true
+  trend_database:
+    host: "trend-db-prod.company.com"
+    port: 5432
+    database: "health_check_trends_prod"
+    user: "trend_user"
+    password: "${TREND_DB_PASSWORD}"  # Use environment variable
+    ssl_mode: "require"
+  data_retention:
+    detailed_data_days: 180
+    summary_data_days: 730
+  monitoring:
+    enable_detailed_logging: false  # Less verbose in production 

@@ -6,13 +6,21 @@ def run_top_queries_by_execution_time(cursor, settings, execute_query, execute_p
     adoc_content = ["=== Top Queries by Execution Time", "Identifies resource-intensive queries based on total execution time.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
-    # Define the query string
-    top_queries_query = """
-        SELECT query, calls, total_exec_time, mean_exec_time, rows
-        FROM pg_stat_statements
-        WHERE calls > 0
-        ORDER BY total_exec_time DESC LIMIT %(limit)s;
-    """
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
+    
+    # Get version-specific query
+    top_queries_query = get_pg_stat_statements_query(compatibility, 'standard') + " LIMIT %(limit)s;"
 
     if settings['show_qry'] == 'true':
         adoc_content.append("Top queries by execution time query:")

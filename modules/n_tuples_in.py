@@ -8,13 +8,18 @@ def run_tuples_in(cursor, settings, execute_query, execute_pgbouncer, all_struct
     adoc_content = ["=== High Tuple Write Queries", "Identifies tables with high insert rates and associated queries, which may contribute to CPU and IOPS usage."]
     structured_data = {} # Dictionary to hold structured findings for this module
 
-    # Get PostgreSQL version
-    pg_version_query = "SHOW server_version_num;"
-    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
-    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
-
-    # Determine if it's PostgreSQL 14 or newer (version number 140000 and above)
-    is_pg14_or_newer = pg_version_num >= 140000
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
 
     # Get the configurable threshold for high tuple inserts, default to 1,000,000
     min_tup_ins_threshold = settings.get('min_tup_ins_threshold', 1000000)
@@ -24,12 +29,11 @@ def run_tuples_in(cursor, settings, execute_query, execute_pgbouncer, all_struct
         adoc_content.append("[,sql]\n----")
         adoc_content.append(f"SELECT schemaname||'.'||relname AS table_name, n_tup_ins, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE n_tup_ins > {min_tup_ins_threshold} ORDER BY n_tup_ins DESC LIMIT %(limit)s;")
         
-        if is_pg14_or_newer:
-            # For PG14+, blk_read_time and blk_write_time are not in pg_stat_statements
+        # Show version-specific pg_stat_statements query
+        if compatibility['is_pg14_or_newer']:
             adoc_content.append("SELECT trim(regexp_replace(query, '\\s+',' ','g'))::varchar(100) AS query, calls, total_exec_time, mean_exec_time, temp_blks_written FROM pg_stat_statements WHERE LOWER(query) LIKE '%%{table_name_placeholder}%%' ORDER BY calls DESC LIMIT %(limit)s;")
         else:
-            # For older versions, keep original query
-            adoc_content.append("SELECT trim(regexp_replace(query, '\\s+',' ','g'))::varchar(100) AS query, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements WHERE LOWER(query) LIKE '%%{table_name_placeholder}%%' ORDER BY calls DESC LIMIT %(limit)s;")
+            adoc_content.append("SELECT trim(regexp_replace(query, '\\s+',' ','g'))::varchar(100) AS query, calls, total_time, mean_time, temp_blks_written FROM pg_stat_statements WHERE LOWER(query) LIKE '%%{table_name_placeholder}%%' ORDER BY calls DESC LIMIT %(limit)s;")
         adoc_content.append("----")
 
     # Query to find tables with high insert rates (top N based on row_limit)
@@ -64,10 +68,9 @@ def run_tuples_in(cursor, settings, execute_query, execute_pgbouncer, all_struct
 
         if settings['has_pgstat'] == 't':
             for table_name in high_insert_table_names:
-                # Use %(table_name_lower)s for the LIKE clause to avoid f-string issues with %
-                if is_pg14_or_newer:
-                    # For PG14+, blk_read_time and blk_write_time are not in pg_stat_statements
-                    query_for_table = """
+                # Build version-specific query
+                if compatibility['is_pg14_or_newer']:
+                    query_for_table = f"""
                         SELECT trim(regexp_replace(query, '\\s+',' ','g'))::varchar(100) AS query, calls,
                                total_exec_time, mean_exec_time, temp_blks_written
                         FROM pg_stat_statements
@@ -75,10 +78,9 @@ def run_tuples_in(cursor, settings, execute_query, execute_pgbouncer, all_struct
                         ORDER BY calls DESC LIMIT %(limit)s;
                     """
                 else:
-                    # For older versions, keep original query
-                    query_for_table = """
+                    query_for_table = f"""
                         SELECT trim(regexp_replace(query, '\\s+',' ','g'))::varchar(100) AS query, calls,
-                               total_exec_time, mean_exec_time, temp_blks_written, blk_read_time, blk_write_time
+                               total_time, mean_time, temp_blks_written
                         FROM pg_stat_statements
                         WHERE LOWER(query) LIKE %(table_name_pattern)s
                         ORDER BY calls DESC LIMIT %(limit)s;

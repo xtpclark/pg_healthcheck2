@@ -1,9 +1,8 @@
 def run_physical_replication(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Analyzes physical replication status for primary and replica nodes to ensure
-    data consistency and minimal lag.
+    Analyzes physical replication status for primary and replica nodes to ensure data consistency and minimal lag.
     """
-    adoc_content = ["=== Physical Replication Status", "Analyzes physical replication status for primary and replica nodes to ensure data consistency and minimal lag.\n"]
+    adoc_content = ["Analyzes physical replication status for primary and replica nodes to ensure data consistency and minimal lag.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

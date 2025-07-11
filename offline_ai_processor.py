@@ -63,10 +63,16 @@ def run_offline_ai_analysis(config_file='config/config.yaml', structured_finding
 
     # Extract the prompt that was prepared by the main script
     # This assumes 'run_recommendation' module's data contains 'prompt_sent'
-    full_prompt = findings.get('run_recommendation', {}).get('data', {}).get('prompt_sent', '')
+    # Check both enhanced and original modules since enhanced is primary
+    full_prompt = findings.get('run_recommendation_enhanced', {}).get('data', {}).get('prompt_sent', '')
+    
+    # If not found in enhanced module, try the original module (fallback)
+    if not full_prompt:
+        full_prompt = findings.get('run_recommendation', {}).get('data', {}).get('prompt_sent', '')
 
     if not full_prompt:
-        print("Error: No AI prompt ('prompt_sent') found in the structured findings JSON under 'run_recommendation' module data.")
+        print("Error: No AI prompt ('prompt_sent') found in the structured findings JSON.")
+        print("Checked both 'run_recommendation_enhanced' and 'run_recommendation' modules.")
         print("Please ensure 'ai_analyze' is true in config.yaml and the main health check script was run successfully.")
         sys.exit(1)
 

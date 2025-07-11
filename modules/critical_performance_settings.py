@@ -1,9 +1,8 @@
 def run_critical_performance_settings(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Analyzes a focused set of critical PostgreSQL configuration settings
-    directly impacting performance, such as memory, connections, and WAL.
+    Analyzes key PostgreSQL configuration settings for performance impact.
     """
-    adoc_content = ["=== Critical Performance Settings", "Analyzes key PostgreSQL configuration settings for performance impact.\n"]
+    adoc_content = ["Analyzes key PostgreSQL configuration settings for performance impact.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     critical_settings_query = """

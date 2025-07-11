@@ -1,9 +1,8 @@
 def run_wal_usage(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Analyzes Write-Ahead Log (WAL) usage and archiving status to optimize
-    performance and ensure reliable recovery.
+    Analyzes Write-Ahead Log (WAL) usage and archiving status to optimize performance and ensure reliable recovery.
     """
-    adoc_content = ["=== WAL Usage and Archiving", "Analyzes Write-Ahead Log (WAL) usage and archiving status to optimize performance and ensure reliable recovery.\n"]
+    adoc_content = ["Analyzes Write-Ahead Log (WAL) usage and archiving status to optimize performance and ensure reliable recovery.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

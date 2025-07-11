@@ -4,10 +4,9 @@ import re # For parsing endpoint
 
 def run_check_aws_region(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Provides AWS region-specific considerations and, if configured for Aurora/RDS,
-    integrates with AWS CloudWatch to fetch key instance metrics.
+    Provides notes on AWS region-specific considerations and fetches key cloud metrics for RDS/Aurora.
     """
-    adoc_content = ["=== AWS Region and Cloud Metrics", "Provides notes on AWS region-specific considerations and fetches key cloud metrics for RDS/Aurora."]
+    adoc_content = ["Provides notes on AWS region-specific considerations and fetches key cloud metrics for RDS/Aurora."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':
@@ -35,7 +34,7 @@ def run_check_aws_region(cursor, settings, execute_query, execute_pgbouncer, all
     # --- AWS Cloud Metrics Integration ---
     # Corrected condition for is_aurora: check if it's explicitly True (boolean)
     if settings.get('is_aurora', False) == True: # Only attempt if configured as Aurora
-        adoc_content.append("\n=== AWS CloudWatch Metrics (Aurora/RDS)\n")
+        adoc_content.append("\n==== AWS CloudWatch Metrics (Aurora/RDS)\n")
         
         # Get AWS credentials from settings (assuming they are passed or will be loaded by boto3 env/config)
         # For this to work, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION

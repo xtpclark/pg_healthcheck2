@@ -2,31 +2,30 @@ def run_cache_analysis(cursor, settings, execute_query, execute_pgbouncer, all_s
     """
     Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks.
     """
-    adoc_content = ["=== Cache Analysis", "Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks.\n"]
+    adoc_content = ["Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
-    # Get PostgreSQL version
-    pg_version_query = "SHOW server_version_num;"
-    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
-    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
-
-    # Determine if it's PostgreSQL 17 or newer (version number 170000 and above)
-    is_pg17_or_newer = pg_version_num >= 170000
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, get_cache_analysis_query, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
 
     if settings['show_qry'] == 'true':
         adoc_content.append("Cache analysis queries:")
         adoc_content.append("[,sql]\n----")
         adoc_content.append("SELECT datname, blks_hit, blks_read, round((blks_hit::float / (blks_hit + blks_read) * 100)::numeric, 2) AS hit_ratio_percent FROM pg_stat_database WHERE blks_read > 0 AND datname = %(database)s;")
         
-        if is_pg17_or_newer:
-            # For PG17+, pg_stat_bgwriter has changed. Checkpoint stats are in pg_stat_checkpointer.
-            # We'll select relevant buffer stats from pg_stat_bgwriter and checkpoint stats from pg_stat_checkpointer
-            # For simplicity in a single query block, we'll focus on the bgwriter buffer stats here.
-            # The checkpoint module will handle detailed checkpoint stats.
-            adoc_content.append("SELECT buffers_alloc, buffers_clean FROM pg_stat_bgwriter;")
-            adoc_content.append("SELECT num_timed AS checkpoints_timed, num_requested AS checkpoints_req, buffers_written AS buffers_checkpoint FROM pg_stat_checkpointer;")
-        else:
-            adoc_content.append("SELECT buffers_alloc, buffers_backend, buffers_clean, buffers_checkpoint, checkpoints_timed, checkpoints_req FROM pg_stat_bgwriter;")
+        # Get version-specific cache analysis query
+        cache_query = get_cache_analysis_query(compatibility)
+        adoc_content.append(cache_query)
         adoc_content.append("----")
 
     queries = [
@@ -39,7 +38,7 @@ def run_cache_analysis(cursor, settings, execute_query, execute_pgbouncer, all_s
     ]
 
     # Add Buffer Cache Statistics based on PG version
-    if is_pg17_or_newer:
+    if compatibility['is_pg17_or_newer']:
         queries.append(
             (
                 "Background Writer Buffer Statistics (PostgreSQL 17+)", 

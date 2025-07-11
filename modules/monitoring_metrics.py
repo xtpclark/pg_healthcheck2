@@ -1,18 +1,22 @@
 def run_monitoring_metrics(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Gathers general PostgreSQL monitoring metrics from various pg_stat_ views
-    to provide insights into overall database performance.
+    Gathers key performance metrics for overall database health monitoring.
     """
-    adoc_content = ["=== General Monitoring Metrics", "Gathers key performance metrics for overall database health monitoring."]
+    adoc_content = ["Gathers key performance metrics for overall database health monitoring."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
-    # Get PostgreSQL version
-    pg_version_query = "SHOW server_version_num;"
-    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
-    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
-
-    # Determine if it's PostgreSQL 17 or newer (version number 170000 and above)
-    is_pg17_or_newer = pg_version_num >= 170000
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, get_monitoring_metrics_query, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
 
     if settings['show_qry'] == 'true':
         adoc_content.append("General monitoring metrics queries:")
@@ -20,12 +24,9 @@ def run_monitoring_metrics(cursor, settings, execute_query, execute_pgbouncer, a
         adoc_content.append("SELECT numbackends, xact_commit, xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted FROM pg_stat_database WHERE datname = %(database)s;")
         adoc_content.append("SELECT sum(numbackends) AS total_connections, sum(xact_commit) AS total_commits, sum(xact_rollback) AS total_rollbacks FROM pg_stat_database;")
         
-        if is_pg17_or_newer:
-            # For PG17+, query pg_stat_checkpointer for checkpoint-related stats
-            adoc_content.append("SELECT num_timed AS checkpoints_timed, num_requested AS checkpoints_req, write_time AS checkpoint_write_time, sync_time AS checkpoint_sync_time, buffers_written AS buffers_checkpoint FROM pg_stat_checkpointer;")
-        else:
-            # For older PG versions, query pg_stat_bgwriter
-            adoc_content.append("SELECT checkpoints_timed, checkpoints_req, buffers_alloc, buffers_clean, buffers_backend, buffers_checkpoint, buffers_backend_fsync FROM pg_stat_bgwriter;")
+        # Get version-specific monitoring metrics query
+        monitoring_query = get_monitoring_metrics_query(compatibility)
+        adoc_content.append(monitoring_query)
         adoc_content.append("----")
 
     queries = [
@@ -44,7 +45,7 @@ def run_monitoring_metrics(cursor, settings, execute_query, execute_pgbouncer, a
     ]
 
     # Add Background Writer & Checkpoint Summary based on PG version
-    if is_pg17_or_newer:
+    if compatibility['is_pg17_or_newer']:
         queries.append(
             (
                 "Background Writer & Checkpoint Summary (PostgreSQL 17+)", 

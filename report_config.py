@@ -76,6 +76,7 @@ REPORT_SECTIONS = [
     {
         "title": "Index Analysis",
         "actions": [
+            {"type": "module", "module": "index_replica_analysis", "function": "run_index_replica_analysis"},
             {"type": "module", "module": "unused_idx", "function": "run_unused_idx"},
             {"type": "module", "module": "dupe_idx", "function": "run_dupe_idx"},
             {"type": "module", "module": "missing_idx", "function": "run_missing_idx"},
@@ -126,10 +127,19 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "connection_pooling", "function": "run_connection_pooling"}
         ]
     },
+ 
+#   {
+#        "title": "Trend Analysis",
+#        "actions": [
+#            {"type": "module", "module": "trend_analysis_storage", "function": "run_trend_storage", "condition": {"var": "trend_storage_enabled", "value": True}},
+#            {"type": "module", "module": "trend_analysis_viewer", "function": "run_trend_viewer", "condition": {"var": "trend_storage_enabled", "value": True}}
+#        ]
+#    },
     {
         "title": "Recommendations",
         "actions": [
-            {"type": "module", "module": "run_recommendation", "function": "run_recommendation", "condition": {"var": "ai_analyze", "value": True}},
+            {"type": "module", "module": "run_recommendation_enhanced", "function": "run_recommendation_enhanced", "condition": {"var": "ai_analyze", "value": True}},
+#            {"type": "module", "module": "run_recommendation", "function": "run_recommendation", "condition": {"var": "ai_analyze", "value": True, "fallback": True}},
             {"type": "comments", "file": "recommendations.txt"},
             {"type": "comments", "file": "pgbadger_setup.txt"}
         #    {"type": "image", "file": "example.png", "alt": "Example Image"}

@@ -2,22 +2,27 @@ def run_bgwriter(cursor, settings, execute_query, execute_pgbouncer, all_structu
     """
     Analyzes background writer activity to optimize buffer management and reduce I/O load.
     """
-    adoc_content = ["=== Background Writer Statistics", "Analyzes background writer activity to optimize buffer management and reduce I/O load.\n"]
+    adoc_content = ["Analyzes background writer activity to optimize buffer management and reduce I/O load.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
-    # Get PostgreSQL version
-    pg_version_query = "SHOW server_version_num;"
-    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
-    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
-
-    # Determine if it's PostgreSQL 17 or newer (version number 170000 and above)
-    is_pg17_or_newer = pg_version_num >= 170000
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
 
     if settings['show_qry'] == 'true':
         adoc_content.append("Background writer queries:")
         adoc_content.append("[,sql]\n----")
-        if is_pg17_or_newer:
-            # For PG17+, pg_stat_bgwriter has fewer columns related to backend writes
+        # Show background writer queries based on PostgreSQL version
+        if compatibility['is_pg17_or_newer']:
             adoc_content.append("SELECT buffers_clean, maxwritten_clean, buffers_alloc FROM pg_stat_bgwriter;")
         else:
             adoc_content.append("SELECT buffers_clean, maxwritten_clean, buffers_backend, buffers_alloc, buffers_backend_fsync FROM pg_stat_bgwriter;")
@@ -26,7 +31,7 @@ def run_bgwriter(cursor, settings, execute_query, execute_pgbouncer, all_structu
 
     queries = []
 
-    if is_pg17_or_newer:
+    if compatibility['is_pg17_or_newer']:
         queries.append(
             (
                 "Background Writer Metrics (PostgreSQL 17+)", 
@@ -74,7 +79,7 @@ def run_bgwriter(cursor, settings, execute_query, execute_pgbouncer, all_structu
             structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
     
     # Adjust TIP based on PG version
-    if is_pg17_or_newer:
+    if compatibility['is_pg17_or_newer']:
         adoc_content.append("[TIP]\n====\nHigh `buffers_alloc` values indicate significant buffer allocation activity. Adjust `bgwriter_lru_maxpages` or reduce `bgwriter_delay` for more aggressive cleaning to optimize buffer management. For Aurora, tune these settings via the RDS parameter group to mitigate CPU and IOPS saturation.\n====\n")
     else:
         adoc_content.append("[TIP]\n====\nHigh `buffers_backend` or `buffers_backend_fsync` values indicate heavy backend writes, increasing I/O load. Adjust `bgwriter_lru_maxpages` or reduce `bgwriter_delay` for more aggressive cleaning. For Aurora, tune these settings via the RDS parameter group to mitigate CPU and IOPS saturation.\n====\n")

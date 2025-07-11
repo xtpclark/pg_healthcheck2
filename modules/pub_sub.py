@@ -1,9 +1,8 @@
 def run_pub_sub(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Analyzes logical replication setup, including publications and subscriptions,
-    to ensure data consistency and performance.
+    Analyzes logical replication setup, including publications and subscriptions, to ensure data consistency and performance.
     """
-    adoc_content = ["=== Logical Replication (Publications and Subscriptions)", "Analyzes logical replication setup, including publications and subscriptions, to ensure data consistency and performance.\n"]
+    adoc_content = ["Analyzes logical replication setup, including publications and subscriptions, to ensure data consistency and performance.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

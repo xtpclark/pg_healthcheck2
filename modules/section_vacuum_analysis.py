@@ -1,9 +1,8 @@
 def run_vacuum_analysis(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Analyzes vacuum activity, dead tuples, and transaction ID wraparound risks
-    to optimize database performance and prevent bloat.
+    Analyzes vacuum activity, dead tuples, and transaction ID wraparound risks to optimize database performance and prevent bloat.
     """
-    adoc_content = ["=== Vacuum and Bloat Analysis", "Analyzes vacuum activity, dead tuples, and transaction ID wraparound risks to optimize database performance and prevent bloat.\n"]
+    adoc_content = ["Analyzes vacuum activity, dead tuples, and transaction ID wraparound risks to optimize database performance and prevent bloat."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Define the autovacuum pattern for LIKE clauses

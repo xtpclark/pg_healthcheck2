@@ -1,8 +1,8 @@
 def run_monitoring_recommendations(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Provides general recommendations for effective PostgreSQL database monitoring.
+    Provides best practices and recommendations for comprehensive PostgreSQL monitoring.
     """
-    adoc_content = ["=== Monitoring Recommendations", "Provides best practices and recommendations for comprehensive PostgreSQL monitoring."]
+    adoc_content = ["Provides best practices and recommendations for comprehensive PostgreSQL monitoring."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

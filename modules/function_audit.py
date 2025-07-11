@@ -1,19 +1,22 @@
-def run_function_audit(cursor, settings, execute_query, execute_pgbouncer):
+def run_function_audit(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Performs an audit of PostgreSQL functions, focusing on security aspects
-    like SECURITY DEFINER functions and functions owned by superusers,
-    as well as performance metrics if pg_stat_statements is available.
+    Audits database functions for security risks and performance insights.
     """
-    adoc_content = ["=== Function Audit", "Audits database functions for security risks and performance insights."]
+    adoc_content = ["Audits database functions for security risks and performance insights."]
     structured_data = {} # Dictionary to hold structured findings for this module
 
-    # Get PostgreSQL version
-    pg_version_query = "SHOW server_version_num;"
-    _, raw_pg_version = execute_query(pg_version_query, is_check=True, return_raw=True)
-    pg_version_num = int(raw_pg_version) # e.g., 170000 for PG 17
-
-    # Determine if it's PostgreSQL 14 or newer (version number 140000 and above)
-    is_pg14_or_newer = pg_version_num >= 140000
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
 
     if settings['show_qry'] == 'true':
         adoc_content.append("Function audit queries:")
@@ -54,37 +57,11 @@ ORDER BY
 LIMIT %(limit)s;
 """)
         if settings['has_pgstat'] == 't':
-            if is_pg14_or_newer:
-                adoc_content.append("""
--- Query for top statements by total execution time (from pg_stat_statements, PG14+)
--- Note: Direct function OID linking (funcid) is not available in pg_stat_statements from PG14 onwards.
-SELECT
-    query,
-    calls,
-    total_exec_time,
-    min_exec_time,
-    max_exec_time,
-    mean_exec_time
-FROM
-    pg_stat_statements
-ORDER BY
-    total_exec_time DESC
-LIMIT %(limit)s;
-""")
-            else: # Older PG versions (pre-PG14), use pg_stat_statements with funcid
-                adoc_content.append("""
--- Query for top functions by total execution time (from pg_stat_statements, pre-PG14)
-SELECT
-    f.funcid::regproc AS function_name,
-    s.calls,
-    s.total_time,
-    s.self_time
-FROM
-    pg_stat_statements s
-JOIN
-    pg_proc f ON s.funcid = f.oid
-ORDER BY
-    s.total_time DESC
+            # Get version-specific pg_stat_statements query
+            pg_stat_query = get_pg_stat_statements_query(compatibility, 'function_performance')
+            adoc_content.append(f"""
+-- Query for function performance (PostgreSQL {compatibility['version_string']})
+{pg_stat_query}
 LIMIT %(limit)s;
 """)
         adoc_content.append("----")
@@ -182,8 +159,8 @@ LIMIT %(limit)s;
 
     # Add pg_stat_statements related queries conditionally
     if settings['has_pgstat'] == 't':
-        if is_pg14_or_newer:
-            adoc_content.append("\n=== Top Statements by Execution Time (pg_stat_statements, PostgreSQL 14+)")
+        if compatibility['is_pg14_or_newer']:
+            adoc_content.append("\nTop Statements by Execution Time (pg_stat_statements, PostgreSQL 14+)")
             adoc_content.append("[NOTE]\n====\nFor PostgreSQL 14 and newer, `pg_stat_statements` tracks statistics per `queryid` (hashed statement). Direct linking to function OIDs (`funcid`) is not available in this view. The following table shows top statements by execution time, which may include function calls. Manual inspection of the `query` column is required to identify specific function calls.\n====\n")
             queries.append(
                 (
@@ -227,22 +204,27 @@ LIMIT %(limit)s;
                     "top_statements_by_calls" # Changed key name
                 )
             )
-        else: # Older PG versions (pre-PG14)
-            adoc_content.append("\n=== Top Functions by Execution Time/Calls (pg_stat_statements, PostgreSQL < 14)")
-            adoc_content.append("[NOTE]\n====\nFor PostgreSQL versions older than 14, `pg_stat_statements` includes `funcid` for direct linking to functions. The following tables show top functions by execution time and call count.\n====\n")
+        else:
+            adoc_content.append("\nTop Functions by Execution Time/Calls (pg_stat_statements, PostgreSQL < 14)")
+            adoc_content.append("[NOTE]\n====\nFor PostgreSQL versions before 14, `pg_stat_statements` tracks statistics per function OID (`funcid`). This provides direct function-level metrics.\n====\n")
             queries.append(
                 (
                     "Top Functions by Total Execution Time (pg_stat_statements)",
                     """
 SELECT
-    f.funcid::regproc AS function_name,
+    p.proname AS function_name,
+    n.nspname AS schema_name,
     s.calls,
     s.total_time,
-    s.self_time
+    s.min_time,
+    s.max_time,
+    s.mean_time
 FROM
     pg_stat_statements s
 JOIN
-    pg_proc f ON s.funcid = f.oid
+    pg_proc p ON s.funcid = p.oid
+JOIN
+    pg_namespace n ON p.pronamespace = n.oid
 ORDER BY
     s.total_time DESC
 LIMIT %(limit)s;
@@ -256,14 +238,19 @@ LIMIT %(limit)s;
                     "Top Functions by Call Count (pg_stat_statements)",
                     """
 SELECT
-    f.funcid::regproc AS function_name,
+    p.proname AS function_name,
+    n.nspname AS schema_name,
     s.calls,
     s.total_time,
-    s.self_time
+    s.min_time,
+    s.max_time,
+    s.mean_time
 FROM
     pg_stat_statements s
 JOIN
-    pg_proc f ON s.funcid = f.oid
+    pg_proc p ON s.funcid = p.oid
+JOIN
+    pg_namespace n ON p.pronamespace = n.oid
 ORDER BY
     s.calls DESC
 LIMIT %(limit)s;
@@ -273,10 +260,16 @@ LIMIT %(limit)s;
                 )
             )
     else:
-        adoc_content.append("\n=== Top Functions/Statements by Execution Time/Calls")
-        adoc_content.append("[NOTE]\n====\n`pg_stat_statements` is not enabled or not found. Function/statement performance metrics cannot be collected. Please ensure `pg_stat_statements` is enabled in `shared_preload_libraries` and created as an extension.\n====\n")
-        structured_data["top_statements_by_time"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
-        structured_data["top_statements_by_calls"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
+        adoc_content.append("\nTop Functions/Statements by Execution Time/Calls")
+        adoc_content.append("[NOTE]\n====\n`pg_stat_statements` extension is not enabled. Enable it to get detailed function/statement performance metrics.\n====\n")
+        queries.append(
+            (
+                "pg_stat_statements Not Enabled",
+                "SELECT 'pg_stat_statements extension not enabled' AS note;",
+                False, # Not applicable if pg_stat_statements is not enabled
+                "pg_stat_statements_disabled"
+            )
+        )
 
 
     # Re-process performance related queries if pg_stat_statements is enabled

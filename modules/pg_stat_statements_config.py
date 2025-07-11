@@ -1,9 +1,8 @@
 def run_pg_stat_statements_config(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Checks if the pg_stat_statements extension is enabled and properly configured,
-    which is essential for detailed query performance analysis.
+    Checks if pg_stat_statements is enabled and properly configured for query analysis.
     """
-    adoc_content = ["=== pg_stat_statements Configuration", "Checks if pg_stat_statements is enabled and properly configured for query analysis."]
+    adoc_content = ["Checks if pg_stat_statements is enabled and properly configured for query analysis."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':
@@ -54,7 +53,7 @@ def run_pg_stat_statements_config(cursor, settings, execute_query, execute_pgbou
             structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
     
     # Provide a combined status for pg_stat_statements
-    adoc_content.append("\n=== pg_stat_statements Status Summary\n")
+    adoc_content.append("\n==== pg_stat_statements Status Summary\n")
     if is_preloaded and is_extension_created:
         adoc_content.append("[NOTE]\n====\n"
                            "The `pg_stat_statements` extension is **fully enabled** and loaded. "

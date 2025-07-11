@@ -27,6 +27,24 @@ create_history_db: true     # Set to true to create a history database (not full
 # AI Configuration
 ai_analyze: true            # Master switch: Set to true to enable AI analysis (whether integrated or offline)
 ai_run_integrated: true     # Set to true for AI analysis during main report generation; false for offline processing with offline_ai_processor.py
+
+# Trend Analysis Storage Settings
+trend_storage_enabled: false  # Enable to store health check data for trend analysis
+trend_database:
+  host: "trend-db.example.com"
+  port: 5432
+  database: "health_check_trends"
+  user: "trend_user"
+  password: "your_secure_password"
+  ssl_mode: "require"  # Options: disable, allow, prefer, require, verify-ca, verify-full
+
+# Trend Analysis Configuration
+trend_analysis:
+  default_days_back: 30  # Default number of days to analyze for trends
+  alert_thresholds:
+    connection_utilization: 0.8  # Alert if connections > 80%
+    query_performance_degradation: 0.2  # Alert if query time increases > 20%
+    failed_modules_increase: 0.1  # Alert if failed modules increase > 10%
 ai_api_key: "YOUR_AI_API_KEY" # Your AI API key for authentication with the AI endpoint
 ai_endpoint: "https://your-ai-api-endpoint.com/v1" # The URL of your AI API (e.g., Google Gemini, OpenAI-compatible proxy)
 ai_model: "your-ai-model-name" # The specific AI model to use (e.g., "gemini-2.0-flash", "gpt-4.1")
@@ -34,5 +52,21 @@ ai_user: "healthcheck_runner" # Optional: User identifier to send with AI reques
 ai_user_header: "X-User-ID" # Optional: Custom HTTP header name for ai_user (e.g., for corporate proxies/AIs)
 ai_temperature: 0.7         # Controls randomness of AI output. Lower (e.g., 0.2) for more focused, higher (e.g., 0.9) for more creative.
 ai_max_output_tokens: 2048  # Maximum number of tokens (words/pieces of words) the AI should generate in its response.
+
+# Enhanced AI Prompting Configuration
+ai_use_dynamic_prompting: true    # Set to true to use enhanced dynamic prompt generation based on metric severity
+ai_severity_thresholds:           # Customize severity thresholds for different metric types
+  connection_usage_critical: 90   # Percentage of max connections that triggers critical alert
+  connection_usage_high: 75       # Percentage of max connections that triggers high alert
+  query_exec_time_critical: 3600000  # Total execution time in milliseconds for critical alert (1 hour)
+  query_exec_time_high: 600000    # Total execution time in milliseconds for high alert (10 minutes)
+  dead_tuple_ratio_critical: 0.3  # Dead tuple ratio that triggers critical alert (30%)
+  dead_tuple_ratio_high: 0.1      # Dead tuple ratio that triggers high alert (10%)
+  ssl_usage_critical: 0.5         # Ratio of non-SSL connections that triggers critical alert (50%)
+  ssl_usage_high: 0.1             # Ratio of non-SSL connections that triggers high alert (10%)
+  unused_indexes_critical: 10     # Number of unused indexes that triggers critical alert
+  unused_indexes_high: 5          # Number of unused indexes that triggers high alert
+  aurora_replica_lag_critical: 300  # Replica lag in seconds for critical alert (5 minutes)
+  aurora_replica_lag_high: 60     # Replica lag in seconds for high alert (1 minute)
 
 ssl_cert_path: "/path/to/your/custom/cert.pem" # Optional: Path to a custom SSL certificate for verifying AI endpoint (e.g., for corporate proxies)
