@@ -1,0 +1,2402 @@
+= Health Check
+Netapp PostgreSQL Professional Services
+:doctype: book
+:encoding: utf-8
+:lang: en
+:toc: left
+:numbered:
+
+
+== Background
+
+=== 
+Healthcheck for database healthcheck_demo.  Experiencing issues stemming from roughly 100,000 IoT devices sending metrics to the database.
+
+
+
+
+== PostgreSQL Overview
+
+Provides an overview of the PostgreSQL database, including version, uptime, size, and key configuration settings.
+
+Database Version
+|===
+|version
+|PostgreSQL 17.4 (Ubuntu 17.4-1.pgdg24.04+2) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+|===
+Database Size
+|===
+|database|size
+|healthcheck_demo|2054 MB
+|===
+Uptime
+[NOTE]
+====
+Aurora-specific metrics not available.
+====
+
+Key Configuration Settings
+|===
+|name|setting|unit
+|effective_cache_size|12288000|8kB
+|max_connections|100|None
+|shared_buffers|4096000|8kB
+|work_mem|132129|kB
+|===
+[TIP]
+====
+Review database version for compatibility and upgrades. Check max_connections and work_mem for performance tuning, especially for CPU saturation issues.
+====
+
+
+== System Details
+
+Provides an overview of the operating system and hardware resources of the machine running this health check script.
+
+[NOTE]
+====
+The system details in this section reflect the operating system and hardware of the **machine where this `pg_healthcheck.py` script is being executed**, not necessarily the PostgreSQL database server itself, especially if the database is running remotely (e.g., on a cloud-managed service or a different host).
+====
+
+Hostname
+
+```text
+fedora
+```
+
+OS Information
+
+```text
+Linux fedora 6.14.5-100.fc40.x86_64 #1 SMP PREEMPT_DYNAMIC Fri May  2 14:22:13 UTC 2025 x86_64 GNU/Linux
+```
+
+System Uptime
+
+```text
+00:36:36 up 7 days, 15:33,  1 user,  load average: 4.42, 4.17, 3.75
+```
+
+CPU Cores
+
+```text
+12
+```
+
+Memory Usage
+
+```text
+total        used        free      shared  buff/cache   available
+Mem:            62Gi        14Gi        36Gi       1.9Gi        13Gi        47Gi
+Swap:          8.0Gi          0B       8.0Gi
+```
+
+[TIP]
+====
+Understanding the underlying operating system and hardware resources is critical for self-hosted PostgreSQL instances. Monitor CPU load, memory utilization, disk space, and network throughput to identify resource bottlenecks. Ensure sufficient resources are allocated to the database server.
+====
+
+
+== PostgreSQL Settings
+
+=== General Configuration Settings
+Analyzes a broad range of PostgreSQL configuration settings.
+
+General Configuration Settings
+|===
+|name|setting|unit|category|short_desc
+|authentication_timeout|60|s|Connections and Authentication / Authentication|Sets the maximum allowed time to complete client authentication.
+|gss_accept_delegation|off|None|Connections and Authentication / Authentication|Sets whether GSSAPI delegation should be accepted from the client.
+|krb_caseins_users|off|None|Connections and Authentication / Authentication|Sets whether Kerberos and GSSAPI user names should be treated as case-insensitive.
+|krb_server_keyfile|FILE:/etc/postgresql-common/krb5.keytab|None|Connections and Authentication / Authentication|Sets the location of the Kerberos server key file.
+|password_encryption|scram-sha-256|None|Connections and Authentication / Authentication|Chooses the algorithm for encrypting passwords.
+|===
+[TIP]
+====
+Review a broad range of settings to understand the overall configuration. Pay attention to how memory, connections, logging, and WAL settings are configured. Ensure they align with your workload requirements and best practices. For managed services, these are typically managed via parameter groups.
+====
+
+
+=== Critical Performance Settings
+Analyzes key PostgreSQL configuration settings for performance impact.
+
+Critical Performance Settings
+|===
+|name|setting|unit|short_desc
+|autovacuum|on|None|Starts the autovacuum subprocess.
+|checkpoint_timeout|300|s|Sets the maximum time between automatic WAL checkpoints.
+|effective_cache_size|12288000|8kB|Sets the planner's assumption about the total size of the data caches.
+|maintenance_work_mem|2097152|kB|Sets the maximum memory to be used for maintenance operations.
+|max_connections|100|None|Sets the maximum number of concurrent connections.
+|max_wal_size|4096|MB|Sets the WAL size that triggers a checkpoint.
+|shared_buffers|4096000|8kB|Sets the number of shared memory buffers used by the server.
+|wal_level|replica|None|Sets the level of information written to the WAL.
+|work_mem|132129|kB|Sets the maximum memory to be used for query workspaces.
+|===
+[TIP]
+====
+Review `max_connections` to ensure sufficient connection slots. Adjust `work_mem` and `shared_buffers` to balance memory usage and performance. Ensure `autovacuum` is enabled. Tune `checkpoint_timeout` and `max_wal_size` to optimize WAL activity, especially for CPU saturation issues.
+====
+
+
+=== Aurora CPU and IOPS Metrics
+Analyzes CPU and IOPS usage to identify saturation issues on the writer node.
+
+Aurora Replication Metrics
+[NOTE]
+====
+Aurora-specific metrics not available.
+====
+
+Active Connections (Excluding Autovacuum)
+|===
+|state|count
+|active|1
+|===
+Top CPU-Intensive Queries (from pg_stat_statements)
+|===
+|query|calls|total_exec_time|temp_blks_written
+|SELECT r.rolname, n.nspname||$1||c.relname AS object, p.privilege_type FROM pg_roles r JOIN pg_class c ON c.relowner = r.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN information_schema.table_privileges p ON p.grantee = r.rolname WHERE c.relkind = $2 AND r.rolname NOT LIKE $3 ORDER BY r.rolname, n.nspname, c.relname LIMIT $4|12|5388.284582999999|0
+|SELECT
+    p.proname AS function_name,
+    n.nspname AS schema_name,
+    pg_get_userbyid(p.proowner) AS owner
+FROM
+    pg_proc p
+JOIN
+    pg_namespace n ON p.pronamespace = n.oid
+WHERE
+    (SELECT rolsuper FROM pg_authid WHERE oid = p.proowner) IS TRUE
+ORDER BY
+    schema_name, function_name
+LIMIT $1|12|294.647172|0
+|SELECT
+    n.nspname AS schema_name,
+    c.relname AS table_name,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $1),
+        (SELECT setting FROM pg_settings WHERE name = $2)::text
+    ) AS autovacuum_enabled,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $3),
+        (SELECT setting FROM pg_settings WHERE name = $4)::text
+    ) AS toast_autovacuum_enabled,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $5),
+        (SELECT setting FROM pg_settings WHERE name = $6)
+    ) AS autovacuum_vacuum_threshold,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $7),
+        (SELECT setting FROM pg_settings WHERE name = $8)
+    ) AS autovacuum_vacuum_scale_factor,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $9),
+        (SELECT setting FROM pg_settings WHERE name = $10)
+    ) AS autovacuum_analyze_threshold,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $11),
+        (SELECT setting FROM pg_settings WHERE name = $12)
+    ) AS autovacuum_analyze_scale_factor
+FROM
+    pg_class c
+JOIN
+    pg_namespace n ON n.oid = c.relnamespace
+WHERE
+    c.relkind IN ($13, $14) -- 'r' for tables, 'm' for materialized views
+    AND n.nspname NOT IN ($15, $16, $17)
+ORDER BY
+    schema_name, table_name
+LIMIT $18|12|200.98081299999998|0
+|create database health_check_trends|1|187.273325|0
+|SELECT pg_size_pretty(sum(pg_relation_size(idx))::bigint) AS size,
+       (array_agg(idx))[$1] AS idx1, (array_agg(idx))[$2] AS idx2
+FROM (SELECT indexrelid::regclass AS idx, (indrelid::text ||$3|| indclass::text ||$4|| indkey::text ||$5||
+        coalesce(indexprs::text,$6)||$7 || coalesce(indpred::text,$8)) AS KEY
+        FROM pg_index) sub
+GROUP BY KEY HAVING count(*)>$9
+ORDER BY sum(pg_relation_size(idx)) DESC LIMIT $10|12|156.846507|0
+|===
+[TIP]
+====
+Optimize high-CPU queries or scale up the writer node. Monitor CPUUsage in AWS CloudWatch.
+====
+
+=== Datadog Monitoring Setup
+Analyzes PostgreSQL configuration relevant to Datadog monitoring.
+
+Shared Preload Libraries (for pg_stat_statements)
+|===
+|name|setting|short_desc
+|shared_preload_libraries|pg_stat_statements|Lists shared libraries to preload into server.
+|===
+Key Logging Settings
+|===
+|name|setting|short_desc
+|log_connections|off|Logs each successful connection.
+|log_disconnections|off|Logs end of a session, including duration.
+|log_min_duration_statement|-1|Sets the minimum execution time above which all statements will be logged.
+|log_statement|none|Sets the type of statements logged.
+|===
+[TIP]
+====
+Datadog relies on specific PostgreSQL configurations (like `pg_stat_statements` and detailed logging) to provide comprehensive monitoring. Ensure `shared_preload_libraries` includes `pg_stat_statements` for query-level metrics. Configure `log_min_duration_statement` to capture slow queries and enable `log_connections`/`log_disconnections` for connection auditing. For self-hosted instances, verify the Datadog Agent is running and configured correctly.
+====
+
+
+== Cache Analysis
+
+=== Cache Analysis
+Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks.
+
+Database Cache Hit Ratio
+|===
+|datname|blks_hit|blks_read|hit_ratio_percent
+|healthcheck_demo|457433|398|99.91
+|===
+Background Writer Buffer Statistics (PostgreSQL 17+)
+|===
+|buffers_alloc|buffers_clean
+|55488|0
+|===
+Checkpoint Buffer Statistics (PostgreSQL 17+)
+|===
+|checkpoints_timed|checkpoints_req|buffers_checkpoint
+|111|1|54127
+|===
+[TIP]
+====
+A cache hit ratio below 90% may indicate insufficient shared_buffers or ineffective query plans. Increase shared_buffers in the RDS parameter group for Aurora or adjust queries to improve cache efficiency. High checkpoint activity suggests tuning `checkpoint_timeout` or `max_wal_size`.
+====
+
+
+== Vacuum, Bloat and TXID Wrap Analysis
+
+=== Vacuum and Bloat Analysis
+Analyzes vacuum activity, dead tuples, and transaction ID wraparound risks to optimize database performance and prevent bloat.
+
+Tables with High Dead Tuples
+[NOTE]
+====
+No results returned.
+====
+
+Active Vacuum Processes
+|===
+|vacuum_processes
+|0
+|===
+Transaction ID Age
+|===
+|max_xid_age
+|2147483647
+|===
+[TIP]
+====
+High dead tuple percentages (>10%) indicate potential bloat; consider tuning autovacuum settings (e.g., autovacuum_vacuum_cost_limit) or running manual VACUUM FULL. Monitor max_xid_age to prevent transaction ID wraparound; values above 1 billion require immediate VACUUM FREEZE. For Aurora, adjust autovacuum parameters via the RDS parameter group.
+====
+
+
+=== Autovacuum Configuration Analysis
+Analyzes key autovacuum settings to ensure efficient bloat management and performance.
+
+Global Autovacuum Settings
+|===
+|name|setting|unit|short_desc
+|autovacuum_analyze_scale_factor|0.1|None|Number of tuple inserts, updates, or deletes prior to analyze as a fraction of reltuples.
+|autovacuum_analyze_threshold|50|None|Minimum number of tuple inserts, updates, or deletes prior to analyze.
+|autovacuum_freeze_max_age|200000000|None|Age at which to autovacuum a table to prevent transaction ID wraparound.
+|autovacuum_max_workers|3|None|Sets the maximum number of simultaneously running autovacuum worker processes.
+|autovacuum_multixact_freeze_max_age|400000000|None|Multixact age at which to autovacuum a table to prevent multixact wraparound.
+|autovacuum_naptime|60|s|Time to sleep between autovacuum runs.
+|autovacuum_vacuum_cost_delay|2|ms|Vacuum cost delay in milliseconds, for autovacuum.
+|autovacuum_vacuum_cost_limit|-1|None|Vacuum cost amount available before napping, for autovacuum.
+|autovacuum_vacuum_insert_scale_factor|0.2|None|Number of tuple inserts prior to vacuum as a fraction of reltuples.
+|autovacuum_vacuum_insert_threshold|1000|None|Minimum number of tuple inserts prior to vacuum, or -1 to disable insert vacuums.
+|autovacuum_vacuum_scale_factor|0.2|None|Number of tuple updates or deletes prior to vacuum as a fraction of reltuples.
+|autovacuum_vacuum_threshold|50|None|Minimum number of tuple updates or deletes prior to vacuum.
+|autovacuum_work_mem|-1|kB|Sets the maximum memory to be used by each autovacuum worker process.
+|===
+Tables with Custom Autovacuum Settings (or explicitly disabled)
+|===
+|schema_name|table_name|autovacuum_enabled|toast_autovacuum_enabled|autovacuum_vacuum_threshold|autovacuum_vacuum_scale_factor|autovacuum_analyze_threshold|autovacuum_analyze_scale_factor
+|public|daily_sales_summary|on|on|50|0.2|50|0.1
+|public|documents_gin|on|on|50|0.2|50|0.1
+|public|event_stream|on|on|50|0.2|50|0.1
+|public|logs_brin|on|on|50|0.2|50|0.1
+|public|orders_indexed_fk|on|on|50|0.2|50|0.1
+|===
+[TIP]
+====
+Autovacuum is critical for maintaining database health and performance by reclaiming dead tuples and preventing transaction ID wraparound. Ensure `autovacuum` is `on` globally. Review `autovacuum_vacuum_scale_factor` and `autovacuum_analyze_scale_factor` for appropriate thresholds. High `autovacuum_vacuum_cost_delay` can slow down vacuuming; consider reducing it for busy systems. Identify tables with disabled autovacuum or custom settings that might be causing bloat or performance issues. For Aurora, autovacuum parameters are managed via the DB cluster parameter group.
+====
+
+
+=== Vacuum Progress and Statistics & Per-Table Stats Suggestions
+Analyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates.
+
+Ongoing Vacuum Operations
+[NOTE]
+====
+No results returned.
+====
+
+Historical Vacuum Statistics
+[NOTE]
+====
+No results returned.
+====
+
+Tables Potentially Needing Per-Table Statistics
+[NOTE]
+====
+No results returned.
+====
+
+[TIP]
+====
+Monitor ongoing vacuum operations to ensure they complete without excessive CPU or IOPS usage. High `autovacuum_count` may indicate frequent updates; tune `autovacuum_vacuum_threshold` or `autovacuum_vacuum_cost_limit`. For Aurora, adjust these settings via the RDS parameter group.
+====
+
+
+=== Table Metrics
+Analyzes table sizes and live/dead tuples to identify potential issues.
+
+Table Sizes
+|===
+|table_name|size
+|public.pgbench_accounts|1498 MB
+|public.logs_brin|501 MB
+|public.event_stream|25 MB
+|public.sales_data|8128 kB
+|public.daily_sales_summary|6184 kB
+|===
+Live and Dead Tuples
+[NOTE]
+====
+No results returned.
+====
+
+Vacuum and Analyze Status
+[NOTE]
+====
+No results returned.
+====
+
+[TIP]
+====
+High dead tuples may indicate autovacuum tuning needs. Run VACUUM ANALYZE on large tables.
+====
+
+== Monitoring
+
+=== pg_stat_statements Configuration
+Checks if pg_stat_statements is enabled and properly configured for query analysis.
+pg_stat_statements Settings
+|===
+|name|setting|unit|short_desc
+|pg_stat_statements.max|5000|None|Sets the maximum number of statements tracked by pg_stat_statements.
+|pg_stat_statements.save|on|None|Save pg_stat_statements statistics across server shutdowns.
+|pg_stat_statements.track|top|None|Selects which statements are tracked by pg_stat_statements.
+|pg_stat_statements.track_planning|off|None|Selects whether planning duration is tracked by pg_stat_statements.
+|pg_stat_statements.track_utility|on|None|Selects whether utility commands are tracked by pg_stat_statements.
+|===
+
+=== pg_stat_statements Status Summary
+
+[NOTE]
+====
+The `pg_stat_statements` extension is **fully enabled** and loaded. Ensure its configuration parameters (e.g., `pg_stat_statements.track`) are set appropriately for your monitoring needs.
+====
+
+[TIP]
+====
+Proper configuration of `pg_stat_statements` is vital for capturing comprehensive query metrics. Adjust `pg_stat_statements.max` to ensure enough statements are tracked, and `pg_stat_statements.track` to `all` for full visibility. Regularly reset statistics (`pg_stat_statements_reset()`) for focused analysis periods.
+====
+
+
+=== General Monitoring Metrics
+Gathers key performance metrics for overall database health monitoring.
+Database Activity Statistics
+|===
+|numbackends|xact_commit|xact_rollback|blks_read|blks_hit|tup_returned|tup_fetched|tup_inserted|tup_updated|tup_deleted
+|1|1466|6|398|457433|11139865|78617|0|0|0
+|===
+Overall Database Transaction & Buffer Stats
+|===
+|total_connections|total_commits|total_rollbacks
+|1|2706|14
+|===
+Background Writer & Checkpoint Summary (PostgreSQL 17+)
+|===
+|checkpoints_timed|checkpoints_req|checkpoint_write_time|checkpoint_sync_time|buffers_checkpoint
+|111|1|105804.0|33.0|54127
+|===
+[TIP]
+====
+Regularly monitoring these general metrics provides a high-level view of database activity. High `xact_rollback` counts can indicate application errors or contention. Compare `blks_read` vs `blks_hit` to understand cache efficiency. For Aurora, these metrics complement CloudWatch data and help pinpoint database-internal performance characteristics.
+====
+
+
+=== Monitoring Recommendations
+Provides best practices and recommendations for comprehensive PostgreSQL monitoring.
+[TIP]
+====
+Implement a robust monitoring solution (e.g., Datadog, Prometheus/Grafana, CloudWatch) to track key PostgreSQL metrics. Monitor CPU, memory, disk I/O (IOPS, throughput), network, active connections, transaction rates, and replication lag. Set up alerts for critical thresholds to ensure proactive issue detection. Regularly review slow query logs and `pg_stat_statements` for query optimization opportunities.
+====
+
+
+== Replication
+
+=== Logical Replication (Publications and Subscriptions)
+Analyzes logical replication setup, including publications and subscriptions, to ensure data consistency and performance.
+
+Publications
+[NOTE]
+====
+No results returned.
+====
+
+Subscriptions
+[NOTE]
+====
+No results returned.
+====
+
+Subscription Status
+[NOTE]
+====
+No results returned.
+====
+
+[TIP]
+====
+Ensure publications and subscriptions are correctly configured for logical replication. Monitor subscription status for lag (received_lsn vs. latest_end_lsn). For Aurora, consider read replicas for high availability instead of logical replication if applicable.
+====
+
+
+=== Physical Replication Status
+Analyzes physical replication status for primary and replica nodes to ensure data consistency and minimal lag.
+
+Replication Status (Primary)
+[NOTE]
+====
+No results returned.
+====
+
+WAL Receiver Status (Replica)
+[NOTE]
+====
+Aurora manages replication internally; WAL receiver not applicable.
+====
+
+[TIP]
+====
+Monitor replication lag (sent_lag, write_lag, flush_lag, replay_lag) to ensure minimal delays. High lag may indicate network issues or insufficient resources on replicas. For Aurora, use CloudWatch metrics (e.g., ReplicaLag) to monitor replication performance.
+====
+
+
+=== High Availability Analysis
+Analyzes high availability configurations to ensure database resilience and continuity.
+
+Database Recovery Status (for Standby/Replica)
+[NOTE]
+====
+Query not applicable for this setup (e.g., Aurora manages recovery internally).
+====
+
+Current WAL LSN
+|===
+|pg_current_wal_lsn
+|D/50CA20D8
+|===
+[TIP]
+====
+High Availability is crucial for minimizing downtime and ensuring business continuity. For self-hosted setups, ensure proper configuration of streaming replication, `wal_level`, `max_wal_senders`, and `hot_standby`. Regularly test failover procedures to verify HA readiness. Consider external tools like Patroni or repmgr for automated failover and cluster management.
+====
+
+
+== WAL and Checkpoints
+
+=== Checkpoint Activity
+Analyzes checkpoint activity to optimize WAL performance and reduce I/O load.
+
+Checkpoint Statistics (PostgreSQL 17+)
+|===
+|checkpoints_timed|checkpoints_req|checkpoint_write_time|checkpoint_sync_time|buffers_checkpoint
+|111|1|105804.0|33.0|54127
+|===
+Checkpoint Configuration
+|===
+|name|setting|unit|short_desc
+|checkpoint_completion_target|0.9|None|Time spent flushing dirty buffers during checkpoint, as fraction of checkpoint interval.
+|checkpoint_timeout|300|s|Sets the maximum time between automatic WAL checkpoints.
+|max_wal_size|4096|MB|Sets the WAL size that triggers a checkpoint.
+|===
+[TIP]
+====
+High checkpoint frequency can increase I/O load. Adjust `checkpoint_timeout` or `max_wal_size` to reduce checkpoint frequency. For Aurora, tune these settings via the RDS parameter group to mitigate CPU and IOPS saturation.
+====
+
+[NOTE]
+====
+In PostgreSQL 17 and newer, checkpoint statistics like timed and requested checkpoints, write time, sync time, and buffers written are available in `pg_stat_checkpointer`.
+====
+
+
+=== WAL Usage and Archiving
+Analyzes Write-Ahead Log (WAL) usage and archiving status to optimize performance and ensure reliable recovery.
+
+WAL Archiving Status
+|===
+|archived_count|failed_count|last_archived_wal|last_archived_time|last_failed_wal|last_failed_time
+|0|0|None|None|None|None
+|===
+WAL Configuration Settings
+|===
+|name|setting|unit|short_desc
+|archive_mode|off|None|Allows archiving of WAL files using "archive_command".
+|archive_timeout|0|s|Sets the amount of time to wait before forcing a switch to the next WAL file.
+|max_wal_size|4096|MB|Sets the WAL size that triggers a checkpoint.
+|wal_level|replica|None|Sets the level of information written to the WAL.
+|===
+[TIP]
+====
+Ensure archive_mode is 'on' and monitor failed_count for archiving issues. Adjust archive_timeout to balance WAL segment creation and I/O load. For Aurora, verify WAL archiving setup via the RDS parameter group and CloudWatch metrics (e.g., WriteIOPS) to address CPU saturation.
+====
+
+
+=== Background Writer Statistics
+Analyzes background writer activity to optimize buffer management and reduce I/O load.
+
+Background Writer Metrics (PostgreSQL 17+)
+|===
+|buffers_clean|maxwritten_clean|buffers_alloc
+|0|0|55488
+|===
+Background Writer Configuration
+|===
+|name|setting|unit|short_desc
+|bgwriter_delay|200|ms|Background writer sleep time between rounds.
+|bgwriter_lru_maxpages|100|None|Background writer maximum number of LRU pages to flush per round.
+|bgwriter_lru_multiplier|2|None|Multiple of the average buffer usage to free per round.
+|===
+[TIP]
+====
+High `buffers_alloc` values indicate significant buffer allocation activity. Adjust `bgwriter_lru_maxpages` or reduce `bgwriter_delay` for more aggressive cleaning to optimize buffer management. For Aurora, tune these settings via the RDS parameter group to mitigate CPU and IOPS saturation.
+====
+
+
+== Index Analysis
+
+=== Index Usage in Read Replica Environments
+Provides guidance for analyzing index usage across primary and replica nodes.
+
+[IMPORTANT]
+====
+
+**🔍 INDEX USAGE ANALYSIS IN READ REPLICA ENVIRONMENTS**
+
+
+Index usage statistics (`pg_stat_user_indexes`) are tracked per-instance. 
+This means an index that appears 'unused' on the primary/master node 
+may actually be heavily used on read replicas.
+
+
+====
+
+=== Why This Happens
+
+
+**Query Distribution Patterns:**
+
+- **Primary/Master**: Handles writes (INSERT, UPDATE, DELETE)
+
+- **Read Replicas**: Handle SELECT queries and read operations
+
+- **Application Routing**: Queries are often routed based on operation type
+
+
+**Index Usage Statistics:**
+
+- `idx_scan`: Number of scans on this index (per-instance)
+
+- `idx_tup_read`: Number of index entries returned by scans
+
+- `idx_tup_fetch`: Number of live table rows fetched by simple index scans
+
+
+=== Recommended Analysis Approach
+
+
+**Step 1: Check Index Usage on Primary**
+
+```sql
+
+SELECT schemaname||'.'||relname AS table_name, indexrelname AS index_name, 
+       idx_scan, idx_tup_read, idx_tup_fetch 
+FROM pg_stat_user_indexes 
+WHERE idx_scan = 0 
+ORDER BY schemaname, relname, indexrelname;
+
+```
+
+
+**Step 2: Check Index Usage on ALL Read Replicas**
+
+Run the same query on each read replica to get complete picture.
+
+
+**Step 3: Aggregate Usage Statistics**
+
+Combine results from all nodes to identify truly unused indexes.
+
+
+**Step 4: Analyze Query Patterns**
+
+```sql
+
+-- Find queries that might use specific indexes
+
+SELECT query, calls, total_exec_time, mean_exec_time 
+FROM pg_stat_statements 
+WHERE query LIKE '%table_name%' 
+ORDER BY total_exec_time DESC;
+
+```
+
+
+=== Before Removing Any Index
+
+
+**✅ Pre-Removal Checklist:**
+
+1. **Verify usage on ALL nodes** (primary + all replicas)
+
+2. **Check for unique constraints** (indexes supporting UNIQUE constraints)
+
+3. **Review foreign key constraints** (indexes supporting FK relationships)
+
+4. **Analyze application query patterns** (which queries go to which nodes)
+
+5. **Test in staging environment** (never remove production indexes without testing)
+
+6. **Monitor performance impact** (both before and after removal)
+
+
+=== Aurora-Specific Considerations
+
+
+**AWS RDS Aurora Environment:**
+
+- Aurora read replicas may have different index usage patterns than the writer
+
+- Check index usage on ALL Aurora read replicas before removal
+
+- Monitor `ReadIOPS` and `WriteIOPS` after index changes
+
+- Use Performance Insights to analyze query patterns across nodes
+
+- Consider the impact on Aurora's storage optimization
+
+
+=== Safe Index Removal Process
+
+
+**🛡️ Recommended Process:**
+
+1. **Identify candidate indexes** (unused on all nodes)
+
+2. **Verify no constraints** (unique, foreign key, etc.)
+
+3. **Test in staging** (create same indexes, test removal)
+
+4. **Monitor performance** (before/after metrics)
+
+5. **Remove during low-traffic period** (maintenance window)
+
+6. **Monitor post-removal** (performance, errors, etc.)
+
+
+=== Monitoring Queries
+
+
+**Useful queries for index analysis:**
+
+```sql
+
+-- Check for unique constraints
+
+SELECT conname, conrelid::regclass, contype 
+FROM pg_constraint 
+WHERE contype = 'u' AND conrelid::regclass::text LIKE '%your_table%';
+
+
+-- Check for foreign key constraints
+
+SELECT conname, conrelid::regclass, confrelid::regclass 
+FROM pg_constraint 
+WHERE contype = 'f' AND conrelid::regclass::text LIKE '%your_table%';
+
+
+-- Check index sizes
+
+SELECT schemaname||'.'||relname AS table_name, indexrelname AS index_name, 
+       pg_size_pretty(pg_relation_size(indexrelid)) AS index_size 
+FROM pg_stat_user_indexes 
+WHERE idx_scan = 0 
+ORDER BY pg_relation_size(indexrelid) DESC;
+
+```
+
+
+[TIP]
+====
+
+**Best Practice:** Always maintain a comprehensive view of index usage across your entire database cluster. 
+What appears unused on one node may be critical on another. 
+When in doubt, keep the index - the storage cost is usually worth the performance benefit.
+
+====
+
+
+=== Unused Indexes
+Identifies unused indexes in the PostgreSQL database.
+|===
+|schemarelname|indexrelname
+|public.documents_gin|idx_documents_gin_title_trgm
+|public.documents_gin|documents_gin_pkey
+|public.documents_gin|idx_documents_gin_content
+|public.event_stream|event_stream_pkey
+|public.logs_brin|logs_brin_pkey
+|===
+Unused indexes were found. Since indexes can add significant overhead to any table change operation, they should be removed if they are not being used for either queries or constraint enforcement (such as making sure a value is unique).
+
+[IMPORTANT]
+====
+
+**⚠️ CRITICAL CONSIDERATION FOR READ REPLICAS ⚠️**
+
+
+Indexes that appear 'unused' on the primary/master node may actually be heavily used on read replicas!
+
+
+**Why this happens:**
+
+- Read replicas handle SELECT queries while the primary handles writes
+
+- Index usage statistics (`idx_scan`) are tracked per-instance
+
+- An index unused on primary might be critical for replica performance
+
+
+**Before removing any 'unused' indexes:**
+
+1. **Check all read replicas** for index usage statistics
+
+2. **Analyze query patterns** - replicas often handle different query types
+
+3. **Review application routing** - ensure you understand which queries go where
+
+4. **Test thoroughly** in staging environment before production removal
+
+
+**Recommended approach:**
+
+- Use `pg_stat_user_indexes` on ALL nodes (primary + replicas)
+
+- Aggregate usage statistics across the entire cluster
+
+- Only remove indexes that are truly unused across all nodes
+
+====
+
+[TIP]
+====
+Regularly review `pg_stat_user_indexes` for indexes with `idx_scan = 0`. These indexes consume disk space and add overhead to `INSERT`, `UPDATE`, and `DELETE` operations without providing query performance benefits. Consider dropping unused indexes after thorough analysis and testing.
+====
+
+[NOTE]
+====
+For standard PostgreSQL with read replicas:
+- Check index usage on all replica nodes
+- Consider using `pg_stat_statements` to identify which queries use which indexes
+- Use `EXPLAIN ANALYZE` to verify index usage in query plans
+====
+
+
+Identifies duplicate indexes in the PostgreSQL database.
+
+|===
+|size|idx1|idx2
+|1632 kB|users_dup_idx_username_key|idx_users_dup_username
+|1360 kB|idx_users_dup_email|idx_users_dup_email_redundant
+|===
+[CAUTION]
+====
+Duplicate indexes were found.
+Duplicate or multiple indexes that have the same set of columns, same opclass, expression and predicate make them equivalent.
+
+. Review source code to determine where they may have originated from.
+. Understand why a duplicate might exist.
+. It may have had some purpose at some point.
+. Test thoroughly before taking any action.
+. Do not automate the task of dropping one of them.
+====
+
+[TIP]
+====
+Duplicate indexes consume unnecessary disk space and add overhead to write operations. They do not provide additional performance benefits for queries. Identify and remove redundant indexes to improve write performance and reduce storage costs.
+====
+
+
+=== Tables with Potentially Missing Indexes
+Identifies tables with high sequential scans and low or no index scans, indicating potential missing indexes.
+|===
+|schemarelname|rows_read|rows_estimated|seq_scans
+|public.event_stream|0|0|0
+|public.pgbench_tellers|0|0|0
+|public.daily_sales_summary|0|0|0
+|public.sensor_data_2024_q1|0|0|0
+|public.sales_data|0|0|0
+|===
+[IMPORTANT]
+====
+We might have some missing indexes...
+
+. The name of the table (schemarelname) including the schemaname.
+. How often our table has been read sequentially (seq_scan).
+. How often an index has been used is NOT shown... since it's 0 or null.
+. The most important information is rows_read. It tells us how many rows the system had to process to satisfy all those sequential scans.
+====
+
+[TIP]
+====
+Tables with high `seq_scan` counts and low `idx_scan` counts are strong candidates for new indexes. Focus on tables where `rows_read` is high, as this indicates significant data scanning. Proper indexing can drastically reduce I/O and CPU usage for read-heavy queries.
+====
+
+
+=== Largest Indexes
+Identifies the largest indexes in the PostgreSQL database.
+|===
+|table_name|Total Size|Index Size|Actual Size
+|pgbench_accounts|1498 MB|214 MB|1283 MB
+|logs_brin|501 MB|113 MB|388 MB
+|event_stream|25 MB|4408 kB|21 MB
+|users_dup_idx|4016 kB|3232 kB|752 kB
+|sales_data|8128 kB|2208 kB|5888 kB
+|===
+[TIP]
+====
+Large indexes consume significant disk space and can impact the performance of `INSERT`, `UPDATE`, and `DELETE` operations. They also increase backup and restore times. Review the necessity of very large indexes; consider partial indexes or re-evaluating indexing strategies if they are excessively large relative to the table size.
+====
+
+
+=== BRIN Index Analysis
+Analyzes BRIN (Block Range Index) indexes to evaluate their usage and efficiency.
+BRIN Index Details
+|===
+|table_name|index_name|index_type|index_size
+|public.logs_brin|idx_logs_brin_log_time|brin|32 kB
+|===
+BRIN Index Usage Statistics
+|===
+|table_name|index_name|idx_scan|idx_tup_read|idx_tup_fetch
+|public.logs_brin|idx_logs_brin_log_time|0|0|0
+|===
+[TIP]
+====
+BRIN indexes are efficient for large, monotonically increasing data (e.g., timestamps). Ensure they are used for appropriate workloads. Low idx_scan values may indicate underutilized indexes; consider replacing with B-tree indexes if range queries are frequent. For Aurora, monitor index performance via CloudWatch metrics.
+====
+
+=== GIN Index Analysis
+Analyzes GIN (Generalized Inverted Index) indexes to evaluate their usage and efficiency.
+
+GIN Index Details
+|===
+|table_name|index_name|index_type|index_size
+|public.documents_gin|idx_documents_gin_content|gin|416 kB
+|public.documents_gin|idx_documents_gin_title_trgm|gin|272 kB
+|===
+GIN Index Usage Statistics
+|===
+|table_name|index_name|idx_scan|idx_tup_read|idx_tup_fetch
+|public.documents_gin|idx_documents_gin_content|0|0|0
+|public.documents_gin|idx_documents_gin_title_trgm|0|0|0
+|===
+[TIP]
+====
+GIN indexes are best suited for columns that contain composite values, such as arrays or full-text search documents. Monitor `idx_scan` to ensure GIN indexes are being utilized for relevant queries. GIN indexes can be larger and slower to build/update than B-tree indexes, so ensure their benefits outweigh their overhead for your workload.
+====
+
+
+== Table Analysis
+
+=== Large Tables Analysis
+Identifies large tables by size to assess storage and performance impact.
+Large Tables
+|===
+|table_name|total_size|table_size|index_size|estimated_rows
+|public.pgbench_accounts|1498 MB|1284 MB|214 MB|10000000.0
+|public.logs_brin|501 MB|388 MB|113 MB|5256184.0
+|public.event_stream|25 MB|21 MB|4408 kB|200000.0
+|public.sales_data|8128 kB|5920 kB|2208 kB|100000.0
+|public.users_dup_idx|4016 kB|784 kB|3232 kB|10000.0
+|===
+[TIP]
+====
+Large tables with high index sizes may contribute to I/O and CPU load. Consider partitioning large tables or optimizing indexes. For Aurora, monitor IOPS and storage usage via CloudWatch to manage performance.
+====
+
+=== Database Object Counts
+Provides a summary count of various database object types.
+Summary of Database Objects
+|===
+|Object Type|Count
+|Tables|18
+|Views|2
+|Materialized Views|1
+|Indexes|20
+|Sequences|9
+|Functions/Procedures|39
+|Schemas|1
+|Foreign Keys|2
+|Partitions|6
+|===
+[TIP]
+====
+Monitoring object counts provides a high-level view of database complexity and growth. A sudden increase in certain object types (e.g., tables, functions) might indicate application changes or unexpected behavior. High numbers of indexes or foreign keys should prompt a review of their necessity and proper indexing to avoid performance overheads.
+====
+
+
+=== Materialized View Analysis
+Analyzes materialized views for size, refresh status, and potential optimization opportunities.
+Materialized View Sizes and Population Status
+|===
+|schemaname|matviewname|size|ispopulated
+|public|daily_sales_summary|6144 kB|True
+|===
+Materialized View XID Age and Last Refresh
+[NOTE]
+====
+Query not applicable.
+====
+
+[TIP]
+====
+Monitor materialized view sizes and ensure they are regularly refreshed to reflect current data. High XID age on materialized views can indicate a need for more frequent refreshes or `VACUUM FREEZE` if not refreshed concurrently. Consider `REFRESH MATERIALIZED VIEW CONCURRENTLY` for large views to minimize downtime. For Aurora, materialized views behave similarly, and their refresh strategy should be optimized for performance and data freshness.
+====
+
+
+=== Partitioned Tables Analysis
+Identifies and analyzes partitioned tables and their individual partitions.
+List Partitioned Tables (Parents)
+|===
+|relname|relkind
+|sensor_data|p
+|===
+List Individual Partitions and Their Sizes
+|===
+|partition_name|size
+|sensor_data_2023_q3|152 kB
+|sensor_data_2023_q4|152 kB
+|sensor_data_2022_q4|152 kB
+|sensor_data_2024_q1|152 kB
+|sensor_data_2023_q2|152 kB
+|===
+[TIP]
+====
+Partitioned tables are essential for managing large datasets, improving query performance, and simplifying data retention. Ensure your partitioning strategy aligns with your data access patterns. Monitor individual partition sizes to identify skew or unexpected growth. For Aurora, partitioning can significantly aid in managing large tables and improving query performance.
+====
+
+
+=== Tables with High Insert Activity
+Identifies tables experiencing a high volume of new row insertions.
+Tables with High Insert Activity (n_tup_ins > 500000)
+[NOTE]
+====
+No tables found with high insert activity.
+====
+
+[TIP]
+====
+Tables with consistently high insert rates can be a source of increased CPU usage, IOPS, and table bloat. Ensure that `autovacuum` is aggressively configured for such tables to prevent excessive dead tuple accumulation. Consider optimizing application-side insert patterns, such as batching inserts or using `COPY` for bulk data loading, to reduce transaction overhead. For Aurora, high insert activity directly impacts `WriteIOPS` and `CPUUtilization` metrics in CloudWatch.
+====
+
+
+=== Top Write-Intensive Queries
+Identifies queries that generate significant write activity.
+[NOTE]
+====
+This section lists the top queries that generate significant write activity (based on rows affected, WAL bytes, or blocks written). Due to query normalization in `pg_stat_statements`, these queries may not directly show the table names if they are parameterized. Manual inspection of the query text is recommended for correlation.
+====
+
+|===
+|query|calls|total_exec_time|mean_exec_time|rows|shared_blks_written|local_blks_written|temp_blks_written|wal_bytes
+|SELECT name, setting, unit, short_desc, category, context FROM pg_settings ORDER BY category, name...|12|61.835155|5.152929583333334|4596|0|0|0|0
+|SELECT name, setting, unit, short_desc FROM pg_settings WHERE name LIKE $1 ORDER BY name...|26|66.044577|2.540176038461538|234|0|0|0|0
+|SELECT schemaname  $1  relname AS table_name, pg_size_pretty(pg_total_relation_size(relid)) AS size FROM pg_stat_user_tables ORDER BY pg_total_relatio...|25|107.82848899999999|4.313139560000001|125|0|0|0|0
+|SELECT name, setting, unit, short_desc         FROM pg_settings         WHERE name IN (             $1, $2, $3, $4,             $5, $6, $7,           ...|13|29.937824999999997|2.302909615384615|117|0|0|0|0
+|INSERT INTO healthy_company_data_co.module_findings                      (run_id, module_name, status, severity_level, severity_score, data_json, erro...|112|31.458775999999986|0.2808819285714285|112|16|0|0|128001
+|===
+[TIP]
+====
+Optimizing write-intensive queries is crucial for overall database performance. Look for opportunities to batch operations, use `COPY` for bulk loads, or improve indexing strategies on heavily written tables. Analyze query plans (`EXPLAIN (ANALYZE, BUFFERS)`) to understand resource consumption. For Aurora, excessive write activity directly impacts `WriteIOPS` and `CPUUtilization` metrics in CloudWatch.
+====
+
+
+=== Table Metrics
+Analyzes table sizes and live/dead tuples to identify potential issues.
+
+Table Sizes
+|===
+|table_name|size
+|public.pgbench_accounts|1498 MB
+|public.logs_brin|501 MB
+|public.event_stream|25 MB
+|public.sales_data|8128 kB
+|public.daily_sales_summary|6184 kB
+|===
+Live and Dead Tuples
+[NOTE]
+====
+No results returned.
+====
+
+Vacuum and Analyze Status
+[NOTE]
+====
+No results returned.
+====
+
+[TIP]
+====
+High dead tuples may indicate autovacuum tuning needs. Run VACUUM ANALYZE on large tables.
+====
+
+=== Foreign Key Audit
+Audits foreign key constraints to identify potential write-amplification issues and ensure data integrity.
+All Foreign Keys Defined
+|===
+|foreign_key_name|child_table|constraint_definition
+|fk_product_indexed|orders_indexed_fk|FOREIGN KEY (product_id) REFERENCES parent_products(product_id)
+|fk_product_unindexed|orders_unindexed_fk|FOREIGN KEY (product_id) REFERENCES parent_products(product_id)
+|===
+Foreign Keys Missing Indexes on Child Table
+|===
+|foreign_key_name|child_table|fk_col_names|parent_table|pk_col_names
+|fk_product_unindexed|public.orders_unindexed_fk|['product_id']|public.parent_products|['product_id']
+|===
+[TIP]
+====
+Foreign key constraints enforce referential integrity, but unindexed foreign key columns on the child table can lead to significant write amplification. When a row in the parent table is `DELETE`d or `UPDATE`d, PostgreSQL must scan the child table to ensure no referencing rows exist. Without an index on the foreign key column(s) in the child table, this becomes a full table scan, consuming excessive I/O and CPU. Ensure indexes exist on all foreign key columns in child tables, especially for parent tables that experience frequent `DELETE`s or `UPDATE`s.
+====
+
+
+=== Recommended SQL for Missing Foreign Key Indexes
+[IMPORTANT]
+====
+The following `CREATE INDEX` statements are recommended to improve write performance on parent tables with frequently updated/deleted rows, by adding indexes to the corresponding foreign key columns in child tables. Always test these changes in a staging environment before applying to production.
+====
+
+[,sql]
+----
+CREATE INDEX CONCURRENTLY idx_orders_unindexed_fk_product_id_fk ON public.orders_unindexed_fk (product_id);
+----
+
+=== Tables Without Primary or Unique Keys
+Identifies tables lacking Primary Keys or Unique Keys, which can impact replication and data integrity.
+
+Tables Without Primary or Unique Keys
+|===
+|schema_name|table_name
+|public|pgbench_history
+|public|sensor_data_2022_q4
+|public|sensor_data_2023_q1
+|public|sensor_data_2023_q2
+|public|sensor_data_2023_q3
+|===
+[TIP]
+====
+Tables without a Primary Key (PK) or a Unique Key (UK) can pose significant challenges, especially for logical replication. Logical replication requires a unique identifier to correctly apply `UPDATE` and `DELETE` operations on the subscriber. Without a PK/UK, replication might fall back to less efficient methods (e.g., full table scans based on all columns) or even fail. Additionally, PKs/UKs are fundamental for data integrity and efficient query planning.
+====
+
+
+== Function and Stored Procedure Audit
+
+=== Function Audit
+Audits database functions for security risks and performance insights.
+[IMPORTANT]
+====
+Potential security vulnerabilities identified in functions:
+
+* One or more `SECURITY DEFINER` functions were found. These require careful review to prevent privilege escalation.
+
+* One or more functions are owned by superusers. Consider reassigning ownership to less privileged roles where appropriate.
+
+====
+
+Functions with SECURITY DEFINER
+|===
+|function_name|schema_name|owner|access_privileges
+|get_sensitive_data_secdef|public|postgres|None
+|===
+Functions Owned by Superusers
+|===
+|function_name|schema_name|owner
+|_pg_char_max_length|information_schema|postgres
+|_pg_char_octet_length|information_schema|postgres
+|_pg_datetime_precision|information_schema|postgres
+|_pg_expandarray|information_schema|postgres
+|_pg_index_position|information_schema|postgres
+|===
+
+=== Top Statements by Execution Time (pg_stat_statements, PostgreSQL 14+)
+[NOTE]
+====
+For PostgreSQL 14 and newer, `pg_stat_statements` tracks statistics per `queryid` (hashed statement). Direct linking to function OIDs (`funcid`) is not available in this view. The following table shows top statements by execution time, which may include function calls. Manual inspection of the `query` column is required to identify specific function calls.
+====
+
+Top Statements by Total Execution Time (pg_stat_statements)
+|===
+|query|calls|total_exec_time|min_exec_time|max_exec_time|mean_exec_time
+|SELECT r.rolname, n.nspname||$1||c.relname AS object, p.privilege_type FROM pg_roles r JOIN pg_class c ON c.relowner = r.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN information_schema.table_privileges p ON p.grantee = r.rolname WHERE c.relkind = $2 AND r.rolname NOT LIKE $3 ORDER BY r.rolname, n.nspname, c.relname LIMIT $4|12|5388.284582999999|441.138615|476.92499|449.02371524999995
+|SELECT
+    p.proname AS function_name,
+    n.nspname AS schema_name,
+    pg_get_userbyid(p.proowner) AS owner
+FROM
+    pg_proc p
+JOIN
+    pg_namespace n ON p.pronamespace = n.oid
+WHERE
+    (SELECT rolsuper FROM pg_authid WHERE oid = p.proowner) IS TRUE
+ORDER BY
+    schema_name, function_name
+LIMIT $1|13|319.611147|24.164211|24.978641|24.58547284615385
+|SELECT
+    n.nspname AS schema_name,
+    c.relname AS table_name,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $1),
+        (SELECT setting FROM pg_settings WHERE name = $2)::text
+    ) AS autovacuum_enabled,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $3),
+        (SELECT setting FROM pg_settings WHERE name = $4)::text
+    ) AS toast_autovacuum_enabled,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $5),
+        (SELECT setting FROM pg_settings WHERE name = $6)
+    ) AS autovacuum_vacuum_threshold,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $7),
+        (SELECT setting FROM pg_settings WHERE name = $8)
+    ) AS autovacuum_vacuum_scale_factor,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $9),
+        (SELECT setting FROM pg_settings WHERE name = $10)
+    ) AS autovacuum_analyze_threshold,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $11),
+        (SELECT setting FROM pg_settings WHERE name = $12)
+    ) AS autovacuum_analyze_scale_factor
+FROM
+    pg_class c
+JOIN
+    pg_namespace n ON n.oid = c.relnamespace
+WHERE
+    c.relkind IN ($13, $14) -- 'r' for tables, 'm' for materialized views
+    AND n.nspname NOT IN ($15, $16, $17)
+ORDER BY
+    schema_name, table_name
+LIMIT $18|13|217.67034399999997|16.463827000000002|17.179111|16.743872615384614
+|create database health_check_trends|1|187.273325|187.273325|187.273325|187.273325
+|SELECT pg_size_pretty(sum(pg_relation_size(idx))::bigint) AS size,
+       (array_agg(idx))[$1] AS idx1, (array_agg(idx))[$2] AS idx2
+FROM (SELECT indexrelid::regclass AS idx, (indrelid::text ||$3|| indclass::text ||$4|| indkey::text ||$5||
+        coalesce(indexprs::text,$6)||$7 || coalesce(indpred::text,$8)) AS KEY
+        FROM pg_index) sub
+GROUP BY KEY HAVING count(*)>$9
+ORDER BY sum(pg_relation_size(idx)) DESC LIMIT $10|13|169.55873|12.696757|16.213871|13.042979230769234
+|===
+Top Statements by Call Count (pg_stat_statements)
+|===
+|query|calls|total_exec_time|min_exec_time|max_exec_time|mean_exec_time
+|SHOW server_version_num|114|0.8758080000000003|0.005571|0.026023|0.007682526315789474
+|INSERT INTO healthy_company_data_co.module_findings 
+                    (run_id, module_name, status, severity_level, severity_score, data_json, error_message)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)|112|31.458775999999986|0.118065|1.913383|0.2808819285714285
+|SELECT count(*) FROM pg_class WHERE relkind = $1 AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE $2 OR nspname = $3)|65|21.986852000000003|0.284032|0.781412|0.33825926153846153
+|SHOW server_version|46|0.30852|0.005323|0.029544|0.006706956521739131
+|SELECT relname, n_live_tup AS live_tuples, n_dead_tup AS dead_tuples FROM pg_stat_user_tables WHERE n_dead_tup > $1 ORDER BY n_dead_tup DESC LIMIT $2|26|9.803238999999998|0.346841|0.405679|0.3770476538461538
+|===
+[TIP]
+====
+Functions with `SECURITY DEFINER` can pose a security risk if not carefully managed, as they execute with the privileges of their creator, not the caller. Review these functions to ensure their functionality is strictly necessary and their execution is limited to trusted users. Functions owned by superusers should also be scrutinized; consider reassigning ownership to less privileged roles where possible. Monitoring function execution time and call counts (via `pg_stat_statements`) is crucial for identifying performance bottlenecks within your application's database logic.
+====
+
+[NOTE]
+====
+Functions employing dynamic SQL (e.g., using `EXECUTE` statements) should be manually audited for potential SQL injection vulnerabilities. Ensure all external inputs used in dynamic queries are properly sanitized using `FORMAT()` or `quote_ident()`/`quote_literal()` to prevent malicious code execution.
+====
+
+
+== Query Analysis
+
+=== Top Queries by Execution Time
+Identifies resource-intensive queries based on total execution time.
+
+Top Queries by Execution Time
+|===
+|query|calls|total_exec_time|mean_exec_time|rows
+|SELECT r.rolname, n.nspname||$1||c.relname AS object, p.privilege_type FROM pg_roles r JOIN pg_class c ON c.relowner = r.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN information_schema.table_privileges p ON p.grantee = r.rolname WHERE c.relkind = $2 AND r.rolname NOT LIKE $3 ORDER BY r.rolname, n.nspname, c.relname LIMIT $4|12|5388.284582999999|449.02371524999995|60
+|SELECT
+    p.proname AS function_name,
+    n.nspname AS schema_name,
+    pg_get_userbyid(p.proowner) AS owner
+FROM
+    pg_proc p
+JOIN
+    pg_namespace n ON p.pronamespace = n.oid
+WHERE
+    (SELECT rolsuper FROM pg_authid WHERE oid = p.proowner) IS TRUE
+ORDER BY
+    schema_name, function_name
+LIMIT $1|13|319.611147|24.58547284615385|65
+|SELECT
+    n.nspname AS schema_name,
+    c.relname AS table_name,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $1),
+        (SELECT setting FROM pg_settings WHERE name = $2)::text
+    ) AS autovacuum_enabled,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $3),
+        (SELECT setting FROM pg_settings WHERE name = $4)::text
+    ) AS toast_autovacuum_enabled,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $5),
+        (SELECT setting FROM pg_settings WHERE name = $6)
+    ) AS autovacuum_vacuum_threshold,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $7),
+        (SELECT setting FROM pg_settings WHERE name = $8)
+    ) AS autovacuum_vacuum_scale_factor,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $9),
+        (SELECT setting FROM pg_settings WHERE name = $10)
+    ) AS autovacuum_analyze_threshold,
+    COALESCE(
+        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = $11),
+        (SELECT setting FROM pg_settings WHERE name = $12)
+    ) AS autovacuum_analyze_scale_factor
+FROM
+    pg_class c
+JOIN
+    pg_namespace n ON n.oid = c.relnamespace
+WHERE
+    c.relkind IN ($13, $14) -- 'r' for tables, 'm' for materialized views
+    AND n.nspname NOT IN ($15, $16, $17)
+ORDER BY
+    schema_name, table_name
+LIMIT $18|13|217.67034399999997|16.743872615384614|65
+|create database health_check_trends|1|187.273325|187.273325|0
+|SELECT pg_size_pretty(sum(pg_relation_size(idx))::bigint) AS size,
+       (array_agg(idx))[$1] AS idx1, (array_agg(idx))[$2] AS idx2
+FROM (SELECT indexrelid::regclass AS idx, (indrelid::text ||$3|| indclass::text ||$4|| indkey::text ||$5||
+        coalesce(indexprs::text,$6)||$7 || coalesce(indpred::text,$8)) AS KEY
+        FROM pg_index) sub
+GROUP BY KEY HAVING count(*)>$9
+ORDER BY sum(pg_relation_size(idx)) DESC LIMIT $10|13|169.55873|13.042979230769234|26
+|===
+[TIP]
+====
+Queries with high `total_exec_time` or `mean_exec_time` are consuming significant database resources. Investigate these queries for optimization opportunities, such as adding appropriate indexes, rewriting inefficient parts, or adjusting application logic. For Aurora, optimizing these queries directly reduces `CPUUtilization` and improves overall performance.
+====
+
+
+=== Active Query States
+Analyzes the states of active queries to identify contention or idle sessions.
+
+Active Query States
+|===
+|state|query_count
+|active|1
+|===
+[TIP]
+====
+Monitoring active query states helps in understanding current database workload and identifying issues. High counts of 'idle in transaction' indicate uncommitted transactions, which can hold locks and prevent vacuuming. 'waiting' states point to lock contention. Regularly review `pg_stat_activity` to pinpoint problematic sessions and queries.
+====
+
+
+=== Long-Running Queries
+Identifies long-running queries that may contribute to performance issues.
+
+Long-Running Queries
+[NOTE]
+====
+No results returned.
+====
+
+[TIP]
+====
+Long-running queries (duration > 1 minute) may cause CPU or I/O bottlenecks. Investigate and optimize these queries, or terminate them if necessary (e.g., using pg_terminate_backend(pid)). For Aurora, monitor long-running queries via CloudWatch and consider query optimization or scaling.
+====
+
+=== Lock Wait Configuration
+Analyzes the 'log_lock_waits' setting for deadlock detection.
+
+Lock Wait Configuration
+|===
+|name|setting|unit|short_desc
+|log_lock_waits|off|None|Logs long lock waits.
+|===
+[TIP]
+====
+The `log_lock_waits` parameter (when set to `on`) is essential for PostgreSQL to log information about sessions waiting for locks. This helps in identifying queries that are frequently involved in lock contention or deadlocks. If you are experiencing performance issues related to concurrency, ensure this setting is enabled to aid in diagnosis.
+====
+
+
+=== Current Lock Waits
+Identifies current sessions waiting for locks.
+
+Current Lock Waits
+[NOTE]
+====
+No results returned.
+====
+
+[TIP]
+====
+Sessions in a 'waiting' state for a lock indicate active contention. Investigate the `query` of the waiting session and the session holding the lock (which will have `pl.granted = true` for the same lock). Optimize conflicting queries with better indexing, reduce transaction isolation levels if appropriate, or implement proper transaction management. Persistent lock waits can degrade performance and lead to deadlocks.
+====
+
+
+=== Hot Queries
+Identifies frequently executed queries to pinpoint potential performance bottlenecks due to high volume.
+
+By querying `pg_stat_statements`, this section identifies queries that are executed most frequently (`calls`). Even if a query is individually fast, a very high call count can lead to significant cumulative resource consumption (CPU, I/O) and impact overall database performance. These queries could potentially impact performance and are likely to also show up in the 'Missing Indexes' section or other analyses dealing with `pg_stat_user_tables` if they are inefficient.
+
+Hot Queries
+|===
+|query|calls|total_exec_time|mean_exec_time|rows|shared_blks_hit|shared_blks_read
+|SHOW server_version_num|116|0.8898650000000002|0.00767125|0|0|0
+|INSERT INTO healthy_company_data_co.module_findings (run_id, module_name, status, severity_level, severity_score, data_json, error_message) VALUES ($1, $2, $3, $4, $5, $6, $7)|112|31.458775999999986|0.2808819285714285|112|1468|2
+|SELECT count(*) FROM pg_class WHERE relkind = $1 AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE $2 OR nspname = $3)|65|21.986852000000003|0.33825926153846153|65|975|0
+|SHOW server_version|48|0.32102600000000003|0.006688041666666667|0|0|0
+|SELECT relname, n_live_tup AS live_tuples, n_dead_tup AS dead_tuples FROM pg_stat_user_tables WHERE n_dead_tup > $1 ORDER BY n_dead_tup DESC LIMIT $2|26|9.803238999999998|0.3770476538461538|0|364|0
+|===
+[TIP]
+====
+Focus on queries with a high `calls` count. Even if their `mean_exec_time_ms` is low, their cumulative impact can be significant. Investigate these queries for potential micro-optimizations, such as reducing redundant executions, optimizing caching at the application level, or ensuring they are fully covered by appropriate indexes. High `shared_blks_read` for hot queries indicates frequent disk I/O, which can be a bottleneck. For Aurora, highly frequent queries directly contribute to `CPUUtilization` and `IOPS`.
+====
+
+
+== Connections and Security
+
+=== User Analysis
+Analyzes database user roles and permissions to ensure secure access control.
+
+User Roles
+|===
+|rolname|rolcanlogin|rolsuper|rolcreatedb|rolcreaterole
+|postgres|True|True|True|True
+|insecure_user|True|False|False|False
+|admin_user|True|False|True|True
+|===
+User Permissions on Tables
+|===
+|rolname|object|privilege_type
+|postgres|information_schema.sql_features|UPDATE
+|postgres|information_schema.sql_features|DELETE
+|postgres|information_schema.sql_features|INSERT
+|postgres|information_schema.sql_features|SELECT
+|postgres|information_schema.sql_features|TRUNCATE
+|===
+[TIP]
+====
+Ensure users have minimal required permissions (principle of least privilege). Avoid granting superuser or create role privileges unless necessary. For Aurora, manage roles via the RDS console and monitor user activity via CloudWatch Logs.
+====
+
+
+=== SSL Connection Statistics
+Analyzes SSL connection usage to ensure secure communication with the database.
+
+SSL Connections by User and Client Address
+|===
+|usename|client_addr|ssl|count
+|postgres|192.168.1.219|True|1
+|===
+Overall SSL Usage Summary
+|===
+|ssl|connection_count
+|True|1
+|===
+[TIP]
+====
+Ensure that `ssl` is 'true' for all critical connections to protect data in transit. If you see 'false' for `ssl` on connections that should be encrypted, investigate client configurations. For Aurora, SSL is typically enforced at the instance level and managed via parameter groups and security groups.
+====
+
+
+=== Security Audit
+Analyzes key security configurations and user privileges to identify potential vulnerabilities.
+Superuser Roles
+|===
+|rolname
+|postgres
+|===
+Roles with Password Issues (No Password or Expiration Set)
+[NOTE]
+====
+No results returned.
+====
+
+Public Schema Permissions
+[NOTE]
+====
+No results returned.
+====
+
+Key Security Settings
+|===
+|name|setting|short_desc
+|log_connections|off|Logs each successful connection.
+|log_disconnections|off|Logs end of a session, including duration.
+|log_statement|none|Sets the type of statements logged.
+|password_encryption|scram-sha-256|Chooses the algorithm for encrypting passwords.
+|ssl|on|Enables SSL connections.
+|===
+[TIP]
+====
+Review superuser roles and limit them to essential administrative accounts. Ensure all login roles have strong passwords and consider setting password expiration. Revoke unnecessary CREATE/USAGE privileges on the public schema to prevent unauthorized object creation. Enable connection and statement logging for auditing purposes. Ensure SSL is enabled for secure connections. For Aurora, manage roles and security settings via the RDS console and monitor CloudWatch Logs for security events.
+====
+
+
+Analyzes database connection statistics to monitor load and identify potential bottlenecks.
+
+Total Connections and Limits
+|===
+|total_connections|max_connections
+|6|100
+|===
+Connection States
+|===
+|state|count
+|None|5
+|active|1
+|===
+Connections by User and Database
+|===
+|usename|datname|count
+|None|None|4
+|postgres|None|1
+|postgres|healthcheck_demo|1
+|===
+[TIP]
+====
+Monitor the total number of connections relative to `max_connections` to prevent connection exhaustion. High numbers of 'idle in transaction' or 'waiting' states may indicate application issues or lock contention. Optimize queries or adjust connection pooling settings to reduce idle connections. For Aurora, `max_connections` is managed via the parameter group, and connection monitoring can be done via CloudWatch.
+====
+
+
+Analyzes connection pooling statistics to optimize connection management.
+
+PgBouncer Pool Statistics
+[NOTE]
+====
+No data returned from PgBouncer.
+====
+
+PgBouncer Client Connections
+[NOTE]
+====
+No data returned from PgBouncer.
+====
+
+PgBouncer Server Connections
+[NOTE]
+====
+No data returned from PgBouncer.
+====
+
+[TIP]
+====
+Connection pooling (e.g., PgBouncer) is crucial for managing database connections efficiently, reducing overhead from frequent connection/disconnection, and limiting the number of active backend connections. Monitor `active_connections`, `waiting_connections`, and `total_requests` to ensure your pooler is effectively handling load. Tune pooler settings (`pool_size`, `reserve_pool_size`, `server_lifetime`) for optimal performance.
+====
+
+
+== Trend Analysis
+
+=== Trend Analysis Storage
+Storing health check data for trend analysis.
+[SUCCESS]
+====
+Successfully stored health check run 6 in trend database.
+====
+
+=== Trend Analysis Summary (Last 30 Days)
+
+**Runs Analyzed:** 3
+
+**Time Period:** 30 days
+
+
+=== Trend Analysis Report
+Analysis of health check trends over time.
+=== Trend Analysis Summary
+
+**7-Day Analysis:**
+
+- Runs analyzed: 3
+
+- Time period: 7 days
+
+- Total runs: 3
+
+- Successful runs: 0
+
+- Failed runs: 3
+
+
+
+**30-Day Analysis:**
+
+- Runs analyzed: 3
+
+- Time period: 30 days
+
+- Total runs: 3
+
+- Successful runs: 0
+
+- Failed runs: 3
+
+
+
+**90-Day Analysis:**
+
+- Runs analyzed: 3
+
+- Time period: 90 days
+
+- Total runs: 3
+
+- Successful runs: 0
+
+- Failed runs: 3
+
+
+
+=== Trend-Based Recommendations
+
+**Reliability:**
+
+- High health check failure rate (100.0%). Review configuration and connectivity.
+
+
+
+**Monitoring:**
+
+- Limited historical data available. Run health checks more frequently for better trend analysis.
+
+
+
+=== Trend Alerts
+
+⚠️ **HIGH:** Health check failure rate at 100.0%, exceeding 10.0% threshold.
+
+
+
+
+== Recommendations
+
+=== Enhanced AI-Generated Recommendations
+Provides intelligent, context-aware recommendations based on dynamic analysis of database metrics.
+
+** Dynamic Analysis Summary **
+
+- Total Issues Detected: 2
+
+- Critical Issues: 0
+
+- High Priority Issues: 0
+
+- Medium Priority Issues: 2
+
+
+
+=== Enhanced AI-Generated Recommendations
+
+[cols="1,1",options="header"]
+|===
+|Metric | Value
+|AI Endpoint | `N/A`
+|AI Model | `N/A`
+|AI Temperature | `N/A`
+|AI Max Output Tokens | `N/A`
+|Prompt Characters | `N/A`
+|Response Characters | `N/A`
+|Analysis Time | `N/A` seconds
+
+|===
+
+
+[NOTE]
+====
+AI analysis is enabled but configured for offline processing. The enhanced dynamic prompt has been generated and saved to 'structured_health_check_findings.json'.
+
+To get AI recommendations from this data:
+
+1. **Ensure you have network access** to your chosen AI provider's API
+2. **Use the enhanced prompt** from the `prompt_sent` field in the JSON
+3. **Send this prompt to your AI API endpoint**
+4. **Integrate the AI's response** into your report
+
+The enhanced prompt includes dynamic severity analysis and context-aware guidance.
+====
+
+[TIP]
+====
+
+This enhanced AI analysis uses dynamic prompt generation based on metric severity analysis. 
+Critical issues are automatically prioritized and highlighted in the AI prompt, 
+resulting in more focused and actionable recommendations.
+
+====
+
+
+=== Recommendations
+Provides aggregated recommendations based on the health check findings.
+
+=== AI-Generated Recommendations
+
+[cols="1,1",options="header"]
+|===
+|Metric | Value
+|AI Endpoint | `N/A`
+|AI Model | `N/A`
+|AI Temperature | `N/A`
+|AI Max Output Tokens | `N/A`
+|Prompt Characters | `N/A`
+|Response Characters | `N/A`
+|Analysis Time | `N/A` seconds
+
+|===
+
+
+[NOTE]
+====
+AI analysis is enabled but configured for offline processing. The AI prompt has been generated and saved to 'structured_health_check_findings.json'.
+
+To get AI recommendations from this data:
+
+1.  **Ensure you have network access** to your chosen AI provider's API (e.g., via VPN if necessary).
+2.  **Use a separate script or tool** to read `structured_health_check_findings.json`.
+3.  **Extract the `prompt_sent` field** from the JSON. This contains the full prompt prepared for the AI.
+4.  **Send this `prompt_sent` string to your AI API endpoint** (e.g., Google Gemini or an OpenAI-compatible endpoint).
+5.  **Integrate the AI's response** into your report or review it separately.
+
+For offline processing, use the `offline_ai_processor.py` script provided with this tool.
+
+**Note:** The prompt may be stored under either 'run_recommendation_enhanced' or 'run_recommendation' in the JSON file.
+====
+
+[TIP]
+====
+Review all sections of this report for specific findings and recommendations. Prioritize issues that directly impact your application's performance, stability, or security, such as high CPU usage, long-running queries, or unindexed foreign keys. Always test recommendations in a non-production environment before applying them to your main database.
+====
+
+
+=== Recommendations
+=== General Recommendations Overview
+
+This section provides a summary of key recommendations based on the overall health check findings. These are general best practices that apply to most PostgreSQL environments. For detailed, AI-generated, and context-specific recommendations, please refer to the "AI-Generated Recommendations" section.
+
+.  **Regular Monitoring**: Establish continuous monitoring for key database metrics (CPU, I/O, connections, replication lag, cache hit ratio) and set up alerts for critical thresholds.
+.  **Performance Tuning**: Regularly review `pg_stat_statements` to identify and optimize slow or frequently executed queries. Ensure proper indexing and consider query rewriting.
+.  **Autovacuum Optimization**: Verify that autovacuum is running efficiently to prevent table bloat and transaction ID wraparound. Tune autovacuum parameters as needed.
+.  **Security Hardening**: Implement strong password policies, use the principle of least privilege for users and roles, restrict network access, and enforce SSL for all connections.
+.  **High Availability & Disaster Recovery**: Ensure your replication setup is healthy and monitor lag. Regularly test your backup and recovery procedures.
+.  **Resource Management**: Optimize memory settings (`shared_buffers`, `work_mem`, `maintenance_work_mem`) based on your workload and available system resources.
+.  **Regular Maintenance**: Perform routine database maintenance tasks, including `VACUUM ANALYZE`, index reindexing (if necessary), and cleanup of temporary objects.
+
+[TIP]
+====
+A healthy PostgreSQL database requires continuous attention to monitoring, performance tuning, security, and maintenance. Prioritize recommendations that address the most significant risks or performance bottlenecks in your specific environment.
+====
+
+
+
+=== Pgbadger_Setup
+=== pgBadger Setup and Analysis Recommendations
+
+pgBadger is a powerful open-source PostgreSQL log analyzer that generates comprehensive HTML reports. It's invaluable for identifying slow queries, frequently executed queries, errors, and other log-based insights that complement `pg_stat_statements`.
+
+.  **Enable Appropriate Logging**: For pgBadger to be effective, PostgreSQL needs to log sufficient information. Key `postgresql.conf` parameters to review/set:
+    * `log_destination = 'csvlog'` (or `stderr` if you have a log collector)
+    * `logging_collector = on` (if using `csvlog` or `stderr` to files)
+    * `log_directory = 'pg_log'` (or your preferred log directory)
+    * `log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'`
+    * `log_min_duration_statement = 100ms` (or a value that captures your slow queries; set to `0` to log all statements, but be cautious of log volume)
+    * `log_connections = on`
+    * `log_disconnections = on`
+    * `log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '` (essential for pgBadger to parse context)
+    * `log_lock_waits = on`
+    * `log_autovacuum_min_duration = 0` (to log all autovacuum activity)
+.  **Restart PostgreSQL**: A restart is required for changes to `log_destination`, `logging_collector`, `log_directory`, `log_filename`. A reload is sufficient for others.
+.  **Collect Logs**: Ensure your log files are being collected and rotated appropriately.
+.  **Run pgBadger**:
+    * **Installation**: Install pgBadger (e.g., `sudo apt install pgbadger` on Debian/Ubuntu, or download from official site).
+    * **Execution**: Run pgBadger against your PostgreSQL log files:
+        ```bash
+        pgbadger -f syslog -o /path/to/report/output.html /var/log/postgresql/postgresql-*.log
+        # Or if using csvlog:
+        pgbadger -f csv -o /path/to/report/output.html /var/lib/postgresql/15/main/log/*.csv
+        ```
+        Adjust paths and format (`-f`) as per your setup.
+.  **Analyze Reports**: Review the generated HTML reports for:
+    * Top slow queries
+    * Queries by type (SELECT, INSERT, UPDATE, DELETE)
+    * Connections and disconnections
+    * Error distribution
+    * Checkpoints and temporary file usage
+
+[TIP]
+====
+pgBadger is an indispensable tool for deep log analysis, providing insights not readily available from `pg_stat_statements` alone. Integrate it into your regular monitoring and troubleshooting routine.
+====
+
+
+
+== General PostgreSQL Best Practices
+
+=== Index Management Best Practices
+Indexes are crucial for optimizing query performance, especially for read-heavy workloads. However, poorly designed or unused indexes can degrade write performance and consume unnecessary storage.
+
+.  **Use Indexes Judiciously**: Create indexes only on columns frequently used in `WHERE` clauses, `JOIN` conditions, `ORDER BY`, `GROUP BY`, and `DISTINCT` operations. Avoid over-indexing, especially on tables with high write activity.
+.  **Monitor Index Usage**: Regularly review `pg_stat_user_indexes` to identify unused or rarely used indexes (`idx_scan = 0`). These indexes incur overhead without providing benefits and should be considered for removal.
+.  **Avoid Duplicate Indexes**: Ensure you don't have redundant indexes that cover the same set of columns in the same order. Duplicate indexes waste disk space and increase write overhead.
+.  **Consider Partial Indexes**: For large tables where queries often filter on a specific subset of data (e.g., `WHERE status = 'active'`), a partial index can be smaller and more efficient.
+.  **Choose the Right Index Type**: Most indexes are B-tree, but consider other types like BRIN (for large, ordered data like timestamps), GIN (for full-text search or array columns), and GiST (for geometric or spatial data).
+.  **Index Foreign Keys**: Always index foreign key columns on the child table. This prevents full table scans on the child table when rows are `DELETE`d or `UPDATE`d in the parent table, significantly reducing write amplification.
+.  **Regularly Analyze Tables**: Ensure `autovacuum` is properly configured to run `ANALYZE` regularly. Up-to-date statistics are vital for the query planner to choose efficient index usage.
+.  **`CREATE INDEX CONCURRENTLY`**: Use `CREATE INDEX CONCURRENTLY` for creating new indexes on busy tables to avoid locking the table for writes.
+.  **Reindex Bloated Indexes**: If an index becomes significantly bloated (e.g., after many updates/deletes), `REINDEX` can reclaim space and improve performance, but this is an exclusive lock operation unless done concurrently.
+
+[TIP]
+====
+A well-indexed database is a performant database. Continuously review and optimize your indexing strategy as your application and data evolve.
+====
+
+
+
+=== Table Management Best Practices
+=== Table Management Best Practices
+
+Effective table management is fundamental to PostgreSQL performance, storage efficiency, and data integrity.
+
+.  **Monitor Table Sizes**: Regularly track the size of your tables (including TOAST tables) to understand data growth patterns and identify unexpectedly large tables.
+.  **Manage Bloat**: High `n_dead_tup` (dead tuples) indicates table bloat. Ensure autovacuum is effectively configured to reclaim space. Consider `VACUUM FULL` or `pg_repack` for severe bloat, but be aware of their locking behavior.
+.  **Partition Large Tables**: For very large tables (e.g., multi-terabyte tables or tables with high insert/delete rates), consider implementing declarative partitioning. Partitioning can improve query performance by allowing "pruning" (scanning only relevant partitions) and simplify data archiving/purging.
+.  **Review Table Design**: Ensure tables are normalized appropriately. Denormalization can sometimes be beneficial for read performance, but it increases write complexity and potential for data inconsistency.
+.  **Choose Appropriate Data Types**: Use the most efficient data types for your columns (e.g., `INT` instead of `BIGINT` if values fit, `TEXT` only when necessary, `VARCHAR(N)` for fixed-length strings).
+.  **Primary Keys**: Always define primary keys for your tables. They enforce uniqueness and provide a clustered index.
+.  **Foreign Keys**: Use foreign keys to enforce referential integrity between tables. As discussed in the Foreign Key Audit, ensure they are properly indexed.
+.  **TOAST Tables**: Be aware of TOAST (The Oversized-Attribute Storage Technique) tables for columns storing large values (e.g., `TEXT`, `BYTEA`). Monitor their size and bloat.
+.  **Table Statistics**: Ensure `ANALYZE` runs regularly to keep table statistics up-to-date for the query planner. For tables with highly skewed data distribution or very high insert rates, consider setting `ALTER TABLE ... ALTER COLUMN ... SET STATISTICS ...` for specific columns.
+
+[TIP]
+====
+Proactive table maintenance and thoughtful design are key to long-term database health and performance.
+====
+
+
+
+=== User and Role Management Best Practices
+=== User and Role Management Best Practices
+
+Proper user and role management is a cornerstone of database security. Adhering to best practices minimizes the risk of unauthorized access and data breaches.
+
+.  **Principle of Least Privilege**: Grant users and roles only the minimum set of permissions necessary to perform their required tasks. Avoid granting excessive privileges (e.g., `SUPERUSER`, `CREATEDB`, `CREATEROLE`) unless absolutely essential for administrative accounts.
+.  **Strong Passwords**: Enforce strong, complex passwords for all database users. Consider using a password manager.
+.  **Password Expiration**: Implement password expiration policies and force regular password rotations.
+.  **Separate Roles for Applications**: Create distinct roles for different applications or microservices. Do not use a single shared user for multiple applications.
+.  **Audit User Activity**: Configure logging to capture connection attempts, disconnections, and potentially all executed statements to maintain an audit trail of user activity.
+.  **Remove Unused Roles**: Regularly review `pg_roles` and remove any obsolete or unused user accounts.
+.  **Role Inheritance**: Use role inheritance (`GRANT role_a TO role_b`) to simplify permission management, granting privileges to a base role and then granting that base role to specific users.
+.  **Authentication Methods**: Prefer secure authentication methods like `SCRAM-SHA-256`, `cert`, or external authentication systems (e.g., LDAP, Kerberos) over weaker methods like `MD5` or `password`.
+.  **Monitor Superusers**: Keep a very close eye on activities performed by superuser roles.
+
+[TIP]
+====
+Security is an ongoing process. Regularly audit user privileges and authentication mechanisms to adapt to evolving threats.
+====
+
+
+
+=== General Security Best Practices
+=== General Security Best Practices
+
+Database security extends beyond user management to encompass network access, encryption, and logging.
+
+.  **Network Access Control**: Restrict database access to only trusted IP addresses or networks using `pg_hba.conf` (for self-hosted) or Security Groups/Network ACLs (for cloud environments).
+.  **SSL/TLS Encryption**: Always enforce SSL/TLS for all client connections to encrypt data in transit. This prevents eavesdropping and tampering. Ensure you are using strong ciphers and modern TLS versions (e.g., TLSv1.2 or higher).
+.  **Regular Patching**: Keep your PostgreSQL server and underlying operating system (for self-hosted) up-to-date with the latest security patches and minor version releases.
+.  **Audit Logging**: Configure comprehensive logging (`log_connections`, `log_disconnections`, `log_min_duration_statement`, `log_statement`) to capture security-relevant events. Centralize logs for easier analysis and alerting.
+.  **Principle of Least Privilege**: Apply this not only to users but also to database objects. Restrict `CREATE` privileges on the `public` schema to prevent unauthorized object creation by regular users.
+.  **Backup and Recovery**: Implement a robust backup and recovery strategy. Encrypt backups at rest.
+.  **Vulnerability Scanning**: Regularly scan your database and surrounding infrastructure for known vulnerabilities.
+.  **Physical Security**: For self-hosted servers, ensure physical access to the database server is strictly controlled.
+
+[TIP]
+====
+A layered security approach, combining network controls, strong authentication, encryption, and diligent auditing, provides the best defense.
+====
+
+
+
+=== Connection Management Best Practices
+=== Connection Management Best Practices
+
+Efficiently managing database connections is vital for performance and scalability, preventing connection storms and resource exhaustion.
+
+.  **Monitor Connection Count**: Continuously track the total number of active connections against your `max_connections` limit. Approaching the limit can lead to application errors and connection rejections.
+.  **Identify Idle Connections**: Look for `idle` and especially `idle in transaction` connections in `pg_stat_activity`. `idle in transaction` connections hold locks and consume resources, preventing vacuuming and potentially causing bloat.
+.  **Implement Connection Pooling**: Use an external connection pooler (like PgBouncer or Amazon RDS Proxy) for applications with high connection churn or many concurrent processes. This reduces the overhead of establishing new connections and allows more efficient reuse of existing connections.
+.  **Set Timeouts**: Configure `idle_in_transaction_session_timeout`, `idle_session_timeout`, `statement_timeout`, and `lock_timeout` to automatically terminate problematic or inactive sessions/queries. This prevents resource leaks and long-held locks.
+.  **Optimize Application Connection Behavior**: Ensure your application properly closes connections, uses prepared statements effectively, and avoids long-running transactions.
+.  **Review `max_connections`**: Adjust `max_connections` based on your server's resources and workload. Setting it too high can lead to excessive memory consumption and contention.
+.  **Connection Throttling**: Consider implementing connection throttling at the application or load balancer layer to prevent sudden spikes from overwhelming the database.
+
+[TIP]
+====
+Connection pooling is often the single most effective way to improve performance and stability for applications with high connection demands.
+====
+
+
+
+=== High Availability (HA) Best Practices
+=== High Availability (HA) Best Practices
+
+Implementing robust High Availability (HA) is crucial for ensuring continuous operation and minimizing downtime for your PostgreSQL database.
+
+.  **Streaming Replication**: Utilize PostgreSQL's built-in streaming replication for physical standby servers. This provides a continuously updated copy of your primary database.
+.  **Synchronous vs. Asynchronous Replication**: Understand the trade-offs. Asynchronous is common for performance, while synchronous ensures zero data loss on primary failure but can impact write latency.
+.  **Monitor Replication Lag**: Continuously monitor replication lag (e.g., `pg_stat_replication` or CloudWatch `ReplicaLag` for RDS/Aurora) to ensure your standby is up-to-date and ready for failover.
+.  **Automated Failover**: For production environments, implement an automated failover solution (e.g., Patroni, repmgr for self-hosted; AWS Aurora's built-in failover, RDS Multi-AZ for managed services). Manual failover is slower and more prone to human error.
+.  **Quorum and Split-Brain**: Ensure your HA solution correctly handles network partitions to prevent "split-brain" scenarios where both primary and standby believe they are the primary.
+.  **WAL Archiving**: Maintain a robust WAL archiving strategy (e.g., to S3 for cloud, or a separate storage for self-hosted) to enable Point-In-Time Recovery (PITR) and rebuild replicas.
+.  **Regular Failover Testing**: Periodically test your failover procedures in a non-production environment. This validates your HA setup and familiarizes your team with the process.
+.  **Network Configuration**: Ensure robust and low-latency network connectivity between primary and standby servers.
+.  **Read Replicas**: Use read replicas (physical standbys) to offload read traffic from the primary, improving scalability and providing a warm standby.
+
+[TIP]
+====
+HA is not just about having a standby; it's about having a tested, automated, and monitored process to ensure rapid recovery from failures.
+====
+
+
+
+== Platform-Specific Best Practices
+
+=== AWS RDS/Aurora Best Practices
+Optimizing PostgreSQL on AWS RDS and Aurora requires adherence to specific cloud-native best practices that leverage the managed service capabilities.
+
+.  **Instance Sizing**: Choose the appropriate instance type (memory, CPU) and storage (IOPS, throughput) based on your workload's requirements. Don't over-provision, but ensure you have headroom for peak loads.
+.  **Parameter Groups**: Understand and configure DB cluster parameter groups and DB parameter groups. These control most PostgreSQL settings. Apply changes carefully, noting which require a reboot.
+.  **Monitoring**: Leverage Amazon CloudWatch for core metrics (CPUUtilization, DatabaseConnections, FreeableMemory, WriteIOPS, ReadIOPS, DiskQueueDepth, ReplicaLag). Enable Enhanced Monitoring for OS-level visibility. Use Amazon RDS Performance Insights for deep query analysis.
+.  **High Availability**: For RDS, use Multi-AZ deployments. For Aurora, ensure you have sufficient Aurora Replicas distributed across Availability Zones for high availability and read scaling.
+.  **Backups & PITR**: Configure automated backups with appropriate retention periods. Understand and test your Point-In-Time Recovery (PITR) capabilities.
+.  **Security**: Restrict network access using VPC Security Groups. Use IAM database authentication (for Aurora) or AWS Secrets Manager for credential management. Enforce SSL for all connections.
+.  **Connection Management**: Consider Amazon RDS Proxy for efficient connection pooling, especially for serverless applications or those with high connection churn.
+.  **Upgrades**: Plan and test major and minor version upgrades carefully. Utilize blue/green deployments or read replica promotions for minimal downtime.
+.  **Storage Optimization**: For RDS, choose appropriate storage types (gp2, gp3, io1/io2). For Aurora, storage scales automatically, but monitor `VolumeBytesUsed` and `VolumeReadIOPS`/`VolumeWriteIOPS`.
+.  **Logging**: Configure database logging via parameter groups to send logs to CloudWatch Logs. This centralizes logs for analysis and alerting (e.g., for slow queries, errors, deadlocks).
+.  **Cost Optimization**: Regularly review resource utilization and scale down instances or storage if over-provisioned. Identify and drop unused indexes or tables.
+
+[TIP]
+====
+AWS managed services abstract away much of the operational burden, but active monitoring and continuous optimization of database parameters and application queries are still essential for peak performance and cost efficiency.
+====
+
+
+
+=== Instaclustr Managed PostgreSQL Best Practices
+Optimizing PostgreSQL on Instaclustr's Managed Platform involves leveraging their specific features and operational model.
+
+.  **Instance Sizing**: Work closely with Instaclustr support to ensure your node size (CPU, RAM, storage) and cluster topology (number of nodes, replication factor) are appropriately sized for your workload.
+.  **Monitoring**: Utilize Instaclustr's integrated monitoring dashboards (e.g., Grafana) for key PostgreSQL and underlying infrastructure metrics. Configure custom alerts for critical thresholds.
+.  **High Availability**: Instaclustr provides highly available PostgreSQL clusters with automatic failover. Understand their failover mechanisms and RTO/RPO guarantees.
+.  **Backups & PITR**: Leverage Instaclustr's automated backup and Point-In-Time Recovery (PITR) capabilities. Ensure your backup retention policies meet your business continuity requirements.
+.  **Security**: Adhere to Instaclustr's security recommendations, including network access controls (VPC peering, IP whitelisting), strong authentication, and SSL/TLS enforcement.
+.  **Parameter Tuning**: Instaclustr manages most `postgresql.conf` parameters. Consult their documentation or support for guidance on tuning specific parameters for your workload.
+.  **Upgrades**: Coordinate major and minor version upgrades with Instaclustr. They handle the upgrade process, but you should still test application compatibility in a staging environment.
+.  **Logging**: Understand how Instaclustr provides access to PostgreSQL logs (e.g., via their console, integrated logging solutions). Configure `log_min_duration_statement` and other logging parameters as needed.
+.  **Support Engagement**: Actively engage with Instaclustr's support team for complex issues, performance tuning advice, or capacity planning.
+
+[TIP]
+====
+Leveraging Instaclustr's managed capabilities for infrastructure, patching, and backups frees you to focus on application-level optimization and query tuning.
+====
+
+
+
+=== NetApp ANF Storage Best Practices for PostgreSQL
+NetApp Azure NetApp Files (ANF) and Amazon FSx for NetApp ONTAP provide high-performance, low-latency file storage solutions that can significantly benefit PostgreSQL workloads, especially those with demanding I/O requirements.
+
+.  **High Throughput & IOPS**: Leverage ANF's ability to deliver extremely high throughput and IOPS. Size your ANF volumes (capacity pools and service levels) to match or exceed your PostgreSQL workload's peak I/O demands.
+.  **Low Latency**: ANF offers sub-millisecond latency, which is critical for transactional databases like PostgreSQL. Ensure your network configuration (e.g., Azure VNet integration, AWS VPC) is optimized to maintain this low latency.
+.  **File System Choice**: While ANF presents as an NFS share, ensure the underlying PostgreSQL data directory is configured optimally for file system access (e.g., appropriate mount options).
+.  **Snapshots & Clones**: Utilize ANF's integrated snapshot capabilities for rapid, space-efficient backups and recovery. Instantaneous volume clones can be invaluable for creating dev/test environments or for rapid database refreshes.
+.  **Replication (Cross-Region/Cross-Cloud)**: Explore ANF's replication features for cross-region disaster recovery or hybrid cloud scenarios, ensuring your data is highly available and resilient.
+.  **Cost Optimization**: Monitor ANF consumption and adjust service levels or capacity pools as needed to optimize costs without compromising performance.
+.  **Monitoring**: Monitor ANF-specific metrics (throughput, IOPS, latency, capacity utilization) alongside your PostgreSQL database metrics to correlate performance.
+.  **Patching & Maintenance**: Understand that ANF is a managed service, so NetApp handles the underlying storage maintenance. Focus on PostgreSQL-specific patching and maintenance.
+.  **Security**: Apply network security best practices (e.g., network security groups, private endpoints) to restrict access to ANF volumes.
+
+[TIP]
+====
+NetApp ANF can provide a significant performance boost for I/O-bound PostgreSQL workloads. Proper sizing and integration are key to maximizing its benefits.
+====
+
+
+
+== Appendix
+
+=== All PostgreSQL Settings
+Provides a comprehensive list of all PostgreSQL configuration settings.
+All PostgreSQL Settings
+|===
+|name|setting|unit|short_desc|category|context
+|autovacuum|on|None|Starts the autovacuum subprocess.|Autovacuum|sighup
+|autovacuum_analyze_scale_factor|0.1|None|Number of tuple inserts, updates, or deletes prior to analyze as a fraction of reltuples.|Autovacuum|sighup
+|autovacuum_analyze_threshold|50|None|Minimum number of tuple inserts, updates, or deletes prior to analyze.|Autovacuum|sighup
+|autovacuum_freeze_max_age|200000000|None|Age at which to autovacuum a table to prevent transaction ID wraparound.|Autovacuum|postmaster
+|autovacuum_max_workers|3|None|Sets the maximum number of simultaneously running autovacuum worker processes.|Autovacuum|postmaster
+|autovacuum_multixact_freeze_max_age|400000000|None|Multixact age at which to autovacuum a table to prevent multixact wraparound.|Autovacuum|postmaster
+|autovacuum_naptime|60|s|Time to sleep between autovacuum runs.|Autovacuum|sighup
+|autovacuum_vacuum_cost_delay|2|ms|Vacuum cost delay in milliseconds, for autovacuum.|Autovacuum|sighup
+|autovacuum_vacuum_cost_limit|-1|None|Vacuum cost amount available before napping, for autovacuum.|Autovacuum|sighup
+|autovacuum_vacuum_insert_scale_factor|0.2|None|Number of tuple inserts prior to vacuum as a fraction of reltuples.|Autovacuum|sighup
+|autovacuum_vacuum_insert_threshold|1000|None|Minimum number of tuple inserts prior to vacuum, or -1 to disable insert vacuums.|Autovacuum|sighup
+|autovacuum_vacuum_scale_factor|0.2|None|Number of tuple updates or deletes prior to vacuum as a fraction of reltuples.|Autovacuum|sighup
+|autovacuum_vacuum_threshold|50|None|Minimum number of tuple updates or deletes prior to vacuum.|Autovacuum|sighup
+|client_encoding|UTF8|None|Sets the client's character set encoding.|Client Connection Defaults / Locale and Formatting|user
+|DateStyle|ISO, MDY|None|Sets the display format for date and time values.|Client Connection Defaults / Locale and Formatting|user
+|default_text_search_config|pg_catalog.english|None|Sets default text search configuration.|Client Connection Defaults / Locale and Formatting|user
+|extra_float_digits|1|None|Sets the number of digits displayed for floating-point values.|Client Connection Defaults / Locale and Formatting|user
+|icu_validation_level|warning|None|Log level for reporting invalid ICU locale strings.|Client Connection Defaults / Locale and Formatting|user
+|IntervalStyle|postgres|None|Sets the display format for interval values.|Client Connection Defaults / Locale and Formatting|user
+|lc_messages|en_US.UTF-8|None|Sets the language in which messages are displayed.|Client Connection Defaults / Locale and Formatting|superuser
+|lc_monetary|en_US.UTF-8|None|Sets the locale for formatting monetary amounts.|Client Connection Defaults / Locale and Formatting|user
+|lc_numeric|en_US.UTF-8|None|Sets the locale for formatting numbers.|Client Connection Defaults / Locale and Formatting|user
+|lc_time|en_US.UTF-8|None|Sets the locale for formatting date and time values.|Client Connection Defaults / Locale and Formatting|user
+|TimeZone|Etc/UTC|None|Sets the time zone for displaying and interpreting time stamps.|Client Connection Defaults / Locale and Formatting|user
+|timezone_abbreviations|Default|None|Selects a file of time zone abbreviations.|Client Connection Defaults / Locale and Formatting|user
+|dynamic_library_path|$libdir|None|Sets the path for dynamically loadable modules.|Client Connection Defaults / Other Defaults|superuser
+|gin_fuzzy_search_limit|0|None|Sets the maximum allowed result for exact search by GIN.|Client Connection Defaults / Other Defaults|user
+|jit_provider|llvmjit|None|JIT provider to use.|Client Connection Defaults / Shared Library Preloading|postmaster
+|local_preload_libraries||None|Lists unprivileged shared libraries to preload into each backend.|Client Connection Defaults / Shared Library Preloading|user
+|session_preload_libraries||None|Lists shared libraries to preload into each backend.|Client Connection Defaults / Shared Library Preloading|superuser
+|shared_preload_libraries|pg_stat_statements|None|Lists shared libraries to preload into server.|Client Connection Defaults / Shared Library Preloading|postmaster
+|bytea_output|hex|None|Sets the output format for bytea.|Client Connection Defaults / Statement Behavior|user
+|check_function_bodies|on|None|Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE.|Client Connection Defaults / Statement Behavior|user
+|client_min_messages|notice|None|Sets the message levels that are sent to the client.|Client Connection Defaults / Statement Behavior|user
+|createrole_self_grant||None|Sets whether a CREATEROLE user automatically grants the role to themselves, and with which options.|Client Connection Defaults / Statement Behavior|user
+|default_table_access_method|heap|None|Sets the default table access method for new tables.|Client Connection Defaults / Statement Behavior|user
+|default_tablespace||None|Sets the default tablespace to create tables and indexes in.|Client Connection Defaults / Statement Behavior|user
+|default_toast_compression|pglz|None|Sets the default compression method for compressible values.|Client Connection Defaults / Statement Behavior|user
+|default_transaction_deferrable|off|None|Sets the default deferrable status of new transactions.|Client Connection Defaults / Statement Behavior|user
+|default_transaction_isolation|read committed|None|Sets the transaction isolation level of each new transaction.|Client Connection Defaults / Statement Behavior|user
+|default_transaction_read_only|off|None|Sets the default read-only status of new transactions.|Client Connection Defaults / Statement Behavior|user
+|event_triggers|on|None|Enables event triggers.|Client Connection Defaults / Statement Behavior|superuser
+|gin_pending_list_limit|4096|kB|Sets the maximum size of the pending list for GIN index.|Client Connection Defaults / Statement Behavior|user
+|idle_in_transaction_session_timeout|0|ms|Sets the maximum allowed idle time between queries, when in a transaction.|Client Connection Defaults / Statement Behavior|user
+|idle_session_timeout|0|ms|Sets the maximum allowed idle time between queries, when not in a transaction.|Client Connection Defaults / Statement Behavior|user
+|lock_timeout|0|ms|Sets the maximum allowed duration of any wait for a lock.|Client Connection Defaults / Statement Behavior|user
+|restrict_nonsystem_relation_kind||None|Prohibits access to non-system relations of specified kinds.|Client Connection Defaults / Statement Behavior|user
+|row_security|on|None|Enable row security.|Client Connection Defaults / Statement Behavior|user
+|search_path|"$user", public|None|Sets the schema search order for names that are not schema-qualified.|Client Connection Defaults / Statement Behavior|user
+|session_replication_role|origin|None|Sets the session's behavior for triggers and rewrite rules.|Client Connection Defaults / Statement Behavior|superuser
+|statement_timeout|0|ms|Sets the maximum allowed duration of any statement.|Client Connection Defaults / Statement Behavior|user
+|temp_tablespaces||None|Sets the tablespace(s) to use for temporary tables and sort files.|Client Connection Defaults / Statement Behavior|user
+|transaction_deferrable|off|None|Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures.|Client Connection Defaults / Statement Behavior|user
+|transaction_isolation|read committed|None|Sets the current transaction's isolation level.|Client Connection Defaults / Statement Behavior|user
+|transaction_read_only|off|None|Sets the current transaction's read-only status.|Client Connection Defaults / Statement Behavior|user
+|transaction_timeout|0|ms|Sets the maximum allowed duration of any transaction within a session (not a prepared transaction).|Client Connection Defaults / Statement Behavior|user
+|vacuum_failsafe_age|1600000000|None|Age at which VACUUM should trigger failsafe to avoid a wraparound outage.|Client Connection Defaults / Statement Behavior|user
+|vacuum_freeze_min_age|50000000|None|Minimum age at which VACUUM should freeze a table row.|Client Connection Defaults / Statement Behavior|user
+|vacuum_freeze_table_age|150000000|None|Age at which VACUUM should scan whole table to freeze tuples.|Client Connection Defaults / Statement Behavior|user
+|vacuum_multixact_failsafe_age|1600000000|None|Multixact age at which VACUUM should trigger failsafe to avoid a wraparound outage.|Client Connection Defaults / Statement Behavior|user
+|vacuum_multixact_freeze_min_age|5000000|None|Minimum age at which VACUUM should freeze a MultiXactId in a table row.|Client Connection Defaults / Statement Behavior|user
+|vacuum_multixact_freeze_table_age|150000000|None|Multixact age at which VACUUM should scan whole table to freeze tuples.|Client Connection Defaults / Statement Behavior|user
+|xmlbinary|base64|None|Sets how binary values are to be encoded in XML.|Client Connection Defaults / Statement Behavior|user
+|xmloption|content|None|Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.|Client Connection Defaults / Statement Behavior|user
+|authentication_timeout|60|s|Sets the maximum allowed time to complete client authentication.|Connections and Authentication / Authentication|sighup
+|gss_accept_delegation|off|None|Sets whether GSSAPI delegation should be accepted from the client.|Connections and Authentication / Authentication|sighup
+|krb_caseins_users|off|None|Sets whether Kerberos and GSSAPI user names should be treated as case-insensitive.|Connections and Authentication / Authentication|sighup
+|krb_server_keyfile|FILE:/etc/postgresql-common/krb5.keytab|None|Sets the location of the Kerberos server key file.|Connections and Authentication / Authentication|sighup
+|password_encryption|scram-sha-256|None|Chooses the algorithm for encrypting passwords.|Connections and Authentication / Authentication|user
+|scram_iterations|4096|None|Sets the iteration count for SCRAM secret generation.|Connections and Authentication / Authentication|user
+|bonjour|off|None|Enables advertising the server via Bonjour.|Connections and Authentication / Connection Settings|postmaster
+|bonjour_name||None|Sets the Bonjour service name.|Connections and Authentication / Connection Settings|postmaster
+|listen_addresses|*|None|Sets the host name or IP address(es) to listen to.|Connections and Authentication / Connection Settings|postmaster
+|max_connections|100|None|Sets the maximum number of concurrent connections.|Connections and Authentication / Connection Settings|postmaster
+|port|5433|None|Sets the TCP port the server listens on.|Connections and Authentication / Connection Settings|postmaster
+|reserved_connections|0|None|Sets the number of connection slots reserved for roles with privileges of pg_use_reserved_connections.|Connections and Authentication / Connection Settings|postmaster
+|superuser_reserved_connections|3|None|Sets the number of connection slots reserved for superusers.|Connections and Authentication / Connection Settings|postmaster
+|unix_socket_directories|/var/run/postgresql|None|Sets the directories where Unix-domain sockets will be created.|Connections and Authentication / Connection Settings|postmaster
+|unix_socket_group||None|Sets the owning group of the Unix-domain socket.|Connections and Authentication / Connection Settings|postmaster
+|unix_socket_permissions|0777|None|Sets the access permissions of the Unix-domain socket.|Connections and Authentication / Connection Settings|postmaster
+|ssl|on|None|Enables SSL connections.|Connections and Authentication / SSL|sighup
+|ssl_ca_file||None|Location of the SSL certificate authority file.|Connections and Authentication / SSL|sighup
+|ssl_cert_file|/etc/ssl/certs/ssl-cert-snakeoil.pem|None|Location of the SSL server certificate file.|Connections and Authentication / SSL|sighup
+|ssl_ciphers|HIGH:MEDIUM:+3DES:!aNULL|None|Sets the list of allowed SSL ciphers.|Connections and Authentication / SSL|sighup
+|ssl_crl_dir||None|Location of the SSL certificate revocation list directory.|Connections and Authentication / SSL|sighup
+|ssl_crl_file||None|Location of the SSL certificate revocation list file.|Connections and Authentication / SSL|sighup
+|ssl_dh_params_file||None|Location of the SSL DH parameters file.|Connections and Authentication / SSL|sighup
+|ssl_ecdh_curve|prime256v1|None|Sets the curve to use for ECDH.|Connections and Authentication / SSL|sighup
+|ssl_key_file|/etc/ssl/private/ssl-cert-snakeoil.key|None|Location of the SSL server private key file.|Connections and Authentication / SSL|sighup
+|ssl_max_protocol_version||None|Sets the maximum SSL/TLS protocol version to use.|Connections and Authentication / SSL|sighup
+|ssl_min_protocol_version|TLSv1.2|None|Sets the minimum SSL/TLS protocol version to use.|Connections and Authentication / SSL|sighup
+|ssl_passphrase_command||None|Command to obtain passphrases for SSL.|Connections and Authentication / SSL|sighup
+|ssl_passphrase_command_supports_reload|off|None|Controls whether "ssl_passphrase_command" is called during server reload.|Connections and Authentication / SSL|sighup
+|ssl_prefer_server_ciphers|on|None|Give priority to server ciphersuite order.|Connections and Authentication / SSL|sighup
+|client_connection_check_interval|0|ms|Sets the time interval between checks for disconnection while running queries.|Connections and Authentication / TCP Settings|user
+|tcp_keepalives_count|9|None|Maximum number of TCP keepalive retransmits.|Connections and Authentication / TCP Settings|user
+|tcp_keepalives_idle|7200|s|Time between issuing TCP keepalives.|Connections and Authentication / TCP Settings|user
+|tcp_keepalives_interval|75|s|Time between TCP keepalive retransmits.|Connections and Authentication / TCP Settings|user
+|tcp_user_timeout|0|ms|TCP user timeout.|Connections and Authentication / TCP Settings|user
+|pg_stat_statements.max|5000|None|Sets the maximum number of statements tracked by pg_stat_statements.|Customized Options|postmaster
+|pg_stat_statements.save|on|None|Save pg_stat_statements statistics across server shutdowns.|Customized Options|sighup
+|pg_stat_statements.track|top|None|Selects which statements are tracked by pg_stat_statements.|Customized Options|superuser
+|pg_stat_statements.track_planning|off|None|Selects whether planning duration is tracked by pg_stat_statements.|Customized Options|superuser
+|pg_stat_statements.track_utility|on|None|Selects whether utility commands are tracked by pg_stat_statements.|Customized Options|superuser
+|allow_in_place_tablespaces|off|None|Allows tablespaces directly inside pg_tblspc, for testing.|Developer Options|superuser
+|allow_system_table_mods|off|None|Allows modifications of the structure of system tables.|Developer Options|superuser
+|backtrace_functions||None|Log backtrace for errors in these functions.|Developer Options|superuser
+|debug_discard_caches|0|None|Aggressively flush system caches for debugging purposes.|Developer Options|superuser
+|debug_io_direct||None|Use direct I/O for file access.|Developer Options|postmaster
+|debug_logical_replication_streaming|buffered|None|Forces immediate streaming or serialization of changes in large transactions.|Developer Options|user
+|debug_parallel_query|off|None|Forces the planner's use parallel query nodes.|Developer Options|user
+|ignore_checksum_failure|off|None|Continues processing after a checksum failure.|Developer Options|superuser
+|ignore_invalid_pages|off|None|Continues recovery after an invalid pages failure.|Developer Options|postmaster
+|ignore_system_indexes|off|None|Disables reading from system indexes.|Developer Options|backend
+|jit_debugging_support|off|None|Register JIT-compiled functions with debugger.|Developer Options|superuser-backend
+|jit_dump_bitcode|off|None|Write out LLVM bitcode to facilitate JIT debugging.|Developer Options|superuser
+|jit_expressions|on|None|Allow JIT compilation of expressions.|Developer Options|user
+|jit_profiling_support|off|None|Register JIT-compiled functions with perf profiler.|Developer Options|superuser-backend
+|jit_tuple_deforming|on|None|Allow JIT compilation of tuple deforming.|Developer Options|user
+|post_auth_delay|0|s|Sets the amount of time to wait after authentication on connection startup.|Developer Options|backend
+|pre_auth_delay|0|s|Sets the amount of time to wait before authentication on connection startup.|Developer Options|sighup
+|remove_temp_files_after_crash|on|None|Remove temporary files after backend crash.|Developer Options|sighup
+|send_abort_for_crash|off|None|Send SIGABRT not SIGQUIT to child processes after backend crash.|Developer Options|sighup
+|send_abort_for_kill|off|None|Send SIGABRT not SIGKILL to stuck child processes.|Developer Options|sighup
+|trace_connection_negotiation|off|None|Logs details of pre-authentication connection handshake.|Developer Options|postmaster
+|trace_notify|off|None|Generates debugging output for LISTEN and NOTIFY.|Developer Options|user
+|trace_sort|off|None|Emit information about resource usage in sorting.|Developer Options|user
+|wal_consistency_checking||None|Sets the WAL resource managers for which WAL consistency checks are done.|Developer Options|superuser
+|zero_damaged_pages|off|None|Continues processing past damaged page headers.|Developer Options|superuser
+|data_sync_retry|off|None|Whether to continue running after a failure to sync data files.|Error Handling|postmaster
+|exit_on_error|off|None|Terminate session on any error.|Error Handling|user
+|recovery_init_sync_method|fsync|None|Sets the method for synchronizing the data directory before crash recovery.|Error Handling|sighup
+|restart_after_crash|on|None|Reinitialize server after backend crash.|Error Handling|sighup
+|config_file|/etc/postgresql/17/test/postgresql.conf|None|Sets the server's main configuration file.|File Locations|postmaster
+|data_directory|/var/lib/postgresql/17/test|None|Sets the server's data directory.|File Locations|postmaster
+|extension_destdir||None|Path to prepend for extension loading.|File Locations|superuser
+|external_pid_file|/var/run/postgresql/17-test.pid|None|Writes the postmaster PID to the specified file.|File Locations|postmaster
+|hba_file|/etc/postgresql/17/test/pg_hba.conf|None|Sets the server's "hba" configuration file.|File Locations|postmaster
+|ident_file|/etc/postgresql/17/test/pg_ident.conf|None|Sets the server's "ident" configuration file.|File Locations|postmaster
+|deadlock_timeout|1000|ms|Sets the time to wait on a lock before checking for deadlock.|Lock Management|superuser
+|max_locks_per_transaction|64|None|Sets the maximum number of locks per transaction.|Lock Management|postmaster
+|max_pred_locks_per_page|2|None|Sets the maximum number of predicate-locked tuples per page.|Lock Management|sighup
+|max_pred_locks_per_relation|-2|None|Sets the maximum number of predicate-locked pages and tuples per relation.|Lock Management|sighup
+|max_pred_locks_per_transaction|64|None|Sets the maximum number of predicate locks per transaction.|Lock Management|postmaster
+|block_size|8192|None|Shows the size of a disk block.|Preset Options|internal
+|data_checksums|off|None|Shows whether data checksums are turned on for this cluster.|Preset Options|internal
+|data_directory_mode|0700|None|Shows the mode of the data directory.|Preset Options|internal
+|debug_assertions|off|None|Shows whether the running server has assertion checks enabled.|Preset Options|internal
+|huge_pages_status|off|None|Indicates the status of huge pages.|Preset Options|internal
+|in_hot_standby|off|None|Shows whether hot standby is currently active.|Preset Options|internal
+|integer_datetimes|on|None|Shows whether datetimes are integer based.|Preset Options|internal
+|max_function_args|100|None|Shows the maximum number of function arguments.|Preset Options|internal
+|max_identifier_length|63|None|Shows the maximum identifier length.|Preset Options|internal
+|max_index_keys|32|None|Shows the maximum number of index keys.|Preset Options|internal
+|segment_size|131072|8kB|Shows the number of pages per disk file.|Preset Options|internal
+|server_encoding|UTF8|None|Shows the server (database) character set encoding.|Preset Options|internal
+|server_version|17.4 (Ubuntu 17.4-1.pgdg24.04+2)|None|Shows the server version.|Preset Options|internal
+|server_version_num|170004|None|Shows the server version as an integer.|Preset Options|internal
+|shared_memory_size|32763|MB|Shows the size of the server's main shared memory area (rounded up to the nearest MB).|Preset Options|internal
+|shared_memory_size_in_huge_pages|16382|None|Shows the number of huge pages needed for the main shared memory area.|Preset Options|internal
+|ssl_library|OpenSSL|None|Shows the name of the SSL library.|Preset Options|internal
+|wal_block_size|8192|None|Shows the block size in the write ahead log.|Preset Options|internal
+|wal_segment_size|16777216|B|Shows the size of write ahead log segments.|Preset Options|internal
+|geqo|on|None|Enables genetic query optimization.|Query Tuning / Genetic Query Optimizer|user
+|geqo_effort|5|None|GEQO: effort is used to set the default for other GEQO parameters.|Query Tuning / Genetic Query Optimizer|user
+|geqo_generations|0|None|GEQO: number of iterations of the algorithm.|Query Tuning / Genetic Query Optimizer|user
+|geqo_pool_size|0|None|GEQO: number of individuals in the population.|Query Tuning / Genetic Query Optimizer|user
+|geqo_seed|0|None|GEQO: seed for random path selection.|Query Tuning / Genetic Query Optimizer|user
+|geqo_selection_bias|2|None|GEQO: selective pressure within the population.|Query Tuning / Genetic Query Optimizer|user
+|geqo_threshold|12|None|Sets the threshold of FROM items beyond which GEQO is used.|Query Tuning / Genetic Query Optimizer|user
+|constraint_exclusion|partition|None|Enables the planner to use constraints to optimize queries.|Query Tuning / Other Planner Options|user
+|cursor_tuple_fraction|0.1|None|Sets the planner's estimate of the fraction of a cursor's rows that will be retrieved.|Query Tuning / Other Planner Options|user
+|default_statistics_target|100|None|Sets the default statistics target.|Query Tuning / Other Planner Options|user
+|from_collapse_limit|8|None|Sets the FROM-list size beyond which subqueries are not collapsed.|Query Tuning / Other Planner Options|user
+|jit|on|None|Allow JIT compilation.|Query Tuning / Other Planner Options|user
+|join_collapse_limit|8|None|Sets the FROM-list size beyond which JOIN constructs are not flattened.|Query Tuning / Other Planner Options|user
+|plan_cache_mode|auto|None|Controls the planner's selection of custom or generic plan.|Query Tuning / Other Planner Options|user
+|recursive_worktable_factor|10|None|Sets the planner's estimate of the average size of a recursive query's working table.|Query Tuning / Other Planner Options|user
+|cpu_index_tuple_cost|0.005|None|Sets the planner's estimate of the cost of processing each index entry during an index scan.|Query Tuning / Planner Cost Constants|user
+|cpu_operator_cost|0.0025|None|Sets the planner's estimate of the cost of processing each operator or function call.|Query Tuning / Planner Cost Constants|user
+|cpu_tuple_cost|0.01|None|Sets the planner's estimate of the cost of processing each tuple (row).|Query Tuning / Planner Cost Constants|user
+|effective_cache_size|12288000|8kB|Sets the planner's assumption about the total size of the data caches.|Query Tuning / Planner Cost Constants|user
+|jit_above_cost|100000|None|Perform JIT compilation if query is more expensive.|Query Tuning / Planner Cost Constants|user
+|jit_inline_above_cost|500000|None|Perform JIT inlining if query is more expensive.|Query Tuning / Planner Cost Constants|user
+|jit_optimize_above_cost|500000|None|Optimize JIT-compiled functions if query is more expensive.|Query Tuning / Planner Cost Constants|user
+|min_parallel_index_scan_size|64|8kB|Sets the minimum amount of index data for a parallel scan.|Query Tuning / Planner Cost Constants|user
+|min_parallel_table_scan_size|1024|8kB|Sets the minimum amount of table data for a parallel scan.|Query Tuning / Planner Cost Constants|user
+|parallel_setup_cost|1000|None|Sets the planner's estimate of the cost of starting up worker processes for parallel query.|Query Tuning / Planner Cost Constants|user
+|parallel_tuple_cost|0.1|None|Sets the planner's estimate of the cost of passing each tuple (row) from worker to leader backend.|Query Tuning / Planner Cost Constants|user
+|random_page_cost|1.1|None|Sets the planner's estimate of the cost of a nonsequentially fetched disk page.|Query Tuning / Planner Cost Constants|user
+|seq_page_cost|1|None|Sets the planner's estimate of the cost of a sequentially fetched disk page.|Query Tuning / Planner Cost Constants|user
+|enable_async_append|on|None|Enables the planner's use of async append plans.|Query Tuning / Planner Method Configuration|user
+|enable_bitmapscan|on|None|Enables the planner's use of bitmap-scan plans.|Query Tuning / Planner Method Configuration|user
+|enable_gathermerge|on|None|Enables the planner's use of gather merge plans.|Query Tuning / Planner Method Configuration|user
+|enable_group_by_reordering|on|None|Enables reordering of GROUP BY keys.|Query Tuning / Planner Method Configuration|user
+|enable_hashagg|on|None|Enables the planner's use of hashed aggregation plans.|Query Tuning / Planner Method Configuration|user
+|enable_hashjoin|on|None|Enables the planner's use of hash join plans.|Query Tuning / Planner Method Configuration|user
+|enable_incremental_sort|on|None|Enables the planner's use of incremental sort steps.|Query Tuning / Planner Method Configuration|user
+|enable_indexonlyscan|on|None|Enables the planner's use of index-only-scan plans.|Query Tuning / Planner Method Configuration|user
+|enable_indexscan|on|None|Enables the planner's use of index-scan plans.|Query Tuning / Planner Method Configuration|user
+|enable_material|on|None|Enables the planner's use of materialization.|Query Tuning / Planner Method Configuration|user
+|enable_memoize|on|None|Enables the planner's use of memoization.|Query Tuning / Planner Method Configuration|user
+|enable_mergejoin|on|None|Enables the planner's use of merge join plans.|Query Tuning / Planner Method Configuration|user
+|enable_nestloop|on|None|Enables the planner's use of nested-loop join plans.|Query Tuning / Planner Method Configuration|user
+|enable_parallel_append|on|None|Enables the planner's use of parallel append plans.|Query Tuning / Planner Method Configuration|user
+|enable_parallel_hash|on|None|Enables the planner's use of parallel hash plans.|Query Tuning / Planner Method Configuration|user
+|enable_partition_pruning|on|None|Enables plan-time and execution-time partition pruning.|Query Tuning / Planner Method Configuration|user
+|enable_partitionwise_aggregate|off|None|Enables partitionwise aggregation and grouping.|Query Tuning / Planner Method Configuration|user
+|enable_partitionwise_join|off|None|Enables partitionwise join.|Query Tuning / Planner Method Configuration|user
+|enable_presorted_aggregate|on|None|Enables the planner's ability to produce plans that provide presorted input for ORDER BY / DISTINCT aggregate functions.|Query Tuning / Planner Method Configuration|user
+|enable_seqscan|on|None|Enables the planner's use of sequential-scan plans.|Query Tuning / Planner Method Configuration|user
+|enable_sort|on|None|Enables the planner's use of explicit sort steps.|Query Tuning / Planner Method Configuration|user
+|enable_tidscan|on|None|Enables the planner's use of TID scan plans.|Query Tuning / Planner Method Configuration|user
+|synchronized_standby_slots||None|Lists streaming replication standby server replication slot names that logical WAL sender processes will wait for.|Replication / Primary Server|sighup
+|synchronous_standby_names||None|Number of synchronous standbys and list of names of potential synchronous ones.|Replication / Primary Server|sighup
+|max_replication_slots|10|None|Sets the maximum number of simultaneously defined replication slots.|Replication / Sending Servers|postmaster
+|max_slot_wal_keep_size|-1|MB|Sets the maximum WAL size that can be reserved by replication slots.|Replication / Sending Servers|sighup
+|max_wal_senders|10|None|Sets the maximum number of simultaneously running WAL sender processes.|Replication / Sending Servers|postmaster
+|track_commit_timestamp|off|None|Collects transaction commit time.|Replication / Sending Servers|postmaster
+|wal_keep_size|0|MB|Sets the size of WAL files held for standby servers.|Replication / Sending Servers|sighup
+|wal_sender_timeout|60000|ms|Sets the maximum time to wait for WAL replication.|Replication / Sending Servers|user
+|hot_standby|on|None|Allows connections and queries during recovery.|Replication / Standby Servers|postmaster
+|hot_standby_feedback|off|None|Allows feedback from a hot standby to the primary that will avoid query conflicts.|Replication / Standby Servers|sighup
+|max_standby_archive_delay|30000|ms|Sets the maximum delay before canceling queries when a hot standby server is processing archived WAL data.|Replication / Standby Servers|sighup
+|max_standby_streaming_delay|30000|ms|Sets the maximum delay before canceling queries when a hot standby server is processing streamed WAL data.|Replication / Standby Servers|sighup
+|primary_conninfo||None|Sets the connection string to be used to connect to the sending server.|Replication / Standby Servers|sighup
+|primary_slot_name||None|Sets the name of the replication slot to use on the sending server.|Replication / Standby Servers|sighup
+|recovery_min_apply_delay|0|ms|Sets the minimum delay for applying changes during recovery.|Replication / Standby Servers|sighup
+|sync_replication_slots|off|None|Enables a physical standby to synchronize logical failover replication slots from the primary server.|Replication / Standby Servers|sighup
+|wal_receiver_create_temp_slot|off|None|Sets whether a WAL receiver should create a temporary replication slot if no permanent slot is configured.|Replication / Standby Servers|sighup
+|wal_receiver_status_interval|10|s|Sets the maximum interval between WAL receiver status reports to the sending server.|Replication / Standby Servers|sighup
+|wal_receiver_timeout|60000|ms|Sets the maximum wait time to receive data from the sending server.|Replication / Standby Servers|sighup
+|wal_retrieve_retry_interval|5000|ms|Sets the time to wait before retrying to retrieve WAL after a failed attempt.|Replication / Standby Servers|sighup
+|max_logical_replication_workers|4|None|Maximum number of logical replication worker processes.|Replication / Subscribers|postmaster
+|max_parallel_apply_workers_per_subscription|2|None|Maximum number of parallel apply workers per subscription.|Replication / Subscribers|sighup
+|max_sync_workers_per_subscription|2|None|Maximum number of table synchronization workers per subscription.|Replication / Subscribers|sighup
+|cluster_name|17/test|None|Sets the name of the cluster, which is included in the process title.|Reporting and Logging / Process Title|postmaster
+|update_process_title|on|None|Updates the process title to show the active SQL command.|Reporting and Logging / Process Title|superuser
+|application_name||None|Sets the application name to be reported in statistics and logs.|Reporting and Logging / What to Log|user
+|debug_pretty_print|on|None|Indents parse and plan tree displays.|Reporting and Logging / What to Log|user
+|debug_print_parse|off|None|Logs each query's parse tree.|Reporting and Logging / What to Log|user
+|debug_print_plan|off|None|Logs each query's execution plan.|Reporting and Logging / What to Log|user
+|debug_print_rewritten|off|None|Logs each query's rewritten parse tree.|Reporting and Logging / What to Log|user
+|log_autovacuum_min_duration|600000|ms|Sets the minimum execution time above which autovacuum actions will be logged.|Reporting and Logging / What to Log|sighup
+|log_checkpoints|on|None|Logs each checkpoint.|Reporting and Logging / What to Log|sighup
+|log_connections|off|None|Logs each successful connection.|Reporting and Logging / What to Log|superuser-backend
+|log_disconnections|off|None|Logs end of a session, including duration.|Reporting and Logging / What to Log|superuser-backend
+|log_duration|off|None|Logs the duration of each completed SQL statement.|Reporting and Logging / What to Log|superuser
+|log_error_verbosity|default|None|Sets the verbosity of logged messages.|Reporting and Logging / What to Log|superuser
+|log_hostname|off|None|Logs the host name in the connection logs.|Reporting and Logging / What to Log|sighup
+|log_line_prefix|%m [%p] %q%u@%d |None|Controls information prefixed to each log line.|Reporting and Logging / What to Log|sighup
+|log_lock_waits|off|None|Logs long lock waits.|Reporting and Logging / What to Log|superuser
+|log_parameter_max_length|-1|B|Sets the maximum length in bytes of data logged for bind parameter values when logging statements.|Reporting and Logging / What to Log|superuser
+|log_parameter_max_length_on_error|0|B|Sets the maximum length in bytes of data logged for bind parameter values when logging statements, on error.|Reporting and Logging / What to Log|user
+|log_recovery_conflict_waits|off|None|Logs standby recovery conflict waits.|Reporting and Logging / What to Log|sighup
+|log_replication_commands|off|None|Logs each replication command.|Reporting and Logging / What to Log|superuser
+|log_statement|none|None|Sets the type of statements logged.|Reporting and Logging / What to Log|superuser
+|log_temp_files|-1|kB|Log the use of temporary files larger than this number of kilobytes.|Reporting and Logging / What to Log|superuser
+|log_timezone|Etc/UTC|None|Sets the time zone to use in log messages.|Reporting and Logging / What to Log|sighup
+|log_min_duration_sample|-1|ms|Sets the minimum execution time above which a sample of statements will be logged. Sampling is determined by log_statement_sample_rate.|Reporting and Logging / When to Log|superuser
+|log_min_duration_statement|-1|ms|Sets the minimum execution time above which all statements will be logged.|Reporting and Logging / When to Log|superuser
+|log_min_error_statement|error|None|Causes all statements generating error at or above this level to be logged.|Reporting and Logging / When to Log|superuser
+|log_min_messages|warning|None|Sets the message levels that are logged.|Reporting and Logging / When to Log|superuser
+|log_startup_progress_interval|10000|ms|Time between progress updates for long-running startup operations.|Reporting and Logging / When to Log|sighup
+|log_statement_sample_rate|1|None|Fraction of statements exceeding "log_min_duration_sample" to be logged.|Reporting and Logging / When to Log|superuser
+|log_transaction_sample_rate|0|None|Sets the fraction of transactions from which to log all statements.|Reporting and Logging / When to Log|superuser
+|event_source|PostgreSQL|None|Sets the application name used to identify PostgreSQL messages in the event log.|Reporting and Logging / Where to Log|postmaster
+|log_destination|stderr|None|Sets the destination for server log output.|Reporting and Logging / Where to Log|sighup
+|log_directory|log|None|Sets the destination directory for log files.|Reporting and Logging / Where to Log|sighup
+|log_file_mode|0600|None|Sets the file permissions for log files.|Reporting and Logging / Where to Log|sighup
+|log_filename|postgresql-%Y-%m-%d_%H%M%S.log|None|Sets the file name pattern for log files.|Reporting and Logging / Where to Log|sighup
+|logging_collector|off|None|Start a subprocess to capture stderr, csvlog and/or jsonlog into log files.|Reporting and Logging / Where to Log|postmaster
+|log_rotation_age|1440|min|Sets the amount of time to wait before forcing log file rotation.|Reporting and Logging / Where to Log|sighup
+|log_rotation_size|10240|kB|Sets the maximum size a log file can reach before being rotated.|Reporting and Logging / Where to Log|sighup
+|log_truncate_on_rotation|off|None|Truncate existing log files of same name during log rotation.|Reporting and Logging / Where to Log|sighup
+|syslog_facility|local0|None|Sets the syslog "facility" to be used when syslog enabled.|Reporting and Logging / Where to Log|sighup
+|syslog_ident|postgres|None|Sets the program name used to identify PostgreSQL messages in syslog.|Reporting and Logging / Where to Log|sighup
+|syslog_sequence_numbers|on|None|Add sequence number to syslog messages to avoid duplicate suppression.|Reporting and Logging / Where to Log|sighup
+|syslog_split_messages|on|None|Split messages sent to syslog by lines and to fit into 1024 bytes.|Reporting and Logging / Where to Log|sighup
+|backend_flush_after|0|8kB|Number of pages after which previously performed writes are flushed to disk.|Resource Usage / Asynchronous Behavior|user
+|effective_io_concurrency|200|None|Number of simultaneous requests that can be handled efficiently by the disk subsystem.|Resource Usage / Asynchronous Behavior|user
+|io_combine_limit|16|8kB|Limit on the size of data reads and writes.|Resource Usage / Asynchronous Behavior|user
+|maintenance_io_concurrency|10|None|A variant of "effective_io_concurrency" that is used for maintenance work.|Resource Usage / Asynchronous Behavior|user
+|max_parallel_maintenance_workers|4|None|Sets the maximum number of parallel processes per maintenance operation.|Resource Usage / Asynchronous Behavior|user
+|max_parallel_workers|24|None|Sets the maximum number of parallel workers that can be active at one time.|Resource Usage / Asynchronous Behavior|user
+|max_parallel_workers_per_gather|4|None|Sets the maximum number of parallel processes per executor node.|Resource Usage / Asynchronous Behavior|user
+|max_worker_processes|24|None|Maximum number of concurrent worker processes.|Resource Usage / Asynchronous Behavior|postmaster
+|parallel_leader_participation|on|None|Controls whether Gather and Gather Merge also run subplans.|Resource Usage / Asynchronous Behavior|user
+|bgwriter_delay|200|ms|Background writer sleep time between rounds.|Resource Usage / Background Writer|sighup
+|bgwriter_flush_after|64|8kB|Number of pages after which previously performed writes are flushed to disk.|Resource Usage / Background Writer|sighup
+|bgwriter_lru_maxpages|100|None|Background writer maximum number of LRU pages to flush per round.|Resource Usage / Background Writer|sighup
+|bgwriter_lru_multiplier|2|None|Multiple of the average buffer usage to free per round.|Resource Usage / Background Writer|sighup
+|vacuum_cost_delay|0|ms|Vacuum cost delay in milliseconds.|Resource Usage / Cost-Based Vacuum Delay|user
+|vacuum_cost_limit|200|None|Vacuum cost amount available before napping.|Resource Usage / Cost-Based Vacuum Delay|user
+|vacuum_cost_page_dirty|20|None|Vacuum cost for a page dirtied by vacuum.|Resource Usage / Cost-Based Vacuum Delay|user
+|vacuum_cost_page_hit|1|None|Vacuum cost for a page found in the buffer cache.|Resource Usage / Cost-Based Vacuum Delay|user
+|vacuum_cost_page_miss|2|None|Vacuum cost for a page not found in the buffer cache.|Resource Usage / Cost-Based Vacuum Delay|user
+|max_notify_queue_pages|1048576|None|Sets the maximum number of allocated pages for NOTIFY / LISTEN queue.|Resource Usage / Disk|postmaster
+|temp_file_limit|-1|kB|Limits the total size of all temporary files used by each process.|Resource Usage / Disk|superuser
+|max_files_per_process|1000|None|Sets the maximum number of simultaneously open files for each server process.|Resource Usage / Kernel Resources|postmaster
+|autovacuum_work_mem|-1|kB|Sets the maximum memory to be used by each autovacuum worker process.|Resource Usage / Memory|sighup
+|commit_timestamp_buffers|1024|8kB|Sets the size of the dedicated buffer pool used for the commit timestamp cache.|Resource Usage / Memory|postmaster
+|dynamic_shared_memory_type|posix|None|Selects the dynamic shared memory implementation used.|Resource Usage / Memory|postmaster
+|hash_mem_multiplier|2|None|Multiple of "work_mem" to use for hash tables.|Resource Usage / Memory|user
+|huge_pages|try|None|Use of huge pages on Linux or Windows.|Resource Usage / Memory|postmaster
+|huge_page_size|0|kB|The size of huge page that should be requested.|Resource Usage / Memory|postmaster
+|logical_decoding_work_mem|65536|kB|Sets the maximum memory to be used for logical decoding.|Resource Usage / Memory|user
+|maintenance_work_mem|2097152|kB|Sets the maximum memory to be used for maintenance operations.|Resource Usage / Memory|user
+|max_prepared_transactions|0|None|Sets the maximum number of simultaneously prepared transactions.|Resource Usage / Memory|postmaster
+|max_stack_depth|2048|kB|Sets the maximum stack depth, in kilobytes.|Resource Usage / Memory|superuser
+|min_dynamic_shared_memory|0|MB|Amount of dynamic shared memory reserved at startup.|Resource Usage / Memory|postmaster
+|multixact_member_buffers|32|8kB|Sets the size of the dedicated buffer pool used for the MultiXact member cache.|Resource Usage / Memory|postmaster
+|multixact_offset_buffers|16|8kB|Sets the size of the dedicated buffer pool used for the MultiXact offset cache.|Resource Usage / Memory|postmaster
+|notify_buffers|16|8kB|Sets the size of the dedicated buffer pool used for the LISTEN/NOTIFY message cache.|Resource Usage / Memory|postmaster
+|serializable_buffers|32|8kB|Sets the size of the dedicated buffer pool used for the serializable transaction cache.|Resource Usage / Memory|postmaster
+|shared_buffers|4096000|8kB|Sets the number of shared memory buffers used by the server.|Resource Usage / Memory|postmaster
+|shared_memory_type|mmap|None|Selects the shared memory implementation used for the main shared memory region.|Resource Usage / Memory|postmaster
+|subtransaction_buffers|1024|8kB|Sets the size of the dedicated buffer pool used for the subtransaction cache.|Resource Usage / Memory|postmaster
+|temp_buffers|1024|8kB|Sets the maximum number of temporary buffers used by each session.|Resource Usage / Memory|user
+|transaction_buffers|1024|8kB|Sets the size of the dedicated buffer pool used for the transaction status cache.|Resource Usage / Memory|postmaster
+|vacuum_buffer_usage_limit|2048|kB|Sets the buffer pool size for VACUUM, ANALYZE, and autovacuum.|Resource Usage / Memory|user
+|work_mem|132129|kB|Sets the maximum memory to be used for query workspaces.|Resource Usage / Memory|user
+|stats_fetch_consistency|cache|None|Sets the consistency of accesses to statistics data.|Statistics / Cumulative Query and Index Statistics|user
+|track_activities|on|None|Collects information about executing commands.|Statistics / Cumulative Query and Index Statistics|superuser
+|track_activity_query_size|1024|B|Sets the size reserved for pg_stat_activity.query, in bytes.|Statistics / Cumulative Query and Index Statistics|postmaster
+|track_counts|on|None|Collects statistics on database activity.|Statistics / Cumulative Query and Index Statistics|superuser
+|track_functions|none|None|Collects function-level statistics on database activity.|Statistics / Cumulative Query and Index Statistics|superuser
+|track_io_timing|off|None|Collects timing statistics for database I/O activity.|Statistics / Cumulative Query and Index Statistics|superuser
+|track_wal_io_timing|off|None|Collects timing statistics for WAL I/O activity.|Statistics / Cumulative Query and Index Statistics|superuser
+|compute_query_id|auto|None|Enables in-core computation of query identifiers.|Statistics / Monitoring|superuser
+|log_executor_stats|off|None|Writes executor performance statistics to the server log.|Statistics / Monitoring|superuser
+|log_parser_stats|off|None|Writes parser performance statistics to the server log.|Statistics / Monitoring|superuser
+|log_planner_stats|off|None|Writes planner performance statistics to the server log.|Statistics / Monitoring|superuser
+|log_statement_stats|off|None|Writes cumulative performance statistics to the server log.|Statistics / Monitoring|superuser
+|allow_alter_system|on|None|Allows running the ALTER SYSTEM command.|Version and Platform Compatibility / Other Platforms and Clients|sighup
+|transform_null_equals|off|None|Treats "expr=NULL" as "expr IS NULL".|Version and Platform Compatibility / Other Platforms and Clients|user
+|array_nulls|on|None|Enable input of NULL elements in arrays.|Version and Platform Compatibility / Previous PostgreSQL Versions|user
+|backslash_quote|safe_encoding|None|Sets whether "\'" is allowed in string literals.|Version and Platform Compatibility / Previous PostgreSQL Versions|user
+|escape_string_warning|on|None|Warn about backslash escapes in ordinary string literals.|Version and Platform Compatibility / Previous PostgreSQL Versions|user
+|lo_compat_privileges|off|None|Enables backward compatibility mode for privilege checks on large objects.|Version and Platform Compatibility / Previous PostgreSQL Versions|superuser
+|quote_all_identifiers|off|None|When generating SQL fragments, quote all identifiers.|Version and Platform Compatibility / Previous PostgreSQL Versions|user
+|standard_conforming_strings|on|None|Causes '...' strings to treat backslashes literally.|Version and Platform Compatibility / Previous PostgreSQL Versions|user
+|synchronize_seqscans|on|None|Enable synchronized sequential scans.|Version and Platform Compatibility / Previous PostgreSQL Versions|user
+|archive_cleanup_command||None|Sets the shell command that will be executed at every restart point.|Write-Ahead Log / Archive Recovery|sighup
+|recovery_end_command||None|Sets the shell command that will be executed once at the end of recovery.|Write-Ahead Log / Archive Recovery|sighup
+|restore_command||None|Sets the shell command that will be called to retrieve an archived WAL file.|Write-Ahead Log / Archive Recovery|sighup
+|archive_command|(disabled)|None|Sets the shell command that will be called to archive a WAL file.|Write-Ahead Log / Archiving|sighup
+|archive_library||None|Sets the library that will be called to archive a WAL file.|Write-Ahead Log / Archiving|sighup
+|archive_mode|off|None|Allows archiving of WAL files using "archive_command".|Write-Ahead Log / Archiving|postmaster
+|archive_timeout|0|s|Sets the amount of time to wait before forcing a switch to the next WAL file.|Write-Ahead Log / Archiving|sighup
+|checkpoint_completion_target|0.9|None|Time spent flushing dirty buffers during checkpoint, as fraction of checkpoint interval.|Write-Ahead Log / Checkpoints|sighup
+|checkpoint_flush_after|32|8kB|Number of pages after which previously performed writes are flushed to disk.|Write-Ahead Log / Checkpoints|sighup
+|checkpoint_timeout|300|s|Sets the maximum time between automatic WAL checkpoints.|Write-Ahead Log / Checkpoints|sighup
+|checkpoint_warning|30|s|Sets the maximum time before warning if checkpoints triggered by WAL volume happen too frequently.|Write-Ahead Log / Checkpoints|sighup
+|max_wal_size|4096|MB|Sets the WAL size that triggers a checkpoint.|Write-Ahead Log / Checkpoints|sighup
+|min_wal_size|1024|MB|Sets the minimum size to shrink the WAL to.|Write-Ahead Log / Checkpoints|sighup
+|recovery_prefetch|try|None|Prefetch referenced blocks during recovery.|Write-Ahead Log / Recovery|sighup
+|wal_decode_buffer_size|524288|B|Buffer size for reading ahead in the WAL during recovery.|Write-Ahead Log / Recovery|postmaster
+|recovery_target||None|Set to "immediate" to end recovery as soon as a consistent state is reached.|Write-Ahead Log / Recovery Target|postmaster
+|recovery_target_action|pause|None|Sets the action to perform upon reaching the recovery target.|Write-Ahead Log / Recovery Target|postmaster
+|recovery_target_inclusive|on|None|Sets whether to include or exclude transaction with recovery target.|Write-Ahead Log / Recovery Target|postmaster
+|recovery_target_lsn||None|Sets the LSN of the write-ahead log location up to which recovery will proceed.|Write-Ahead Log / Recovery Target|postmaster
+|recovery_target_name||None|Sets the named restore point up to which recovery will proceed.|Write-Ahead Log / Recovery Target|postmaster
+|recovery_target_time||None|Sets the time stamp up to which recovery will proceed.|Write-Ahead Log / Recovery Target|postmaster
+|recovery_target_timeline|latest|None|Specifies the timeline to recover into.|Write-Ahead Log / Recovery Target|postmaster
+|recovery_target_xid||None|Sets the transaction ID up to which recovery will proceed.|Write-Ahead Log / Recovery Target|postmaster
+|commit_delay|0|None|Sets the delay in microseconds between transaction commit and flushing WAL to disk.|Write-Ahead Log / Settings|superuser
+|commit_siblings|5|None|Sets the minimum number of concurrent open transactions required before performing "commit_delay".|Write-Ahead Log / Settings|user
+|fsync|on|None|Forces synchronization of updates to disk.|Write-Ahead Log / Settings|sighup
+|full_page_writes|on|None|Writes full pages to WAL when first modified after a checkpoint.|Write-Ahead Log / Settings|sighup
+|synchronous_commit|on|None|Sets the current transaction's synchronization level.|Write-Ahead Log / Settings|user
+|wal_buffers|2048|8kB|Sets the number of disk-page buffers in shared memory for WAL.|Write-Ahead Log / Settings|postmaster
+|wal_compression|off|None|Compresses full-page writes written in WAL file with specified method.|Write-Ahead Log / Settings|superuser
+|wal_init_zero|on|None|Writes zeroes to new WAL files before first use.|Write-Ahead Log / Settings|superuser
+|wal_level|replica|None|Sets the level of information written to the WAL.|Write-Ahead Log / Settings|postmaster
+|wal_log_hints|off|None|Writes full pages to WAL when first modified after a checkpoint, even for a non-critical modification.|Write-Ahead Log / Settings|postmaster
+|wal_recycle|on|None|Recycles WAL files by renaming them.|Write-Ahead Log / Settings|superuser
+|wal_skip_threshold|2048|kB|Minimum size of new file to fsync instead of writing WAL.|Write-Ahead Log / Settings|user
+|wal_sync_method|fdatasync|None|Selects the method used for forcing WAL updates to disk.|Write-Ahead Log / Settings|sighup
+|wal_writer_delay|200|ms|Time between WAL flushes performed in the WAL writer.|Write-Ahead Log / Settings|sighup
+|wal_writer_flush_after|128|8kB|Amount of WAL written out by WAL writer that triggers a flush.|Write-Ahead Log / Settings|sighup
+|summarize_wal|off|None|Starts the WAL summarizer process to enable incremental backup.|Write-Ahead Log / Summarization|sighup
+|wal_summary_keep_time|14400|min|Time for which WAL summary files should be kept.|Write-Ahead Log / Summarization|sighup
+|===
+[TIP]
+====
+Reviewing all PostgreSQL settings provides a complete picture of your database's configuration. Pay attention to settings related to memory, connections, logging, autovacuum, and WAL. Ensure settings are optimized for your workload and hardware, and align with best practices. For managed services like RDS/Aurora, most settings are managed via parameter groups.
+====
+
+
+=== System-Wide Extensions
+Lists all installed PostgreSQL extensions.
+System-Wide Extensions
+|===
+|extname|extversion|extowner|extnamespace|extrelocatable|extconfig
+|pg_stat_statements|1.11|postgres|public|True|None
+|pg_trgm|1.6|postgres|public|True|None
+|plpgsql|1.0|postgres|pg_catalog|False|None
+|===
+[TIP]
+====
+Review installed extensions to understand additional functionalities available in your database. Ensure all necessary extensions are installed and unnecessary ones are removed to minimize attack surface. Be aware of extensions that might consume significant resources or introduce compatibility issues during upgrades.
+====
+
+
+=== RDS/Aurora Upgrade Considerations
+Provides recommendations and checks related to AWS RDS/Aurora PostgreSQL upgrades.
+[TIP]
+====
+Regularly review new major and minor versions of PostgreSQL and Aurora for new features, performance improvements, and security patches. Plan upgrades carefully, testing application compatibility in a staging environment. Consider blue/green deployments or logical replication for minimal downtime upgrades. Always back up your database before a major upgrade.
+====
+
+[NOTE]
+====
+This section primarily focuses on AWS RDS/Aurora upgrade considerations. For self-hosted PostgreSQL, upgrade processes involve different steps, such as `pg_upgrade` for major versions or in-place updates for minor versions. Always consult PostgreSQL documentation for specific version upgrade paths.
+====
+
+
+=== AWS Region and Cloud Metrics
+Provides notes on AWS region-specific considerations and fetches key cloud metrics for RDS/Aurora.
+[NOTE]
+====
+For AWS RDS Aurora, region choice impacts latency, cost, and service availability. Ensure your application is deployed in the same region or a nearby region to minimize latency. Consider Aurora Global Database for cross-region disaster recovery. Always verify the availability of specific instance types and Aurora features in your chosen region.
+====
+
+
+=== AWS CloudWatch Metrics (Aurora/RDS)
+
+[ERROR]
+====
+Could not determine AWS region or DB identifier from host: 192.168.1.30. Please ensure 'host' is a valid RDS/Aurora endpoint.
+====
+
+
