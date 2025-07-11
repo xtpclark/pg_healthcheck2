@@ -2,7 +2,7 @@ def run_unused_idx(cursor, settings, execute_query, execute_pgbouncer, all_struc
     """
     Identifies potentially unused indexes in the PostgreSQL database.
     """
-    adoc_content = ["Identifies potentially unused indexes in the PostgreSQL database.\n"]
+    adoc_content = ["=== Unused Indexes\n", "Identifies potentially unused indexes in the PostgreSQL database.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

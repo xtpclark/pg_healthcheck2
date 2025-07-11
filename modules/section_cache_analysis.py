@@ -90,6 +90,25 @@ def run_cache_analysis(cursor, settings, execute_query, execute_pgbouncer, all_s
             adoc_content.append(formatted_result)
             structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
     
+    # Enhanced cache hit ratio guidance
+    adoc_content.append("\n=== Cache Hit Ratio Best Practices")
+    adoc_content.append("**Target Cache Hit Ratio: >90%**")
+    adoc_content.append("")
+    adoc_content.append("Cache hit ratio indicates how efficiently your database is using memory for data access:")
+    adoc_content.append("")
+    adoc_content.append("* **>95%**: Excellent - Your database is efficiently using memory")
+    adoc_content.append("* **90-95%**: Good - Monitor for trends, consider optimization")
+    adoc_content.append("* **80-90%**: Fair - Review shared_buffers and query patterns")
+    adoc_content.append("* **<80%**: Poor - Immediate attention required")
+    adoc_content.append("")
+    adoc_content.append("**Recommendations for Low Cache Hit Ratio:**")
+    adoc_content.append("")
+    adoc_content.append("1. **Increase shared_buffers**: Set to 25% of available RAM (up to 8GB)")
+    adoc_content.append("2. **Optimize query patterns**: Ensure frequently accessed data fits in memory")
+    adoc_content.append("3. **Review index usage**: Ensure indexes are being used effectively")
+    adoc_content.append("4. **Monitor table sizes**: Large tables may not fit in cache")
+    adoc_content.append("5. **Consider connection pooling**: Reduce memory per connection")
+    adoc_content.append("")
     adoc_content.append("[TIP]\n====\nA cache hit ratio below 90% may indicate insufficient shared_buffers or ineffective query plans. Increase shared_buffers in the RDS parameter group for Aurora or adjust queries to improve cache efficiency. High checkpoint activity suggests tuning `checkpoint_timeout` or `max_wal_size`.\n====\n")
     if settings['is_aurora'] == 'true':
         adoc_content.append("[NOTE]\n====\nFor AWS RDS Aurora, shared_buffers and checkpoint settings are managed via the parameter group. Use AWS Console to adjust these parameters.\n====\n")

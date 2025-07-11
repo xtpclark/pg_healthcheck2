@@ -78,11 +78,16 @@ REPORT_SECTIONS = [
         "actions": [
             {"type": "module", "module": "index_replica_analysis", "function": "run_index_replica_analysis"},
             {"type": "module", "module": "unused_idx", "function": "run_unused_idx"},
-            {"type": "module", "module": "dupe_idx", "function": "run_dupe_idx"},
             {"type": "module", "module": "missing_idx", "function": "run_missing_idx"},
             {"type": "module", "module": "large_idx", "function": "run_large_idx"},
             {"type": "module", "module": "idx_brin", "function": "run_brin_idx"},
             {"type": "module", "module": "idx_gin", "function": "run_gin_idx"}
+        ]
+    },
+    {
+        "title": "Duplicate Indexes Analysis",
+        "actions": [
+            {"type": "module", "module": "dupe_idx", "function": "run_dupe_idx"}
         ]
     },
     {

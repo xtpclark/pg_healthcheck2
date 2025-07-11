@@ -1,0 +1,65 @@
+def run_spgist_idx(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+    """
+    Analyzes SP-GiST indexes in the PostgreSQL database.
+    SP-GiST indexes are used for quad-trees, k-d trees, and other non-balanced tree structures.
+    """
+    adoc_content = ["=== SP-GiST Indexes\n", "Analyzes SP-GiST indexes in the PostgreSQL database.\n"]
+    structured_data = {} # Dictionary to hold structured findings for this module
+    
+    if settings['show_qry'] == 'true':
+        adoc_content.append("SP-GiST index queries:")
+        adoc_content.append("[,sql]\n----")
+        adoc_content.append("SELECT n.nspname||'.'||c.relname AS table_name, i.relname AS index_name, am.amname AS index_type, pg_size_pretty(pg_relation_size(i.oid)) AS index_size FROM pg_index idx JOIN pg_class c ON idx.indrelid = c.oid JOIN pg_class i ON idx.indexrelid = i.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_am am ON i.relam = am.oid WHERE am.amname = 'spgist' ORDER BY n.nspname, c.relname LIMIT %(limit)s;")
+        adoc_content.append("SELECT n.nspname||'.'||c.relname AS table_name, s.indexrelname AS index_name, s.idx_scan, s.idx_tup_read, s.idx_tup_fetch FROM pg_stat_user_indexes s JOIN pg_class c ON s.relid = c.oid JOIN pg_class i ON s.indexrelid = i.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_am am ON i.relam = am.oid WHERE am.amname = 'spgist' ORDER BY s.idx_scan DESC LIMIT %(limit)s;")
+        adoc_content.append("----")
+
+    queries = [
+        (
+            "SP-GiST Index Details", 
+            "SELECT n.nspname||'.'||c.relname AS table_name, i.relname AS index_name, am.amname AS index_type, pg_size_pretty(pg_relation_size(i.oid)) AS index_size FROM pg_index idx JOIN pg_class c ON idx.indrelid = c.oid JOIN pg_class i ON idx.indexrelid = i.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_am am ON i.relam = am.oid WHERE am.amname = 'spgist' ORDER BY n.nspname, c.relname LIMIT %(limit)s;", 
+            True,
+            "spgist_index_details"
+        ),
+        (
+            "SP-GiST Index Usage Statistics", 
+            "SELECT n.nspname||'.'||c.relname AS table_name, s.indexrelname AS index_name, s.idx_scan, s.idx_tup_read, s.idx_tup_fetch FROM pg_stat_user_indexes s JOIN pg_class c ON s.relid = c.oid JOIN pg_class i ON s.indexrelid = i.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_am am ON i.relam = am.oid WHERE am.amname = 'spgist' ORDER BY s.idx_scan DESC LIMIT %(limit)s;", 
+            True,
+            "spgist_index_usage_statistics"
+        )
+    ]
+
+    for title, query, condition, data_key in queries:
+        if not condition:
+            adoc_content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====\n")
+            structured_data[data_key] = {"status": "not_applicable", "reason": "Query not applicable due to condition."}
+            continue
+        
+        # Standardized parameter passing pattern:
+        params_for_query = {'limit': settings['row_limit']} if '%(limit)s' in query else None
+        
+        formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
+        
+        if "[ERROR]" in formatted_result:
+            adoc_content.append(f"{title}\n{formatted_result}")
+            structured_data[data_key] = {"status": "error", "details": raw_result}
+        else:
+            adoc_content.append(title)
+            adoc_content.append(formatted_result)
+            structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
+    
+    adoc_content.append("[TIP]\n====\n")
+    adoc_content.append("SP-GiST indexes are specialized for geometric data types, quad-trees, and k-d trees. ")
+    adoc_content.append("They are most commonly used with geometric data types like `point`, `box`, `circle`, and `polygon`. ")
+    adoc_content.append("Monitor `idx_scan` to ensure SP-GiST indexes are being utilized for relevant geometric queries. ")
+    adoc_content.append("SP-GiST indexes can be larger than B-tree indexes but provide efficient spatial operations.\n")
+    adoc_content.append("====\n")
+    
+    if settings.get('is_aurora', False):
+        adoc_content.append("[NOTE]\n====\n")
+        adoc_content.append("AWS RDS Aurora supports SP-GiST indexes for geometric data types. ")
+        adoc_content.append("Their performance will be influenced by the instance type and storage I/O. ")
+        adoc_content.append("Monitor `CPUUtilization` and `IOPS` during heavy geometric operations.\n")
+        adoc_content.append("====\n")
+    
+    # Return both formatted AsciiDoc content and structured data
+    return "\n".join(adoc_content), structured_data 

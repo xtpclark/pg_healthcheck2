@@ -199,13 +199,12 @@ def analyze_metric_severity(metric_name, data, settings):
 def generate_dynamic_prompt(all_structured_findings, settings):
     """
     Generate a dynamic, context-aware prompt based on the collected metrics.
-    
-    Args:
-        all_structured_findings (dict): All collected structured findings
-        settings (dict): Configuration settings
-        
-    Returns:
-        dict: Dynamic prompt with context, priorities, and specific guidance
+    Instruct the AI to return its analysis as properly formatted AsciiDoc, with a well-structured layout including:
+    - Headings
+    - An Executive Summary section
+    - Sections organized by priority/criticality
+    - Advanced formatting rules for clarity and professionalism
+    - SRE/DBA audience: technical language, SQL/config references, operational impact, risk, and downtime warnings
     """
     # Convert findings to JSON-serializable format
     findings_for_analysis = convert_to_json_serializable(all_structured_findings)
@@ -247,103 +246,39 @@ def generate_dynamic_prompt(all_structured_findings, settings):
     
     # Generate context-aware prompt
     prompt_parts = []
-    
-    # Header with context
-    prompt_parts.append("You are a PostgreSQL database performance and security expert. ")
-    prompt_parts.append(f"Analyze the following health check data for a PostgreSQL database ")
-    
-    if settings.get('is_aurora', False):
-        prompt_parts.append("running on AWS RDS Aurora. ")
-    else:
-        prompt_parts.append("running on a standard PostgreSQL instance. ")
-    
-    prompt_parts.append(f"Analysis initiated by: {settings.get('ai_user', 'anonymous')}\n\n")
-    
-    # Priority-based guidance
-    if critical_issues:
-        prompt_parts.append("🚨 CRITICAL ISSUES DETECTED 🚨\n")
-        prompt_parts.append("The following issues require IMMEDIATE attention:\n")
-        for issue in critical_issues:
-            prompt_parts.append(f"- {issue['metric'].replace('_', ' ').title()}: {issue['analysis']['reasoning']}\n")
-        prompt_parts.append("\n")
-    
-    if high_priority_issues:
-        prompt_parts.append("⚠️ HIGH PRIORITY ISSUES ⚠️\n")
-        prompt_parts.append("The following issues should be addressed soon:\n")
-        for issue in high_priority_issues:
-            prompt_parts.append(f"- {issue['metric'].replace('_', ' ').title()}: {issue['analysis']['reasoning']}\n")
-        prompt_parts.append("\n")
-    
-    if medium_priority_issues:
-        prompt_parts.append("📊 MEDIUM PRIORITY ISSUES 📊\n")
-        prompt_parts.append("The following issues should be monitored:\n")
-        for issue in medium_priority_issues:
-            prompt_parts.append(f"- {issue['metric'].replace('_', ' ').title()}: {issue['analysis']['reasoning']}\n")
-        prompt_parts.append("\n")
-    
-    # Add specific guidance based on detected issues
-    if critical_issues or high_priority_issues:
-        prompt_parts.append("FOCUS AREAS FOR RECOMMENDATIONS:\n")
-        if any('connection' in issue['metric'] for issue in critical_issues + high_priority_issues):
-            prompt_parts.append("- Connection management and pooling optimization\n")
-        if any('query' in issue['metric'] for issue in critical_issues + high_priority_issues):
-            prompt_parts.append("- Query performance optimization and indexing\n")
-        if any('vacuum' in issue['metric'] or 'bloat' in issue['metric'] for issue in critical_issues + high_priority_issues):
-            prompt_parts.append("- Vacuum and maintenance scheduling\n")
-        if any('security' in issue['metric'] or 'ssl' in issue['metric'] for issue in critical_issues + high_priority_issues):
-            prompt_parts.append("- Security hardening and access controls\n")
-        if any('aurora' in issue['metric'] for issue in critical_issues + high_priority_issues):
-            prompt_parts.append("- AWS Aurora-specific optimizations\n")
-        prompt_parts.append("\n")
-    
-    # Add the raw data for comprehensive analysis
-    prompt_parts.append("--- DETAILED METRICS DATA ---\n\n")
-    
-    for module_name, module_findings in findings_for_analysis.items():
-        prompt_parts.append(f"** Module: {module_name.replace('_', ' ').title()} **\n")
-        
-        if module_findings.get("status") == "failed_to_load":
-            prompt_parts.append(f"  Status: Failed to load/execute. Error: {module_findings.get('error', 'Unknown error')}\n")
-        elif module_findings.get("note"):
-            prompt_parts.append(f"  Note: {module_findings.get('note')}\n")
-        elif module_findings.get("status") == "not_applicable":
-            prompt_parts.append(f"  Status: Not Applicable. Reason: {module_findings.get('reason', 'N/A')}\n")
-        elif module_findings.get("status") == "error":
-            prompt_parts.append(f"  Status: Query Error. Details: {json.dumps(module_findings.get('details', {}), indent=2)}\n")
-        elif module_findings.get("status") == "success" and module_findings.get("data") is not None:
-            # Add severity analysis if available
-            if f"{module_name}_data" in metric_analyses:
-                analysis = metric_analyses[f"{module_name}_data"]
-                prompt_parts.append(f"  Severity: {analysis['level'].upper()} (Score: {analysis['score']})\n")
-                if analysis['reasoning']:
-                    prompt_parts.append(f"  Analysis: {analysis['reasoning']}\n")
-            prompt_parts.append(f"  Data:\n{json.dumps(module_findings['data'], indent=2)}\n")
-        else:
-            prompt_parts.append("  Status: No specific data or unhandled status.\n")
-        prompt_parts.append("\n")
-    
-    # Dynamic conclusion based on findings
-    if critical_issues:
-        prompt_parts.append("URGENT ACTION REQUIRED: Provide specific, actionable recommendations for the critical issues identified above. ")
-        prompt_parts.append("Include immediate steps to resolve each critical issue, with clear commands or configuration changes where applicable. ")
-    elif high_priority_issues:
-        prompt_parts.append("PRIORITY FOCUS: Provide detailed recommendations for the high-priority issues identified above. ")
-        prompt_parts.append("Include specific actions, configuration changes, and monitoring strategies. ")
-    else:
-        prompt_parts.append("OPTIMIZATION FOCUS: Provide recommendations for general PostgreSQL optimization and best practices. ")
-    
-    prompt_parts.append("For each recommendation, explain its importance, provide specific implementation steps, and mention any potential risks or considerations. ")
-    
-    if settings.get('is_aurora', False):
-        prompt_parts.append("Include AWS Aurora-specific recommendations where applicable, such as parameter group changes, CloudWatch monitoring, and instance scaling considerations. ")
-    
-    prompt_parts.append("Prioritize recommendations by impact and ease of implementation.")
-    
-    full_prompt = "".join(prompt_parts)
+    prompt_parts.append("You are an expert PostgreSQL health check analyst. Your audience is SREs and DBAs.\n")
+    prompt_parts.append("Use technical language, include relevant SQL commands, configuration parameters, and catalog/table references.\n")
+    prompt_parts.append("Focus on operational impact, performance, reliability, and risk mitigation.\n")
+    prompt_parts.append("For each recommendation, include the specific metric, table, or finding that triggered it, the expected operational impact, and any risk or urgency tags (e.g., [IMMEDIATE], [HIGH RISK]).\n")
+    prompt_parts.append("If a recommendation requires downtime or a restart, clearly state this in a [CAUTION] or [IMPORTANT] block.\n")
+    prompt_parts.append("If there are no issues in a section, state 'No action needed.'\n")
+    prompt_parts.append("Keep the Executive Summary concise and technical.\n")
+    prompt_parts.append("If possible, include summary tables or AsciiDoc code blocks for clarity.\n")
+    prompt_parts.append("\nYour output MUST follow these formatting requirements:\n")
+    prompt_parts.append("- Use `===` for the main section title (e.g., `=== AI-Generated Recommendations`).\n")
+    prompt_parts.append("- Use `====` for major subsections (e.g., `==== Executive Summary`, `==== Critical Issues`).\n")
+    prompt_parts.append("- Use `=====` for individual recommendations or grouped topics within each priority.\n")
+    prompt_parts.append("- Include an 'Executive Summary' section (with a heading) summarizing the overall health, most urgent issues, and general trends.\n")
+    prompt_parts.append("- Order sections by severity: Critical, High, Medium, Low, Info. If a section is empty, state 'No issues of this priority detected.'\n")
+    prompt_parts.append("- For each recommendation, include:\n")
+    prompt_parts.append("  * A short, actionable title\n")
+    prompt_parts.append("  * A brief description (1–2 sentences) explaining the issue and why it matters\n")
+    prompt_parts.append("  * Action steps (bulleted or numbered list)\n")
+    prompt_parts.append("  * Relevant data (inline code or table, if applicable)\n")
+    prompt_parts.append("  * References (optional: link to docs or best practices)\n")
+    prompt_parts.append("- Use AsciiDoc tables for comparisons, before/after, or lists of affected objects.\n")
+    prompt_parts.append("- Use bullet points for steps, warnings, or grouped findings.\n")
+    prompt_parts.append("- Use [IMPORTANT], [CAUTION], [TIP], [NOTE] blocks for emphasis.\n")
+    prompt_parts.append("- Use [source,sql] or [source,bash] for SQL or shell commands.\n")
+    prompt_parts.append("- Optionally, add a 'Further Reading' or 'References' section at the end.\n")
+    prompt_parts.append("- Include the date/time of the analysis at the top, and optionally the database version and environment.\n")
+    prompt_parts.append("- Do NOT include any markdown, only AsciiDoc.\n\n")
+    prompt_parts.append("Here is the structured findings data for your analysis:\n\n")
+    prompt_parts.append(json.dumps(findings_for_analysis, indent=2))
+    prompt_parts.append("\n\nFocus on performance, stability, and security improvements relevant to a PostgreSQL database.\nIf 'is_aurora' is true in settings, include Aurora-specific advice where relevant.\n")
     
     return {
-        'prompt': full_prompt,
-        'metric_analyses': metric_analyses,
+        'prompt': ''.join(prompt_parts),
         'critical_issues': critical_issues,
         'high_priority_issues': high_priority_issues,
         'medium_priority_issues': medium_priority_issues,
