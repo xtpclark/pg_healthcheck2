@@ -6,6 +6,28 @@ def run_spgist_idx(cursor, settings, execute_query, execute_pgbouncer, all_struc
     adoc_content = ["=== SP-GiST Indexes\n", "Analyzes SP-GiST indexes in the PostgreSQL database.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
+
+    # Check if SP-GiST indexes are supported (PostgreSQL 9.2+)
+    if compatibility['version_num'] < 90200:
+        adoc_content.append("[NOTE]\n====\n")
+        adoc_content.append("SP-GiST indexes require PostgreSQL 9.2 or newer. ")
+        adoc_content.append(f"Current version: {compatibility['version_string']}\n")
+        adoc_content.append("====\n")
+        structured_data["spgist_indexes"] = {"status": "not_supported", "reason": "PostgreSQL version too old"}
+        return "\n".join(adoc_content), structured_data
+    
     if settings['show_qry'] == 'true':
         adoc_content.append("SP-GiST index queries:")
         adoc_content.append("[,sql]\n----")

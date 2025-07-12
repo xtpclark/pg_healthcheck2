@@ -1,3 +1,5 @@
+=== RDS and Aurora
+
 Optimizing PostgreSQL on AWS RDS and Aurora requires adherence to specific cloud-native best practices that leverage the managed service capabilities.
 
 .  **Instance Sizing**: Choose the appropriate instance type (memory, CPU) and storage (IOPS, throughput) based on your workload's requirements. Don't over-provision, but ensure you have headroom for peak loads.

@@ -2,7 +2,7 @@ def run_vacstat2(cursor, settings, execute_query, execute_pgbouncer, all_structu
     """
     Analyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates.
     """
-    adoc_content = ["Analyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates.\n"]
+    adoc_content = ["=== Vacuum Stats Analysis\nAnalyzes ongoing vacuum operations, historical vacuum statistics, and suggests tables that may benefit from per-table statistics due to high insert rates.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Import version compatibility module

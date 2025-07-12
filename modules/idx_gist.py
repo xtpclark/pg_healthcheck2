@@ -6,6 +6,22 @@ def run_gist_idx(cursor, settings, execute_query, execute_pgbouncer, all_structu
     adoc_content = ["=== GiST Indexes\n", "Analyzes GiST indexes in the PostgreSQL database.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
+
+    # GiST indexes are supported in all PostgreSQL versions (6.4+)
+    # No version check needed for GiST
+    
     if settings['show_qry'] == 'true':
         adoc_content.append("GiST index queries:")
         adoc_content.append("[,sql]\n----")

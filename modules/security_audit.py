@@ -3,7 +3,7 @@ def run_security_audit(cursor, settings, execute_query, execute_pgbouncer, all_s
     Performs a security audit of the PostgreSQL database, checking for
     common security vulnerabilities and configurations.
     """
-    adoc_content = ["=== Security Audit", "Analyzes key security configurations and user privileges to identify potential vulnerabilities."]
+    adoc_content = ["=== Security Audit", "Analyzes key security configurations and user privileges to identify potential vulnerabilities.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

@@ -5,13 +5,30 @@ def run_invalid_idx(cursor, settings, execute_query, execute_pgbouncer, all_stru
     adoc_content = ["=== Invalid Indexes\n", "Identifies invalid indexes in the PostgreSQL database. Invalid indexes can cause query planner errors and should be rebuilt or dropped.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
 
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
+
     if settings['show_qry'] == 'true':
         adoc_content.append("Invalid indexes query:")
         adoc_content.append("[,sql]\n----")
-        adoc_content.append("SELECT schemaname, tablename, indexname, indexdef ")
-        adoc_content.append("FROM pg_indexes ")
-        adoc_content.append("JOIN pg_index ON pg_indexes.indexname = pg_get_indexdef(pg_index.indexrelid, 0, false) ")
-        adoc_content.append("WHERE NOT pg_index.indisvalid;")
+        adoc_content.append("SELECT n.nspname AS schemaname, c.relname AS tablename, i.relname AS indexname, pg_get_indexdef(i.oid) AS indexdef")
+        adoc_content.append("FROM pg_index x")
+        adoc_content.append("JOIN pg_class c ON c.oid = x.indrelid")
+        adoc_content.append("JOIN pg_class i ON i.oid = x.indexrelid")
+        adoc_content.append("JOIN pg_namespace n ON n.oid = c.relnamespace")
+        adoc_content.append("WHERE x.indisvalid = false")
+        adoc_content.append("ORDER BY n.nspname, c.relname, i.relname")
+        adoc_content.append("LIMIT %(limit)s;")
         adoc_content.append("----")
 
     query = '''

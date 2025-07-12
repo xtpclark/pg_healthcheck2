@@ -6,6 +6,28 @@ def run_extensions_update_check(cursor, settings, execute_query, execute_pgbounc
     adoc_content = ["=== Extensions Requiring Update\n", "Checks for installed extensions that have newer versions available in the database.\n"]
     structured_data = {}
 
+    # Import version compatibility module
+    from .postgresql_version_compatibility import get_postgresql_version, validate_postgresql_version
+    
+    # Get PostgreSQL version compatibility information
+    compatibility = get_postgresql_version(cursor, execute_query)
+    
+    # Validate PostgreSQL version
+    is_supported, error_msg = validate_postgresql_version(compatibility)
+    if not is_supported:
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["version_error"] = {"status": "error", "details": error_msg}
+        return "\n".join(adoc_content), structured_data
+
+    # Check if pg_available_extension_versions is available (PostgreSQL 9.1+)
+    if compatibility['version_num'] < 90100:
+        adoc_content.append("[NOTE]\n====\n")
+        adoc_content.append("Extension version checking requires PostgreSQL 9.1 or newer. ")
+        adoc_content.append(f"Current version: {compatibility['version_string']}\n")
+        adoc_content.append("====\n")
+        structured_data["extensions_update_check"] = {"status": "not_supported", "reason": "PostgreSQL version too old"}
+        return "\n".join(adoc_content), structured_data
+
     if settings['show_qry'] == 'true':
         adoc_content.append("Extensions update check query:")
         adoc_content.append("[,sql]\n----")

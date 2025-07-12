@@ -36,7 +36,7 @@ def run_data_checksums_analysis(cursor, settings, execute_query, execute_pgbounc
             checksums_enabled = any(row.get('setting') == 'on' for row in raw_result)
             
             if checksums_enabled:
-                adoc_content.append("\n=== Data Checksums Status: ✅ ENABLED")
+                adoc_content.append("\n==== Data Checksums Status: ✅ ENABLED")
                 adoc_content.append("")
                 adoc_content.append("**Benefits of Data Checksums:**")
                 adoc_content.append("- **Data Integrity**: Detects corruption from disk failures, memory errors, or I/O issues")
@@ -55,7 +55,7 @@ def run_data_checksums_analysis(cursor, settings, execute_query, execute_pgbounc
                 structured_data["data_corruption"] = {"status": "enabled", "message": "Data checksums enabled"}
                 
             else:
-                adoc_content.append("\n=== Data Checksums Status: ❌ DISABLED")
+                adoc_content.append("\n==== Data Checksums Status: ❌ DISABLED")
                 adoc_content.append("")
                 adoc_content.append("**⚠️ SECURITY RISK IDENTIFIED**")
                 adoc_content.append("")

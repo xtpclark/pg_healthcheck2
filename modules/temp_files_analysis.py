@@ -2,7 +2,7 @@ def run_temp_files_analysis(cursor, settings, execute_query, execute_pgbouncer, 
     """
     Analyzes temporary file usage and work_mem configuration for performance optimization.
     """
-    adoc_content = ["=== Temporary Files Analysis\n", "Analyzes temporary file usage and work_mem configuration.\n"]
+    adoc_content = ["=== Temp Files\n", "Analyzes temporary file usage\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':
@@ -49,7 +49,7 @@ def run_temp_files_analysis(cursor, settings, execute_query, execute_pgbouncer, 
             temp_bytes = raw_result[0].get('temp_bytes', 0) if raw_result else 0
             
             if temp_files_count > 0:
-                adoc_content.append(f"\n=== Analysis: ⚠️ TEMP FILES DETECTED")
+                adoc_content.append(f"\n[WARNING]\n====\nAnalysis: TEMP FILES DETECTED")
                 adoc_content.append("")
                 adoc_content.append(f"**Current Usage:**")
                 adoc_content.append(f"- Temporary files created: {temp_files_count}")
@@ -60,15 +60,15 @@ def run_temp_files_analysis(cursor, settings, execute_query, execute_pgbouncer, 
                 adoc_content.append("- Slower query execution")
                 adoc_content.append("- Increased disk space usage")
                 adoc_content.append("- Potential disk I/O bottlenecks")
-                adoc_content.append("")
+                adoc_content.append("\n====\n")
             else:
-                adoc_content.append(f"\n=== Analysis: ✅ NO TEMP FILES DETECTED")
+                adoc_content.append(f"\n[INFO]\n====\nAnalysis: NO TEMP FILES DETECTED")
                 adoc_content.append("")
                 adoc_content.append("**Good Performance:**")
                 adoc_content.append("- All operations are using memory")
                 adoc_content.append("- No disk spills detected")
                 adoc_content.append("- Optimal query performance")
-                adoc_content.append("")
+                adoc_content.append("\n====\n")
     
     # Check work_mem setting
     work_mem_query = """
@@ -80,6 +80,7 @@ def run_temp_files_analysis(cursor, settings, execute_query, execute_pgbouncer, 
     work_mem_result, work_mem_raw = execute_query(work_mem_query, return_raw=True)
     
     if "[ERROR]" not in work_mem_result:
+        adoc_content.append("=== Work Memory\n")
         adoc_content.append("**Work Memory Configuration**")
         adoc_content.append(work_mem_result)
         structured_data["work_mem_config"] = {"status": "success", "data": work_mem_raw}

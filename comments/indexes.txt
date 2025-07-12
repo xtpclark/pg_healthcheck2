@@ -1,3 +1,5 @@
+=== Index Management
+
 Indexes are crucial for optimizing query performance, especially for read-heavy workloads. However, poorly designed or unused indexes can degrade write performance and consume unnecessary storage.
 
 .  **Use Indexes Judiciously**: Create indexes only on columns frequently used in `WHERE` clauses, `JOIN` conditions, `ORDER BY`, `GROUP BY`, and `DISTINCT` operations. Avoid over-indexing, especially on tables with high write activity.

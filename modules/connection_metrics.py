@@ -3,8 +3,8 @@ def run_connection_metrics(cursor, settings, execute_query, execute_pgbouncer, a
     Analyzes PostgreSQL connection metrics to monitor database load and identify
     potential connection-related issues.
     """
-#    adoc_content = ["=== Connection Metrics", "Analyzes database connection statistics to monitor load and identify potential bottlenecks."]
-    adoc_content = ["Analyzes database connection statistics to monitor load and identify potential bottlenecks.\n"]
+    adoc_content = ["=== Connection Metrics", "Analyzes database connection statistics to monitor load and identify potential bottlenecks."]
+ #   adoc_content = ["Analyzes database connection statistics to monitor load and identify potential bottlenecks.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

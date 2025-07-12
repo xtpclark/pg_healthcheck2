@@ -2,7 +2,7 @@ def run_datadog_setup(cursor, settings, execute_query, execute_pgbouncer, all_st
     """
     Analyzes PostgreSQL configuration relevant to Datadog monitoring.
     """
-    adoc_content = ["Analyzes PostgreSQL configuration relevant to Datadog monitoring.\n"]
+    adoc_content = ["=== Datadog Config","Analyzes PostgreSQL configuration relevant to Datadog monitoring.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

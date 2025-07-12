@@ -2,7 +2,7 @@ def run_critical_performance_settings(cursor, settings, execute_query, execute_p
     """
     Analyzes key PostgreSQL configuration settings for performance impact.
     """
-    adoc_content = ["Analyzes key PostgreSQL configuration settings for performance impact.\n"]
+    adoc_content = ["=== Critical Settings","Analyzes key PostgreSQL configuration settings for performance impact.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     critical_settings_query = """

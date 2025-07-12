@@ -2,7 +2,7 @@ def run_table_metrics(cursor, settings, execute_query, execute_pgbouncer, all_st
     """
     Analyzes table sizes and live/dead tuples to identify potential issues.
     """
-    adoc_content = ["Analyzes table sizes and live/dead tuples to identify potential issues.\n"]
+    adoc_content = ["=== Tables Size and Dead Tuples\nAnalyzes table sizes and live/dead tuples to identify potential issues.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
 
     if settings['show_qry'] == 'true':

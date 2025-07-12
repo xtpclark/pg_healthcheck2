@@ -2,7 +2,7 @@ def run_aurora_cpu_metrics(cursor, settings, execute_query, execute_pgbouncer, a
     """
     Analyzes CPU and IOPS usage to identify saturation issues on the writer node.
     """
-    adoc_content = ["Analyzes CPU and IOPS usage to identify saturation issues on the writer node.\n"]
+    adoc_content = ["=== CPU And IOPS","Analyzes CPU and IOPS usage to identify saturation issues on the writer node.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
 
     # Define the autovacuum pattern for LIKE clauses

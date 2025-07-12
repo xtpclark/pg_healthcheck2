@@ -2,7 +2,7 @@ def run_rds_upgrade(cursor, settings, execute_query, execute_pgbouncer, all_stru
     """
     Provides recommendations and checks related to AWS RDS/Aurora PostgreSQL upgrades.
     """
-    adoc_content = ["Provides recommendations and checks related to AWS RDS/Aurora PostgreSQL upgrades."]
+    adoc_content = ["=== Amazon RDS/Aurora Upgrades","Provides recommendations and checks related to AWS RDS/Aurora PostgreSQL upgrades.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

@@ -2,7 +2,7 @@ def run_function_audit(cursor, settings, execute_query, execute_pgbouncer, all_s
     """
     Audits database functions for security risks and performance insights.
     """
-    adoc_content = ["Audits database functions for security risks and performance insights."]
+    adoc_content = ["=== Function/Stored Proc Audit","Audits database functions for security risks and performance insights."]
     structured_data = {} # Dictionary to hold structured findings for this module
 
     # Import version compatibility module

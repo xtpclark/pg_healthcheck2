@@ -3,7 +3,7 @@ def run_foreign_key_audit(cursor, settings, execute_query, execute_pgbouncer, al
     Performs an audit of foreign keys, focusing on identifying potential
     write-amplification issues, especially due to missing indexes on FK columns.
     """
-    adoc_content = ["Audits foreign key constraints to identify potential write-amplification issues and ensure data integrity."]
+    adoc_content = ["=== Foreign Key Audit\nAudits foreign key constraints to identify potential write-amplification issues and ensure data integrity.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':

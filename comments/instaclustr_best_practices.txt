@@ -1,3 +1,5 @@
+=== Instaclustr Managed PostgreSQL
+
 Optimizing PostgreSQL on Instaclustr's Managed Platform involves leveraging their specific features and operational model.
 
 .  **Instance Sizing**: Work closely with Instaclustr support to ensure your node size (CPU, RAM, storage) and cluster topology (number of nodes, replication factor) are appropriately sized for your workload.

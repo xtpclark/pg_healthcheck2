@@ -2,7 +2,7 @@ def run_cache_analysis(cursor, settings, execute_query, execute_pgbouncer, all_s
     """
     Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks.
     """
-    adoc_content = ["Analyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks."]
+    adoc_content = ["\n=== Cache Hits and Usage\nAnalyzes PostgreSQL buffer cache usage and hit ratios to identify performance bottlenecks."]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     # Import version compatibility module
@@ -30,7 +30,7 @@ def run_cache_analysis(cursor, settings, execute_query, execute_pgbouncer, all_s
 
     queries = [
         (
-            "Database Cache Hit Ratio", 
+            "\nDatabase Cache Hit Ratio", 
             "SELECT datname, blks_hit, blks_read, round((blks_hit::float / (blks_hit + blks_read) * 100)::numeric, 2) AS hit_ratio_percent FROM pg_stat_database WHERE blks_read > 0 AND datname = %(database)s;", 
             True, 
             "database_cache_hit_ratio" # Data key

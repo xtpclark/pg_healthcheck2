@@ -2,7 +2,7 @@ def run_autovacuum_config(cursor, settings, execute_query, execute_pgbouncer, al
     """
     Analyzes key autovacuum settings to ensure efficient bloat management and performance.
     """
-    adoc_content = ["Analyzes key autovacuum settings to ensure efficient bloat management and performance.\n"]
+    adoc_content = ["=== Autovacuum Config\nAnalyzes key autovacuum settings to ensure efficient bloat management and performance.\n"]
     structured_data = {} # Dictionary to hold structured findings for this module
     
     if settings['show_qry'] == 'true':
