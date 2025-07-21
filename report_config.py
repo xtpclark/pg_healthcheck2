@@ -64,6 +64,7 @@ REPORT_SECTIONS = [
         "actions": [
             {"type": "module", "module": "pub_sub", "function": "run_pub_sub"},
             {"type": "module", "module": "physical_replication", "function": "run_physical_replication"},
+            {"type": "module", "module": "inactive_replication_slots", "function": "run_inactive_replication_slots"},
             {"type": "module", "module": "high_availability", "function": "run_high_availability"}
         ]
     },
