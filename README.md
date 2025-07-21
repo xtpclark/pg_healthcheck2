@@ -104,6 +104,23 @@ For comprehensive analysis, ensure your PostgreSQL database is configured to exp
     * `log_lock_waits = on`
     * `log_autovacuum_min_duration = 0`
 
+### 3.5. Performance Considerations
+
+**⚠️ Important**: The health check script executes several resource-intensive queries that may impact database performance:
+
+* **`pg_stat_statements` queries**: These can be heavy on large databases with many queries
+* **Index analysis queries**: May scan large system catalogs
+* **Table statistics queries**: Can be resource-intensive on databases with many tables
+* **Configuration analysis**: Queries system catalogs and settings
+
+**Best Practices for Running Health Checks:**
+
+* **Run during low-traffic periods**: Schedule health checks during maintenance windows or off-peak hours
+* **Monitor execution time**: The script typically takes 30 seconds to 5 minutes depending on database size
+* **Use read-only connections**: Ensure the database user has read-only access to prevent accidental modifications
+* **Consider database size**: Very large databases (>100GB) may take longer to analyze
+* **Test on staging first**: Always test the health check on a staging environment before running on production
+
 ## 4. Configuration (`config.yaml`)
 
 The `config/config.yaml` file is the central place to configure the health check program.
@@ -154,7 +171,39 @@ python3 ./pg_healthcheck.py
 
 The generated AsciiDoc report (`health_check.adoc`) will be saved in the `adoc_out/<company_name>/` directory. A structured JSON file (`structured_health_check_findings.json`) containing all raw data collected will also be saved in the same directory.
 
-### 5.1. Running Offline AI Analysis
+### 5.1. Flexible Report Configurations
+
+The health check tool supports custom report configurations for different use cases:
+
+```bash
+# Use default comprehensive report
+python3 pg_healthcheck.py
+
+# Use minimal configuration for quick checks
+python3 pg_healthcheck.py --report-config report_config_minimal.py
+
+# Use security-focused configuration
+python3 pg_healthcheck.py --report-config report_config_security.py
+
+# Use performance-focused configuration
+python3 pg_healthcheck.py --report-config report_config_performance.py
+
+# List available report configurations
+python3 pg_healthcheck.py --list-report-configs
+
+# Use custom config and report config
+python3 pg_healthcheck.py --config config/prod_config.yaml --report-config report_config_security.py --output security_audit.adoc
+```
+
+**Available Report Configurations:**
+- **Default** (`report_config.py`): Comprehensive health check with all features
+- **Minimal** (`report_config_minimal.py`): Quick check with essential items only
+- **Security** (`report_config_security.py`): Security-focused audit and compliance
+- **Performance** (`report_config_performance.py`): Performance optimization and tuning
+
+For detailed information about creating custom report configurations, see [REPORT_CONFIGURATION_GUIDE.md](REPORT_CONFIGURATION_GUIDE.md).
+
+### 5.2. Running Offline AI Analysis
 
 If `ai_analyze` is `true` but `ai_run_integrated` is `false` in your `config.yaml`, the main `pg_healthcheck.py` script will generate the `structured_health_check_findings.json` file but *skip* the direct AI API call. You can then use a separate script to process this JSON file offline (e.g., from a machine within your corporate VPN).
 

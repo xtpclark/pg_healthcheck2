@@ -8,11 +8,11 @@ import importlib
 import inspect # Import inspect to check function signatures
 from pathlib import Path
 from datetime import datetime, timedelta # Import datetime and timedelta types
-from report_config import REPORT_SECTIONS
 import json # Import json for structured data output
 from decimal import Decimal # Import Decimal type
 import re # Import re module for regular expressions
 import logging # Import logging for better error tracking
+import argparse # Import argparse for command line argument parsing
 
 # Custom JSON Encoder to handle Decimal and datetime objects
 class CustomJsonEncoder(json.JSONEncoder):
@@ -27,7 +27,7 @@ class CustomJsonEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 class HealthCheck:
-    def __init__(self, config_file):
+    def __init__(self, config_file, report_config_file='report_config/report_config.py'):
         # Setup logging
         logging.basicConfig(
             level=logging.INFO,
@@ -38,6 +38,9 @@ class HealthCheck:
             ]
         )
         self.logger = logging.getLogger(__name__)
+        
+        # Load report configuration dynamically
+        self.report_sections = self.load_report_config(report_config_file)
         
         self.settings = self.load_settings(config_file)
         self.paths = self.get_paths()
@@ -70,6 +73,7 @@ class HealthCheck:
             self.settings['ssl_cert_path'] = self.settings.get('ssl_cert_path', '') # Load SSL cert path
             self.settings['ai_temperature'] = self.settings.get('ai_temperature', 0.7) # Load AI temperature, default 0.7
             self.settings['ai_max_output_tokens'] = self.settings.get('ai_max_output_tokens', 2048) # Load AI max output tokens, default 2048
+            self.settings['statement_timeout'] = self.settings.get('statement_timeout', 30000) # Load statement_timeout 30s default.
 
             # Validate required settings
             required_settings = ['host', 'port', 'database', 'user', 'password', 'company_name']
@@ -84,6 +88,28 @@ class HealthCheck:
             sys.exit(1)
         except yaml.YAMLError as e:
             print(f"Error parsing config.yaml: {e}")
+            sys.exit(1)
+
+    def load_report_config(self, report_config_file):
+        """Load report configuration from the specified file."""
+        try:
+            # Import the report configuration module dynamically
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("report_config", report_config_file)
+            report_config_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(report_config_module)
+            
+            # Get the REPORT_SECTIONS from the loaded module
+            if hasattr(report_config_module, 'REPORT_SECTIONS'):
+                return report_config_module.REPORT_SECTIONS
+            else:
+                print(f"Error: REPORT_SECTIONS not found in {report_config_file}")
+                sys.exit(1)
+        except FileNotFoundError:
+            print(f"Error: Report config file {report_config_file} not found.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error loading report config {report_config_file}: {e}")
             sys.exit(1)
 
     def get_paths(self):
@@ -104,6 +130,9 @@ class HealthCheck:
     def connect_db(self):
         """Connect to the PostgreSQL database."""
         try:
+            timeout_ms = int(self.settings['statement_timeout'])
+            options = f'-c statement_timeout={timeout_ms}'
+            
             self.conn = psycopg2.connect(
                 host=self.settings['host'],
                 port=self.settings['port'],
@@ -265,7 +294,7 @@ class HealthCheck:
     def run_report(self):
         """Run the report generation process."""
         self.connect_db()
-        for section in REPORT_SECTIONS:
+        for section in self.report_sections:
             if section.get('condition') and not self.settings.get(section['condition']['var'].lower()) == section['condition']['value']:
                 continue
             
@@ -335,12 +364,78 @@ class HealthCheck:
                     f.write('<<<\n\n')
 
 def main():
-    config_file = 'config/config.yaml'
-    output_file = 'health_check.adoc'
-
-    health_check = HealthCheck(config_file)
+    # Set up argument parsing
+    parser = argparse.ArgumentParser(
+        description='PostgreSQL Health Check Tool',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 pg_healthcheck.py
+  python3 pg_healthcheck.py --config config/my_config.yaml
+  python3 pg_healthcheck.py --report-config report_config/report_config_minimal.py
+  python3 pg_healthcheck.py --config config/prod_config.yaml --report-config report_config/report_config_prod.py
+        """
+    )
+    
+    parser.add_argument(
+        '--config', 
+        default='config/config.yaml',
+        help='Path to configuration file (default: config/config.yaml)'
+    )
+    
+    parser.add_argument(
+        '--report-config',
+        default='report_config/report_config.py',
+        help='Path to report configuration file (default: report_config/report_config.py)'
+    )
+    
+    parser.add_argument(
+        '--output',
+        default='health_check.adoc',
+        help='Output file name (default: health_check.adoc)'
+    )
+    
+    parser.add_argument(
+        '--list-report-configs',
+        action='store_true',
+        help='List available report configuration files'
+    )
+    
+    args = parser.parse_args()
+    
+    # Handle --list-report-configs option
+    if args.list_report_configs:
+        print("Available report configuration files:")
+        config_files = list(Path('report_config/').glob('report_config*.py'))
+        if config_files:
+            for config_file in sorted(config_files):
+                print(f"  {config_file}")
+        else:
+            print("  No report configuration files found")
+        return
+    
+    # Validate that config file exists
+    if not Path(args.config).exists():
+        print(f"Error: Configuration file {args.config} not found.")
+        sys.exit(1)
+    
+    # Validate that report config file exists
+    if not Path(args.report_config).exists():
+        print(f"Error: Report configuration file {args.report_config} not found.")
+        sys.exit(1)
+    
+    print(f"Using configuration file: {args.config}")
+    print(f"Using report configuration: {args.report_config}")
+    print(f"Output file: {args.output}")
+    
+    # Create health check instance with specified report config
+    health_check = HealthCheck(args.config, args.report_config)
     health_check.run_report()
-    health_check.write_adoc(output_file)
+    health_check.write_adoc(args.output)
+    
+    print(f"\nHealth check completed successfully!")
+    print(f"Report generated: {health_check.paths['adoc_out'] / args.output}")
+    print(f"Structured data saved: {health_check.paths['adoc_out'] / 'structured_health_check_findings.json'}")
 
 if __name__ == '__main__':
     main()

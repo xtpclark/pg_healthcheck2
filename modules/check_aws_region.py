@@ -1,6 +1,7 @@
 import boto3
 from datetime import datetime, timedelta
 import re # For parsing endpoint
+from decimal import Decimal
 
 def run_check_aws_region(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
