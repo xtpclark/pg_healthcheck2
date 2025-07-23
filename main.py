@@ -12,7 +12,6 @@ import logging
 import argparse
 import pkgutil
 
-# --- Import from the new utils directory ---
 from utils.dynamic_prompt_generator import generate_dynamic_prompt
 from utils.run_recommendation import run_recommendation
 from plugins.base import BasePlugin
@@ -36,7 +35,7 @@ def discover_plugins():
                 if isinstance(item, type) and issubclass(item, BasePlugin) and item is not BasePlugin:
                     plugin_instance = item()
                     discovered_plugins[plugin_instance.technology_name] = plugin_instance
-                    print(f"Discovered plugin: {plugin_instance.technology_name}")
+                    print(f"✅ Discovered and loaded plugin: {plugin_instance.technology_name}")
     return discovered_plugins
 
 class HealthCheck:
@@ -105,9 +104,16 @@ class HealthCheck:
     def run_report(self):
         self.connector.connect()
 
+        try:
+            _, ext_exists = self.connector.execute_query("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');", is_check=True, return_raw=True)
+            self.settings['has_pgstat'] = 't' if (str(ext_exists).lower() == 't' or str(ext_exists).lower() == 'true') else 'f'
+            print(f"pg_stat_statements check: {'Enabled' if self.settings['has_pgstat'] == 't' else 'Not Found'}")
+        except Exception as e:
+            print(f"Warning: Could not check for pg_stat_statements extension: {e}")
+            self.settings['has_pgstat'] = 'f'
+
         for section in self.report_sections:
-            # ... (report loop logic is correct)
-            if section.get('title'): # Avoid printing empty titles
+            if section.get('title'):
                  self.adoc_content.append(f"== {section['title']}")
             for action in section['actions']:
                  if action['type'] == 'module':
@@ -116,7 +122,6 @@ class HealthCheck:
                  elif action['type'] == 'comments':
                      content = self.read_comments_file(action['file'])
                      self.adoc_content.append(content)
-
 
         if self.settings.get('ai_analyze', False):
             self.run_ai_analysis()
@@ -133,7 +138,6 @@ class HealthCheck:
         print("\n--- Starting AI Analysis ---")
         analysis_rules = self.active_plugin.get_rules_config()
         
-        # --- CORRECTED: Get metadata from the connector ---
         db_metadata = self.connector.get_db_metadata()
         db_version = db_metadata.get('version', 'N/A')
         db_name = db_metadata.get('db_name', self.settings.get('database', 'N/A'))
