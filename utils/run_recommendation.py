@@ -1,26 +1,13 @@
 import json
-import time
 import requests
-from .dynamic_prompt_generator import generate_dynamic_prompt
 
-def run_recommendation_enhanced(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+def run_recommendation(settings, full_prompt):
     """
-    Handles the ONLINE AI analysis workflow. It generates a prompt on-the-fly
-    using the collected findings and sends it to the AI endpoint.
+    Handles the AI analysis workflow by sending a pre-generated prompt to the AI endpoint.
+    This function is technology-agnostic.
     """
     adoc_content = ["=== AI-Generated Recommendations\nProvides intelligent, context-aware recommendations based on dynamic analysis of database metrics.\n"]
     
-    # --- Step 1: Generate the Dynamic Prompt ---
-    try:
-        # Generate the prompt and analysis data in one step
-        dynamic_analysis = generate_dynamic_prompt(all_structured_findings, settings)
-        full_prompt = dynamic_analysis['prompt']
-    except Exception as e:
-        error_message = f"[ERROR]\n====\nDynamic prompt generation failed: {e}\n====\n"
-        adoc_content.append(error_message)
-        return "\n".join(adoc_content), {} # Return empty structured data on failure
-
-    # --- Step 2: Make the AI API Call ---
     # This logic is only for the online/integrated run.
     if not settings.get('ai_run_integrated', True):
         adoc_content.append("[NOTE]\n====\nOnline AI analysis is disabled (`ai_run_integrated: false`). Use the offline_ai_processor.py to generate reports from the saved findings.\n====\n")
@@ -38,6 +25,19 @@ def run_recommendation_enhanced(cursor, settings, execute_query, execute_pgbounc
         AI_MAX_OUTPUT_TOKENS = settings.get('ai_max_output_tokens', 2048)
         headers = {'Content-Type': 'application/json'}
         
+        # SSL and User settings for proxies
+        AI_USER = settings.get('ai_user', 'anonymous')
+        AI_USER_HEADER = settings.get('ai_user_header', '')
+        SSL_CERT_PATH = settings.get('ssl_cert_path', '')
+        AI_SSL_VERIFY = settings.get('ai_ssl_verify', True)
+        
+        if AI_USER_HEADER:
+            headers[AI_USER_HEADER] = AI_USER
+
+        verify_ssl = AI_SSL_VERIFY
+        if verify_ssl and SSL_CERT_PATH:
+            verify_ssl = SSL_CERT_PATH
+            
         if "generativelanguage.googleapis.com" in AI_ENDPOINT:
             API_URL = f"{AI_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}"
             payload = {
@@ -57,7 +57,7 @@ def run_recommendation_enhanced(cursor, settings, execute_query, execute_pgbounc
                 "max_tokens": AI_MAX_OUTPUT_TOKENS
             }
 
-        response = requests.post(API_URL, headers=headers, data=json.dumps(payload))
+        response = requests.post(API_URL, headers=headers, data=json.dumps(payload), verify=verify_ssl)
         response.raise_for_status()
         result = response.json()
 
@@ -71,4 +71,5 @@ def run_recommendation_enhanced(cursor, settings, execute_query, execute_pgbounc
     except Exception as e:
         adoc_content.append(f"[ERROR]\n====\nFailed to get AI recommendations: {e}\n====\n")
 
-    return "\n".join(adoc_content), {} # This module no longer produces its own structured data
+    # This module no longer produces its own structured data in the new architecture
+    return "\n".join(adoc_content), {}
