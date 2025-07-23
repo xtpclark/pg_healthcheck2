@@ -1,5 +1,6 @@
 import psycopg2
-from plugins.base import BasePlugin # We will use the base for type hinting later
+import subprocess
+from plugins.base import BasePlugin
 
 class PostgresConnector:
     """Handles all direct communication with the PostgreSQL database."""
@@ -26,13 +27,40 @@ class PostgresConnector:
             print("✅ Successfully connected to PostgreSQL.")
         except psycopg2.Error as e:
             print(f"❌ Error connecting to PostgreSQL: {e}")
-            raise # Re-raise the exception to be handled by the core engine
+            raise
 
     def disconnect(self):
         """Closes the database connection."""
         if self.conn:
             self.conn.close()
             print("🔌 Disconnected from PostgreSQL.")
+
+    def get_db_metadata(self):
+        """
+        Fetches basic metadata like version and database name.
+        This method is required for the core engine to remain agnostic.
+        """
+        try:
+            # Fetch version string
+            version_query = "SELECT version();"
+            _, raw_version = self.execute_query(version_query, return_raw=True)
+            version_str = raw_version[0]['version'] if raw_version else 'N/A'
+
+            # Fetch database name
+            dbname_query = "SELECT current_database();"
+            _, raw_dbname = self.execute_query(dbname_query, return_raw=True)
+            db_name = raw_dbname[0]['current_database'] if raw_dbname else 'N/A'
+
+            return {
+                'version': version_str,
+                'db_name': db_name
+            }
+        except Exception as e:
+            print(f"Warning: Could not fetch database metadata: {e}")
+            return {
+                'version': 'N/A',
+                'db_name': 'N/A'
+            }
 
     def execute_query(self, query, params=None, is_check=False, return_raw=False):
         """Executes a query and returns formatted and raw results."""
@@ -42,7 +70,7 @@ class PostgresConnector:
                 result = self.cursor.fetchone()[0] if self.cursor.rowcount > 0 else ""
                 return (str(result), result) if return_raw else str(result)
             
-            if self.cursor.description is None: # For queries that don't return rows (e.g., SET)
+            if self.cursor.description is None:
                 return ("", []) if return_raw else ""
 
             columns = [desc[0] for desc in self.cursor.description]
@@ -50,20 +78,18 @@ class PostgresConnector:
             raw_results = [dict(zip(columns, row)) for row in results]
 
             if not results:
-                formatted = "[NOTE]\\n====\\nNo results returned.\\n====\\n"
-                return (formatted, []) if return_raw else formatted
+                return "[NOTE]\n====\nNo results returned.\n====\n", [] if return_raw else ""
 
             table = ['|===', '|' + '|'.join(columns)]
             for row in results:
-                # Sanitize cell content to prevent breaking AsciiDoc tables
                 sanitized_row = [str(v).replace('|', '\\|') if v is not None else '' for v in row]
                 table.append('|' + '|'.join(sanitized_row))
             table.append('|===')
-            formatted = '\\n'.join(table)
+            formatted = '\n'.join(table)
             
             return (formatted, raw_results) if return_raw else formatted
         except psycopg2.Error as e:
             if self.conn:
                 self.conn.rollback()
-            error_str = f"[ERROR]\\n====\\nQuery failed: {e}\\n====\\n"
+            error_str = f"[ERROR]\n====\nQuery failed: {e}\n====\n"
             return (error_str, {"error": str(e), "query": query}) if return_raw else error_str

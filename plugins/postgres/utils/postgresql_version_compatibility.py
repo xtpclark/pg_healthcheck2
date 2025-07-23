@@ -14,13 +14,13 @@ def get_postgresql_version(cursor, execute_query):
         dict: Version information including version_num, version_string, and compatibility flags
     """
     try:
-        # Get version number (e.g., 170000 for PostgreSQL 17)
-        version_query = "SHOW server_version_num;"
+        # Use `current_setting` for a cleaner output and strip whitespace
+        version_query = "SELECT current_setting('server_version_num');"
         _, raw_version_num = execute_query(version_query, is_check=True, return_raw=True)
-        version_num = int(raw_version_num)
+        version_num = int(raw_version_num.strip())
         
-        # Get version string (e.g., "17.1")
-        version_string_query = "SHOW server_version;"
+        # Do the same for the version string
+        version_string_query = "SELECT current_setting('server_version');"
         _, raw_version_string = execute_query(version_string_query, is_check=True, return_raw=True)
         version_string = raw_version_string.strip()
         
@@ -32,26 +32,26 @@ def get_postgresql_version(cursor, execute_query):
             'version_num': version_num,
             'version_string': version_string,
             'major_version': major_version,
-            'is_pg13_or_newer': version_num >= 130000,
-            'is_pg14_or_newer': version_num >= 140000,
-            'is_pg15_or_newer': version_num >= 150000,
-            'is_pg16_or_newer': version_num >= 160000,
-            'is_pg17_or_newer': version_num >= 170000,
-            'is_pg18_or_newer': version_num >= 180000,
-            'is_pg13': 130000 <= version_num < 140000,
-            'is_pg14': 140000 <= version_num < 150000,
-            'is_pg15': 150000 <= version_num < 160000,
-            'is_pg16': 160000 <= version_num < 170000,
-            'is_pg17': 170000 <= version_num < 180000,
-            'is_pg18': version_num >= 180000
+            'is_pg13_or_newer': major_version >= 13,
+            'is_pg14_or_newer': major_version >= 14,
+            'is_pg15_or_newer': major_version >= 15,
+            'is_pg16_or_newer': major_version >= 16,
+            'is_pg17_or_newer': major_version >= 17,
+            'is_pg18_or_newer': major_version >= 18,
+            'is_pg13': major_version == 13,
+            'is_pg14': major_version == 14,
+            'is_pg15': major_version == 15,
+            'is_pg16': major_version == 16,
+            'is_pg17': major_version == 17,
+            'is_pg18': major_version >= 18
         }
         
         return compatibility
         
     except Exception as e:
-        # Fallback to basic version detection
+        # Fallback to parsing the version string if server_version_num is unavailable
         try:
-            version_string_query = "SHOW server_version;"
+            version_string_query = "SELECT current_setting('server_version');"
             _, raw_version_string = execute_query(version_string_query, is_check=True, return_raw=True)
             version_string = raw_version_string.strip()
             
@@ -80,7 +80,7 @@ def get_postgresql_version(cursor, execute_query):
             return compatibility
             
         except Exception:
-            # Final fallback
+            # Final fallback if all methods fail
             return {
                 'version_num': 0,
                 'version_string': 'unknown',
