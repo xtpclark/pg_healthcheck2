@@ -152,7 +152,7 @@ class HealthCheck:
 
 def main():
     parser = argparse.ArgumentParser(description='Database Health Check Tool')
-    parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
+    parser.add_argument('--config', default='config/config.yaml', help='Path to configuration file')
     parser.add_argument('--report-config', help='Path to a custom report configuration file.')
     parser.add_argument('--output', default='health_check.adoc', help='Output file name')
     args = parser.parse_args()

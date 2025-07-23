@@ -34,7 +34,6 @@ def analyze_metric_severity(metric_name, data_row, settings, all_findings, analy
             if all(cond.get('key') in data_row for cond in config.get('data_conditions', []) if cond.get('exists')):
                 for rule in config.get('rules', []):
                     try:
-                        # Use eval to dynamically check rules against the data
                         if eval(rule['expression'], {"data": data_row, "settings": settings, "all_structured_findings": all_findings}):
                             evaluated_reasoning = eval(f"f\"{rule['reasoning']}\"", {"data": data_row, "settings": settings})
                             return {
@@ -56,14 +55,62 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
     critical_issues, high_priority_issues, medium_priority_issues = [], [], []
     module_issue_map = {}
 
-    # Severity analysis loop (remains the same)
+    # Severity analysis loop
     for module_name, module_findings in findings_for_analysis.items():
-        # ... (This logic is generic and does not need to change)
+        # --- START OF CORRECTED INDENTATION ---
+        module_issue_map[module_name] = {'critical': 0, 'high': 0, 'medium': 0}
+        if module_findings.get("status") == "success" and isinstance(module_findings.get("data"), dict):
+            for data_key, data_value in module_findings["data"].items():
+                data_list = []
+                if 'cloud_metrics' in data_key and isinstance(data_value, dict):
+                    for metric_name, metric_data in data_value.items():
+                        if isinstance(metric_data, dict) and 'value' in metric_data and isinstance(metric_data['value'], (int, float)):
+                            analysis = analyze_metric_severity(f"{module_name}_{data_key}_{metric_name}", metric_data, settings, findings_for_analysis, analysis_rules)
+                            if analysis['level'] in ['critical', 'high', 'medium']:
+                                issue_details = {'metric': f"AWS.{metric_name}", 'analysis': analysis, 'data': metric_data}
+                                module_issue_map[module_name][analysis['level']] += 1
+                                if analysis['level'] == 'critical': critical_issues.append(issue_details)
+                                elif analysis['level'] == 'high': high_priority_issues.append(issue_details)
+                                elif analysis['level'] == 'medium': medium_priority_issues.append(issue_details)
+                    continue
 
-    # Smart summarization logic (remains the same)
-    # ...
+                if isinstance(data_value, dict) and isinstance(data_value.get('data'), list): data_list = data_value['data']
+                elif isinstance(data_value, list): data_list = data_value
+                
+                for row in data_list:
+                    if isinstance(row, dict):
+                        analysis = analyze_metric_severity(f"{module_name}_{data_key}", row, settings, findings_for_analysis, analysis_rules)
+                        if analysis['level'] in ['critical', 'high', 'medium']:
+                            issue_details = {'metric': f"{module_name}_{data_key}", 'analysis': analysis, 'data': row}
+                            module_issue_map[module_name][analysis['level']] += 1
+                            if analysis['level'] == 'critical': critical_issues.append(issue_details)
+                            elif analysis['level'] == 'high': high_priority_issues.append(issue_details)
+                            elif analysis['level'] == 'medium': medium_priority_issues.append(issue_details)
+    # --- END OF CORRECTED INDENTATION ---
 
-    # --- Template Rendering (Now fully generic) ---
+    # Smart summarization logic
+    TOKEN_CHARACTER_RATIO = 4
+    max_prompt_tokens = settings.get('ai_max_prompt_tokens', 8000)
+    token_budget = max_prompt_tokens * TOKEN_CHARACTER_RATIO
+    findings_for_prompt = {}
+    estimated_size = 0
+    for module_name, issues in module_issue_map.items():
+        if issues['critical'] > 0 or issues['high'] > 0:
+            findings_for_prompt[module_name] = findings_for_analysis[module_name]
+            estimated_size += len(json.dumps(findings_for_analysis[module_name]))
+    for module_name, module_data in findings_for_analysis.items():
+        if module_name not in findings_for_prompt:
+            module_size = len(json.dumps(module_data))
+            if estimated_size + module_size < token_budget:
+                findings_for_prompt[module_name] = module_data
+                estimated_size += module_size
+            else:
+                findings_for_prompt[module_name] = {
+                    "status": "success",
+                    "note": "Data for this module was summarized due to prompt size limits. No critical or high-priority issues were detected."
+                }
+    
+    # --- Template Rendering ---
     template_dir = Path(__file__).parent.parent / 'templates'
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(template_dir)), trim_blocks=True, lstrip_blocks=True)
     template_name = settings.get('prompt_template', 'prompt_template.j2')
@@ -71,12 +118,11 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
     
     analysis_timestamp = datetime.utcnow().isoformat() + "Z"
 
-    # The prompt now uses the generic db_version and db_name passed into the function
     prompt = template.render(
         findings_json=json.dumps(findings_for_prompt, indent=2),
         settings=settings,
-        db_version=db_version,       # <-- Use passed-in argument
-        database_name=db_name,       # <-- Use passed-in argument
+        db_version=db_version,
+        database_name=db_name,
         analysis_timestamp=analysis_timestamp,
         critical_issues=critical_issues,
         high_priority_issues=high_priority_issues

@@ -1,7 +1,5 @@
-# report_config/report_config_rec.py
-#
 # This file defines the structure and execution order of the health check report.
-# It is focused on generating actionable recommendations.
+# It is focused on generating actionable recommendations with consolidated checks.
 
 REPORT_SECTIONS = [
     # --- Section 1: Header and Overview ---
@@ -41,37 +39,26 @@ REPORT_SECTIONS = [
         ]
     },
 
-    # --- Section 4: Table and Index Health ---
+    # --- Section 4: Table and Index Health (Consolidated) ---
     {
         'title': 'Table and Index Health',
         'actions': [
             {'type': 'module', 'module': 'plugins.postgres.checks.table_metrics', 'function': 'run_table_metrics'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.unused_idx', 'function': 'run_unused_idx'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.dupe_idx', 'function': 'run_dupe_idx'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.invalid_idx', 'function': 'run_invalid_idx'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.no_pk_uk_tables', 'function': 'run_no_pk_uk_tables'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.index_health_analysis', 'function': 'run_index_health_analysis'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.table_constraint_analysis', 'function': 'run_table_constraint_analysis'},
         ]
     },
 
-    # --- Section 5: Security and Replication ---
+    # --- Section 5: Security and Replication (Consolidated) ---
     {
         'title': 'Security and Replication',
         'actions': [
-            {'type': 'module', 'module': 'plugins.postgres.checks.security_audit', 'function': 'run_security_audit'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.stat_ssl', 'function': 'run_stat_ssl'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.physical_replication', 'function': 'run_physical_replication'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.pub_sub', 'function': 'run_pub_sub'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.security_and_encryption', 'function': 'run_security_and_encryption_analysis'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.replication_health', 'function': 'run_replication_health'},
         ]
     },
 
     # --- FINAL SECTION: AI-Generated Recommendations ---
-    {
-        'title': 'AI-Generated Recommendations',
-        'condition': {'var': 'ai_analyze', 'value': True},
-        'actions': [
-            # This utility is now called from main.py and doesn't need to be a module here.
-            # We keep a placeholder or it can be removed entirely depending on final main.py logic.
-            # For now, let's assume it's handled by the core engine.
-        ]
-    },
+    # This section is now implicitly handled by the core engine when `ai_analyze: true` is set in config.
+    # No explicit module call is needed in the report configuration itself.
 ]
