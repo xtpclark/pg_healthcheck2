@@ -1,25 +1,21 @@
 import re
-# --- MODIFIED: Import the centralized compatibility module ---
-from .postgresql_version_compatibility import get_postgresql_version
+from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version
 
-def run_suggested_config_values(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+def run_suggested_config_values(connector, settings):
     """
     Analyzes key configuration values against best practices, using the centralized PostgreSQL compatibility module.
     """
     adoc_content = ["=== Configuration Analysis vs. Best Practices (Version-Aware)", "Analyzes current configuration settings against established PostgreSQL best practices, adjusted for your specific version, to identify areas for review and tuning.\n"]
     structured_data = {}
 
-    # --- MODIFIED: Use the centralized function to get version info ---
     try:
-        compatibility_info = get_postgresql_version(cursor, execute_query)
+        compatibility_info = get_postgresql_version(connector.cursor, connector.execute_query)
         pg_major_version = compatibility_info.get('major_version_number', 0)
         structured_data["postgres_version"] = pg_major_version
     except Exception as e:
         pg_major_version = 0 # Default if version detection fails
         structured_data["postgres_version"] = f"Could not detect version: {e}"
 
-
-    # --- Best Practice Guidelines (Now with Version-Specific Notes) ---
     BEST_PRACTICE_GUIDELINES = {
         'shared_buffers': {
             'guideline': "Typically 25% of total system RAM, up to a max of 8GB for most workloads.",
@@ -63,21 +59,20 @@ def run_suggested_config_values(cursor, settings, execute_query, execute_pgbounc
         }
     }
 
-    # --- Data Collection ---
     settings_to_check = list(BEST_PRACTICE_GUIDELINES.keys())
-    if pg_major_version < 9.5: # max_wal_size doesn't exist before 9.5
+    if pg_major_version < 9.5:
         settings_to_check.remove('max_wal_size')
 
     settings_placeholders = ', '.join([f"'{s}'" for s in settings_to_check])
     config_query = f"SELECT name, setting, unit, short_desc, context FROM pg_settings WHERE name IN ({settings_placeholders}) ORDER BY name;"
 
-    if settings['show_qry'] == 'true':
+    if settings.get('show_qry') == 'true':
         adoc_content.append(f"Configuration analysis query (for PostgreSQL {pg_major_version}):")
         adoc_content.append("[,sql]\n----")
         adoc_content.append(config_query)
         adoc_content.append("----")
 
-    formatted_result, raw_settings = execute_query(config_query, return_raw=True)
+    formatted_result, raw_settings = connector.execute_query(config_query, return_raw=True)
 
     if "[ERROR]" in formatted_result:
         adoc_content.append(f"Could not retrieve configuration settings:\n{formatted_result}")
@@ -86,7 +81,6 @@ def run_suggested_config_values(cursor, settings, execute_query, execute_pgbounc
 
     structured_data["configuration_analysis"] = {"status": "success", "data": raw_settings}
 
-    # --- Analysis and Reporting ---
     adoc_content.append(f"[NOTE]\n====\nThis section compares your database's current configuration (PostgreSQL {pg_major_version}) against general best practices. These are guidelines, not absolute rules. Optimal values depend heavily on your specific hardware, workload, and PostgreSQL version. Always test configuration changes in a staging environment.\n====\n")
 
     analysis_table = ["[cols=\"2,2,4,4\",options=\"header\"]", "|===", "| Setting | Current Value | Best Practice Guideline | Considerations"]
@@ -96,7 +90,7 @@ def run_suggested_config_values(cursor, settings, execute_query, execute_pgbounc
     for name, guideline_info in BEST_PRACTICE_GUIDELINES.items():
         if name in current_settings_map:
             setting = current_settings_map[name]
-            current_value = f"{setting['setting']}{setting['unit'] if setting['unit'] else ''}"
+            current_value = f"{setting.get('setting', '')}{setting.get('unit', '') if setting.get('unit') else ''}"
             
             analysis_table.append(f"| `{name}`")
             analysis_table.append(f"| `{current_value}`")

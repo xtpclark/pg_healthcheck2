@@ -1,105 +1,63 @@
-def run_pg_stat_statements_config(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+def run_pg_stat_statements_config(connector, settings):
     """
     Checks if pg_stat_statements is enabled and properly configured for query analysis.
     """
-    adoc_content = ["Checks if pg_stat_statements is enabled and properly configured for query analysis."]
-    structured_data = {} # Dictionary to hold structured findings for this module
-    
-    if settings['show_qry'] == 'true':
-        adoc_content.append("pg_stat_statements configuration queries:")
-        adoc_content.append("[,sql]\n----")
-        adoc_content.append("SELECT name, setting, unit, short_desc FROM pg_settings WHERE name LIKE 'pg_stat_statements.%' ORDER BY name;")
-        adoc_content.append("SELECT setting FROM pg_settings WHERE name = 'shared_preload_libraries';")
-        adoc_content.append("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');")
-        adoc_content.append("----")
+    adoc_content = ["=== pg_stat_statements Configuration Status", "Analyzes the configuration of the `pg_stat_statements` extension, which is critical for query performance monitoring.\n"]
+    structured_data = {}
 
-    queries = [
-        (
-            "pg_stat_statements Settings", 
-            "SELECT name, setting, unit, short_desc FROM pg_settings WHERE name LIKE 'pg_stat_statements.%' ORDER BY name;", 
-            True, # Always attempt to query settings
-            "pg_stat_statements_settings" # Data key
-        )
+    # --- Data Collection ---
+    try:
+        # Get all relevant settings in one query
+        settings_query = "SELECT name, setting FROM pg_settings WHERE name IN ('shared_preload_libraries', 'pg_stat_statements.track');"
+        _, raw_settings = connector.execute_query(settings_query, return_raw=True)
+        settings_map = {s['name']: s['setting'] for s in raw_settings}
+
+        # Check if the extension is created in the database
+        extension_query = "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');"
+        _, raw_ext_exists = connector.execute_query(extension_query, is_check=True, return_raw=True)
+        
+        is_preloaded = 'pg_stat_statements' in settings_map.get('shared_preload_libraries', '')
+        is_extension_created = (str(raw_ext_exists).lower() == 't' or str(raw_ext_exists).lower() == 'true')
+        tracking_level = settings_map.get('pg_stat_statements.track', 'none')
+        is_tracking_enabled = tracking_level != 'none'
+
+        structured_data["config_status"] = {
+            "is_preloaded": is_preloaded,
+            "is_extension_created": is_extension_created,
+            "tracking_level": tracking_level,
+            "is_tracking_enabled": is_tracking_enabled
+        }
+
+    except Exception as e:
+        adoc_content.append(f"[ERROR]\n====\nFailed to check pg_stat_statements configuration: {e}\n====\n")
+        structured_data["config_status"] = {"status": "error", "details": str(e)}
+        return "\n".join(adoc_content), structured_data
+
+    # --- Analysis and Reporting ---
+    status_table = [
+        "[cols=\"1,1,3\",options=\"header\"]",
+        "|===",
+        "| Check | Status | Details",
+        f"| In `shared_preload_libraries` | {'✅ OK' if is_preloaded else '❌ FAILED'} | Required for the extension to load at startup.",
+        f"| Extension Created in Database | {'✅ OK' if is_extension_created else '❌ FAILED'} | The `CREATE EXTENSION` command must be run.",
+        f"| Query Tracking Enabled | {'✅ OK' if is_tracking_enabled else '❌ FAILED'} | `pg_stat_statements.track` is set to `{tracking_level}`. Should be `top` or `all`.",
+        "|==="
     ]
+    adoc_content.append("\n".join(status_table))
 
-    # Check if pg_stat_statements is in shared_preload_libraries
-    preload_libs_query = "SELECT setting FROM pg_settings WHERE name = 'shared_preload_libraries';"
-    formatted_preload_libs, raw_preload_libs = execute_query(preload_libs_query, is_check=True, return_raw=True)
-    is_preloaded = 'pg_stat_statements' in str(raw_preload_libs).lower() # Convert to string for robust check
-
-    # Check if pg_stat_statements extension is actually created in the current DB
-    extension_exists_query = "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');"
-    formatted_ext_exists, raw_ext_exists = execute_query(extension_exists_query, is_check=True, return_raw=True)
-    # NEW: Correctly interpret the boolean string 't' or 'True'
-    is_extension_created = (str(raw_ext_exists).lower() == 't' or str(raw_ext_exists).lower() == 'true')
-
-    for title, query, condition, data_key in queries:
-        if not condition:
-            adoc_content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====\n")
-            structured_data[data_key] = {"status": "not_applicable", "reason": "Query not applicable due to condition."}
-            continue
-        
-        # Standardized parameter passing pattern:
-        params_for_query = None # No named parameters in this query
-        
-        formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
-        
-        if "[ERROR]" in formatted_result:
-            adoc_content.append(f"{title}\n{formatted_result}")
-            structured_data[data_key] = {"status": "error", "details": raw_result}
-        else:
-            adoc_content.append(title)
-            adoc_content.append(formatted_result)
-            structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
-    
-    # Provide a combined status for pg_stat_statements
-    adoc_content.append("\n==== pg_stat_statements Status Summary\n")
-    if is_preloaded and is_extension_created:
-        adoc_content.append("[NOTE]\n====\n"
-                           "The `pg_stat_statements` extension is **fully enabled** and loaded. "
-                           "Ensure its configuration parameters (e.g., `pg_stat_statements.track`) are set appropriately for your monitoring needs.\n"
-                           "====\n")
-        structured_data["extension_status"] = {"status": "enabled", "note": "pg_stat_statements extension is fully enabled."}
-    elif is_preloaded and not is_extension_created:
-        adoc_content.append("[IMPORTANT]\n====\n"
-                           "The `pg_stat_statements` extension is **preloaded but NOT created** in this database. "
-                           "It needs to be created to collect query statistics.\n\n"
-                           "To fully enable it:\n"
-                           "1. Connect to your database.\n"
-                           "2. Run `CREATE EXTENSION pg_stat_statements;`\n"
-                           "====\n")
-        structured_data["extension_status"] = {"status": "preloaded_not_created", "note": "pg_stat_statements preloaded but not created in DB."}
-    elif not is_preloaded and is_extension_created:
-        adoc_content.append("[IMPORTANT]\n====\n"
-                           "The `pg_stat_statements` extension is **created but NOT preloaded**. "
-                           "It will not collect statistics unless it's added to `shared_preload_libraries` and the database is restarted.\n\n"
-                           "To fully enable it:\n"
-                           "1. Add `pg_stat_statements` to `shared_preload_libraries` in `postgresql.conf` (or your RDS/Aurora parameter group).\n"
-                           "2. Restart the PostgreSQL service/instance.\n"
-                           "====\n")
-        structured_data["extension_status"] = {"status": "created_not_preloaded", "note": "pg_stat_statements created but not preloaded."}
+    # --- Tailored Recommendations ---
+    if is_preloaded and is_extension_created and is_tracking_enabled:
+        adoc_content.append("\n[SUCCESS]\n====\nThe `pg_stat_statements` extension is **fully enabled** and configured correctly for query monitoring.\n====\n")
     else:
-        adoc_content.append("[IMPORTANT]\n====\n"
-                           "The `pg_stat_statements` extension is **NOT currently installed or enabled** in this database. "
-                           "This is crucial for detailed query performance analysis. "
-                           "Without it, sections like 'Top Queries by Execution Time' and 'Top CPU-Intensive Queries' will not provide data.\n\n"
-                           "To enable it:\n"
-                           "1. Add `pg_stat_statements` to `shared_preload_libraries` in `postgresql.conf` (or your RDS/Aurora parameter group).\n"
-                           "2. Restart the PostgreSQL service/instance.\n"
-                           "3. Run `CREATE EXTENSION pg_stat_statements;` in your database.\n"
-                           "====\n")
-        structured_data["extension_status"] = {"status": "disabled", "note": "pg_stat_statements extension is not installed or enabled."}
+        adoc_content.append("\n[IMPORTANT]\n====\n**Action Required:** `pg_stat_statements` is not fully functional. Please follow these steps:\n")
+        if not is_preloaded:
+            adoc_content.append("* **Step 1: Add to `shared_preload_libraries`**. In your `postgresql.conf` or RDS/Aurora parameter group, set `shared_preload_libraries = 'pg_stat_statements'`. **A database restart is required for this change.**")
+        if not is_extension_created:
+            adoc_content.append(f"* **Step 2: Create the Extension**. Connect to the `{settings.get('database')}` database and run the command: `CREATE EXTENSION pg_stat_statements;`")
+        if not is_tracking_enabled:
+            adoc_content.append(f"* **Step 3: Enable Tracking**. The tracking level is currently `{tracking_level}`. Run the command: `ALTER SYSTEM SET pg_stat_statements.track = 'top';` followed by `SELECT pg_reload_conf();` to start tracking queries.")
+        adoc_content.append("====\n")
+        
+    adoc_content.append("[TIP]\n====\nProper configuration of `pg_stat_statements` is vital for capturing comprehensive query metrics. Regularly reset statistics (`SELECT pg_stat_statements_reset();`) before performance tests for focused analysis periods.\n====\n")
 
-    adoc_content.append("[TIP]\n====\n"
-                   "Proper configuration of `pg_stat_statements` is vital for capturing comprehensive query metrics. "
-                   "Adjust `pg_stat_statements.max` to ensure enough statements are tracked, and `pg_stat_statements.track` to `all` for full visibility. "
-                   "Regularly reset statistics (`pg_stat_statements_reset()`) for focused analysis periods.\n"
-                   "====\n")
-    if settings['is_aurora'] == 'true':
-        adoc_content.append("[NOTE]\n====\n"
-                       "AWS RDS Aurora supports `pg_stat_statements`. Configure it via the DB cluster parameter group. "
-                       "Query data from `pg_stat_statements` is also surfaced in Amazon RDS Performance Insights, providing a graphical interface for analysis.\n"
-                       "====\n")
-    
-    # Return both formatted AsciiDoc content and structured data
     return "\n".join(adoc_content), structured_data

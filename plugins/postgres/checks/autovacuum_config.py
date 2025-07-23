@@ -1,142 +1,84 @@
-def run_autovacuum_config(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+def run_autovacuum_config(connector, settings):
     """
-    Analyzes key autovacuum settings to ensure efficient bloat management and performance.
+    Analyzes and presents effective autovacuum settings for each table,
+    highlighting overrides from the global defaults.
     """
-    adoc_content = ["=== Autovacuum Config\nAnalyzes key autovacuum settings to ensure efficient bloat management and performance.\n"]
-    structured_data = {} # Dictionary to hold structured findings for this module
+    adoc_content = ["=== Autovacuum Configuration Analysis", "Analyzes autovacuum settings to ensure efficient bloat management, highlighting tables with custom configurations that override global defaults.\n"]
+    structured_data = {}
+
+    # Query to get global autovacuum defaults
+    global_settings_query = "SELECT name, setting FROM pg_settings WHERE name LIKE 'autovacuum_%';"
     
-    if settings['show_qry'] == 'true':
-        adoc_content.append("Autovacuum configuration queries:")
-        adoc_content.append("[,sql]\n----")
-        adoc_content.append("SELECT name, setting, unit, short_desc FROM pg_settings WHERE name LIKE 'autovacuum_%' ORDER BY name;")
-        adoc_content.append("""
-SELECT
-    n.nspname AS schema_name,
-    c.relname AS table_name,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_enabled'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum')::text
-    ) AS autovacuum_enabled,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'toast.autovacuum_enabled'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum')::text
-    ) AS toast_autovacuum_enabled,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_vacuum_threshold'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum_vacuum_threshold')
-    ) AS autovacuum_vacuum_threshold,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_vacuum_scale_factor'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum_vacuum_scale_factor')
-    ) AS autovacuum_vacuum_scale_factor,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_analyze_threshold'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum_analyze_threshold')
-    ) AS autovacuum_analyze_threshold,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_analyze_scale_factor'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum_analyze_scale_factor')
-    ) AS autovacuum_analyze_scale_factor
-FROM
-    pg_class c
-JOIN
-    pg_namespace n ON n.oid = c.relnamespace
-WHERE
-    c.relkind IN ('r', 'm') -- 'r' for tables, 'm' for materialized views
-    AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-ORDER BY
-    schema_name, table_name
-LIMIT %(limit)s;
-""")
-        adoc_content.append("----")
+    # A more advanced query to get effective settings per table and compare them to the defaults
+    effective_settings_query = """
+    WITH global_settings AS (
+        SELECT name, setting FROM pg_settings WHERE name LIKE 'autovacuum_%'
+    )
+    SELECT
+        n.nspname AS schema_name,
+        c.relname AS table_name,
+        'autovacuum_enabled' AS parameter,
+        (SELECT setting FROM global_settings WHERE name = 'autovacuum') AS global_default,
+        coalesce(substring(t.reloptions::text from 'autovacuum_enabled=([^,]+)'), (SELECT setting FROM global_settings WHERE name = 'autovacuum')) AS effective_value
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_options_to_table(c.reloptions) t ON t.option_name = 'autovacuum_enabled'
+    WHERE c.relkind IN ('r', 'm') AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+    AND coalesce(substring(t.reloptions::text from 'autovacuum_enabled=([^,]+)'), (SELECT setting FROM global_settings WHERE name = 'autovacuum')) != (SELECT setting FROM global_settings WHERE name = 'autovacuum')
+    
+    UNION ALL
 
-    queries = [
-        (
-            "Global Autovacuum Settings", 
-            "SELECT name, setting, unit, short_desc FROM pg_settings WHERE name LIKE 'autovacuum_%' ORDER BY name;", 
-            True,
-            "global_autovacuum_settings" # Data key
-        ),
-        (
-            "Tables with Custom Autovacuum Settings (or explicitly disabled)", 
-            """
-SELECT
-    n.nspname AS schema_name,
-    c.relname AS table_name,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_enabled'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum')::text
-    ) AS autovacuum_enabled,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'toast.autovacuum_enabled'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum')::text
-    ) AS toast_autovacuum_enabled,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_vacuum_threshold'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum_vacuum_threshold')
-    ) AS autovacuum_vacuum_threshold,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_vacuum_scale_factor'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum_vacuum_scale_factor')
-    ) AS autovacuum_vacuum_scale_factor,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_analyze_threshold'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum_analyze_threshold')
-    ) AS autovacuum_analyze_threshold,
-    COALESCE(
-        (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'autovacuum_analyze_scale_factor'),
-        (SELECT setting FROM pg_settings WHERE name = 'autovacuum_analyze_scale_factor')
-    ) AS autovacuum_analyze_scale_factor
-FROM
-    pg_class c
-JOIN
-    pg_namespace n ON n.oid = c.relnamespace
-WHERE
-    c.relkind IN ('r', 'm') -- 'r' for tables, 'm' for materialized views
-    AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-ORDER BY
-    schema_name, table_name
-LIMIT %(limit)s;
-""", 
-            True,
-            "custom_table_autovacuum_settings" # Data key
-        )
-    ]
+    SELECT
+        n.nspname AS schema_name,
+        c.relname AS table_name,
+        'autovacuum_vacuum_threshold' AS parameter,
+        (SELECT setting FROM global_settings WHERE name = 'autovacuum_vacuum_threshold') AS global_default,
+        coalesce(substring(t.reloptions::text from 'autovacuum_vacuum_threshold=([^,]+)'), (SELECT setting FROM global_settings WHERE name = 'autovacuum_vacuum_threshold')) AS effective_value
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_options_to_table(c.reloptions) t ON t.option_name = 'autovacuum_vacuum_threshold'
+    WHERE c.relkind IN ('r', 'm') AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+    AND coalesce(substring(t.reloptions::text from 'autovacuum_vacuum_threshold=([^,]+)'), (SELECT setting FROM global_settings WHERE name = 'autovacuum_vacuum_threshold')) != (SELECT setting FROM global_settings WHERE name = 'autovacuum_vacuum_threshold')
+    
+    ORDER BY schema_name, table_name, parameter
+    LIMIT %(limit)s;
+    """
 
-    for title, query, condition, data_key in queries:
-        if not condition:
-            adoc_content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====\n")
-            structured_data[data_key] = {"status": "not_applicable", "reason": "Query not applicable due to condition."}
-            continue
+    try:
+        # --- Global Settings ---
+        adoc_content.append("==== Global Autovacuum Settings")
+        global_formatted, global_raw = connector.execute_query(global_settings_query, return_raw=True)
+        if "[ERROR]" in global_formatted:
+            raise Exception("Could not retrieve global autovacuum settings.")
+        adoc_content.append(global_formatted)
+        structured_data["global_autovacuum_settings"] = {"status": "success", "data": global_raw}
+
+        # --- Tables with Custom Overrides ---
+        adoc_content.append("\n==== Tables with Custom Autovacuum Settings")
+        params = {'limit': settings.get('row_limit', 10)}
+        overrides_formatted, overrides_raw = connector.execute_query(effective_settings_query, params=params, return_raw=True)
         
-        # Standardized parameter passing pattern:
-        params_for_query = {'limit': settings['row_limit']} if '%(limit)s' in query else None
+        if "[ERROR]" in overrides_formatted:
+             raise Exception("Could not retrieve per-table autovacuum overrides.")
         
-        formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
-        
-        if "[ERROR]" in formatted_result:
-            adoc_content.append(f"{title}\n{formatted_result}")
-            structured_data[data_key] = {"status": "error", "details": raw_result}
+        if not overrides_raw:
+            adoc_content.append("[NOTE]\n====\nNo tables found with custom autovacuum settings that override the global defaults.\n====\n")
         else:
-            adoc_content.append(title)
-            adoc_content.append(formatted_result)
-            structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
-    
-    adoc_content.append("[TIP]\n====\n"
-                   "Autovacuum is critical for maintaining database health and performance by reclaiming dead tuples and preventing transaction ID wraparound. "
-                   "Ensure `autovacuum` is `on` globally. "
-                   "Review `autovacuum_vacuum_scale_factor` and `autovacuum_analyze_scale_factor` for appropriate thresholds. "
-                   "High `autovacuum_vacuum_cost_delay` can slow down vacuuming; consider reducing it for busy systems. "
-                   "Identify tables with disabled autovacuum or custom settings that might be causing bloat or performance issues. "
-                   "For Aurora, autovacuum parameters are managed via the DB cluster parameter group.\n"
-                   "====\n")
-    if settings['is_aurora'] == 'true':
-        adoc_content.append("[NOTE]\n====\n"
-                       "AWS RDS Aurora handles autovacuum internally, but you can still tune parameters like `autovacuum_vacuum_cost_delay` via the DB cluster parameter group. "
-                       "Monitoring `FreeStorageSpace` and `CPUUtilization` in CloudWatch can help assess autovacuum effectiveness. "
-                       "Ensure your autovacuum settings are optimized for your workload to prevent performance degradation.\n"
-                       "====\n")
-    
-    # Return both formatted AsciiDoc content and structured data
-    return "\n".join(adoc_content), structured_data
+            adoc_content.append("[IMPORTANT]\n====\nThe following tables have custom settings that differ from the global defaults. Review these overrides to ensure they are intentional and appropriate for the table's workload.\n====\n")
+            adoc_content.append(overrides_formatted)
+        
+        structured_data["custom_autovacuum_overrides"] = {"status": "success", "data": overrides_raw}
 
+    except Exception as e:
+        error_msg = f"Failed during autovacuum analysis: {e}"
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        # Ensure structured data reflects the error
+        if "global_autovacuum_settings" not in structured_data:
+            structured_data["global_autovacuum_settings"] = {"status": "error", "details": str(e)}
+        if "custom_autovacuum_overrides" not in structured_data:
+            structured_data["custom_autovacuum_overrides"] = {"status": "error", "details": str(e)}
+        return "\n".join(adoc_content), structured_data
+    
+    adoc_content.append("\n[TIP]\n====\nAutovacuum is critical for database health. Ensure it is enabled globally. For very large or high-traffic tables, tuning per-table settings (like `autovacuum_vacuum_scale_factor` = 0.05) can be beneficial, but misconfigurations can lead to severe bloat. Always verify that custom settings are intentional.\n====\n")
+
+    return "\n".join(adoc_content), structured_data

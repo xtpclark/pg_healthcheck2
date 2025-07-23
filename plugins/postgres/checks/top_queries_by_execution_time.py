@@ -1,63 +1,46 @@
-def run_top_queries_by_execution_time(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+
+def run_top_queries_by_execution_time(connector, settings):
     """
-    Analyzes top queries by total execution time from pg_stat_statements
-    to identify resource-intensive queries.
+    Identifies the most resource-intensive queries based on their total cumulative execution time.
     """
-    adoc_content = ["=== Top Queries by Execution Time", "Identifies resource-intensive queries based on total execution time.\n"]
-    structured_data = {} # Dictionary to hold structured findings for this module
-    
-    # Import version compatibility module
-    from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
-    
-    # Get PostgreSQL version compatibility information
-    compatibility = get_postgresql_version(cursor, execute_query)
-    
-    # Validate PostgreSQL version
-    is_supported, error_msg = validate_postgresql_version(compatibility)
-    if not is_supported:
-        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
-        structured_data["version_error"] = {"status": "error", "details": error_msg}
-        return "\n".join(adoc_content), structured_data
-    
-    # Get version-specific query
-    top_queries_query = get_pg_stat_statements_query(compatibility, 'standard') + " LIMIT %(limit)s;"
+    adoc_content = ["=== Top Queries by Total Execution Time", "Identifies queries that consume the most database time overall. Optimizing these queries often yields the largest performance gains.\n"]
+    structured_data = {}
 
-    if settings['show_qry'] == 'true':
-        adoc_content.append("Top queries by execution time query:")
-        adoc_content.append("[,sql]\n----")
-        adoc_content.append(top_queries_query)
-        adoc_content.append("----")
+    try:
+        if settings.get('has_pgstat') != 't':
+            adoc_content.append("[NOTE]\n====\n`pg_stat_statements` extension is not enabled. Analysis cannot be performed.\n====\n")
+            structured_data["top_queries"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
+            return "\n".join(adoc_content), structured_data
+        
+        compatibility = get_postgresql_version(connector.cursor, connector.execute_query)
+        is_supported, error_msg = validate_postgresql_version(compatibility)
+        if not is_supported:
+            raise ValueError(error_msg)
 
-    # Check condition for pg_stat_statements
-    condition = settings['has_pgstat'] == 't'
+        top_queries_query = get_pg_stat_statements_query(compatibility, 'standard') + " LIMIT %(limit)s;"
 
-    if not condition:
-        note_msg = "pg_stat_statements extension is not installed or enabled. Install pg_stat_statements to analyze top queries."
-        adoc_content.append(f"[NOTE]\n====\n{note_msg}\n====\n")
-        structured_data["top_queries"] = {"status": "not_applicable", "reason": note_msg}
-    else:
-        # Standardized parameter passing pattern:
-        params_for_query = {'limit': settings['row_limit']}
-        formatted_result, raw_result = execute_query(top_queries_query, params=params_for_query, return_raw=True)
+        if settings.get('show_qry') == 'true':
+            adoc_content.append("Top queries by execution time query:")
+            adoc_content.append("[,sql]\n----")
+            adoc_content.append(top_queries_query % {'limit': settings.get('row_limit', 10)}) # Show with limit
+            adoc_content.append("----")
+
+        params_for_query = {'limit': settings.get('row_limit', 10)}
+        formatted_result, raw_result = connector.execute_query(top_queries_query, params=params_for_query, return_raw=True)
         
         if "[ERROR]" in formatted_result:
             adoc_content.append(f"Top Queries by Execution Time\n{formatted_result}")
             structured_data["top_queries"] = {"status": "error", "details": raw_result}
         else:
-            adoc_content.append("Top Queries by Execution Time")
             adoc_content.append(formatted_result)
             structured_data["top_queries"] = {"status": "success", "data": raw_result}
     
-    adoc_content.append("[TIP]\n====\n"
-                   "Queries with high `total_exec_time` or `mean_exec_time` are consuming significant database resources. "
-                   "Investigate these queries for optimization opportunities, such as adding appropriate indexes, rewriting inefficient parts, or adjusting application logic. "
-                   "For Aurora, optimizing these queries directly reduces `CPUUtilization` and improves overall performance.\n"
-                   "====\n")
-    if settings['is_aurora'] == 'true':
-        adoc_content.append("[NOTE]\n====\n"
-                       "AWS RDS Aurora integrates `pg_stat_statements` for detailed query performance monitoring. "
-                       "Use CloudWatch to correlate high `CPUUtilization` or `DatabaseConnections` with specific long-running or frequently executed queries identified here.\n"
-                       "====\n")
+    except Exception as e:
+        error_msg = f"Failed during top queries analysis: {e}"
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["top_queries"] = {"status": "error", "details": error_msg}
+
+    adoc_content.append("\n[TIP]\n====\nQueries with high `total_exec_time` are the primary contributors to database load. Focus optimization efforts here first. Use `EXPLAIN (ANALYZE, BUFFERS)` on these queries to understand their execution plans and identify opportunities for indexing or rewriting.\n====\n")
     
-    # Return both formatted AsciiDoc content and structured data
     return "\n".join(adoc_content), structured_data
