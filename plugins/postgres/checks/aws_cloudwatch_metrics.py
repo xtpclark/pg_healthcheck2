@@ -1,32 +1,28 @@
 import boto3
 from datetime import datetime, timedelta
-import re
 from decimal import Decimal
 
-def run_check_aws_region(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+def run_aws_cloudwatch_metrics(connector, settings):
     """
-    Provides AWS region-specific notes and fetches key CloudWatch metrics for RDS/Aurora instances and RDS Proxy.
+    Fetches key CloudWatch metrics for RDS/Aurora instances and RDS Proxy.
+    Relies on 'aws_region' and 'db_identifier' being set in the config.
     """
-    adoc_content = ["Provides AWS region-specific considerations and fetches key cloud metrics for RDS/Aurora and RDS Proxy."]
+    adoc_content = ["=== AWS CloudWatch Metrics (Aurora/RDS)"]
     structured_data = {}
 
     if not settings.get('is_aurora', False):
-        adoc_content.append("\n[NOTE]\n====\nAWS CloudWatch metrics fetching is only applicable for RDS/Aurora environments ('is_aurora' is false in config.yaml).\n====\n")
+        adoc_content.append("\n[NOTE]\n====\nThis check is for AWS RDS/Aurora environments only ('is_aurora' is false in config.yaml).\n====\n")
         structured_data["cloud_metrics"] = {"status": "skipped", "note": "Not an RDS/Aurora environment."}
         return "\n".join(adoc_content), structured_data
 
-    # --- AWS Cloud Metrics Integration ---
-    adoc_content.append("\n==== AWS CloudWatch Metrics (Aurora/RDS)\n")
-
-    db_host = settings.get('host', '')
-    match = re.search(r'\.([a-z0-9-]+)\.rds\.amazonaws\.com', db_host)
-    aws_region = match.group(1) if match else None
-    db_identifier = db_host.split('.')[0]
-    rds_proxy_name = settings.get('rds_proxy_name') # Get the proxy name from settings
+    # --- Get AWS settings from config ---
+    aws_region = settings.get('aws_region')
+    db_identifier = settings.get('db_identifier')
+    rds_proxy_name = settings.get('rds_proxy_name')
 
     if not aws_region or not db_identifier:
-        error_msg = f"Could not determine AWS region or DB identifier from host: {db_host}."
-        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        error_msg = "Could not find 'aws_region' or 'db_identifier' in config.yaml. These are required for CloudWatch metrics."
+        adoc_content.append(f"\n[ERROR]\n====\n{error_msg}\n====\n")
         structured_data["cloud_metrics"] = {"status": "error", "details": error_msg}
         return "\n".join(adoc_content), structured_data
 
@@ -47,15 +43,15 @@ def run_check_aws_region(cursor, settings, execute_query, execute_pgbouncer, all
             {'Namespace': 'AWS/RDS', 'MetricName': 'WriteLatency', 'Statistic': 'Average', 'Unit': 'Milliseconds'},
             {'Namespace': 'AWS/RDS', 'MetricName': 'AuroraReplicaLag', 'Statistic': 'Average', 'Unit': 'Milliseconds'},
         ]
-        
+
         fetched_db_metrics = fetch_cloudwatch_metrics(cloudwatch, db_metrics_to_fetch, [{'Name': 'DBInstanceIdentifier', 'Value': db_identifier}], start_time, end_time, period)
-        
+
         if fetched_db_metrics:
-            adoc_content.append("RDS Instance Metrics Summary (Last 24 hours, hourly average):\n")
+            adoc_content.append("\nRDS Instance Metrics Summary (Last 24 hours, hourly average):\n")
             adoc_content.append(format_metrics_for_adoc(fetched_db_metrics))
             structured_data["rds_cloud_metrics"] = {"status": "success", "data": fetched_db_metrics}
         else:
-            adoc_content.append("[NOTE]\n====\nNo RDS CloudWatch metrics could be fetched.\n====\n")
+            adoc_content.append("\n[NOTE]\n====\nNo RDS CloudWatch metrics could be fetched. Verify permissions and the DB identifier.\n====\n")
 
         # --- Fetch RDS Proxy Metrics (if configured) ---
         if rds_proxy_name:
@@ -66,19 +62,19 @@ def run_check_aws_region(cursor, settings, execute_query, execute_pgbouncer, all
                 {'Namespace': 'AWS/RDS', 'MetricName': 'ConnectionPinning', 'Statistic': 'Average', 'Unit': 'Percent'},
                 {'Namespace': 'AWS/RDS', 'MetricName': 'QueryResponseTime', 'Statistic': 'Average', 'Unit': 'Milliseconds'},
             ]
-            
+
             fetched_proxy_metrics = fetch_cloudwatch_metrics(cloudwatch, proxy_metrics_to_fetch, [{'Name': 'DBProxyName', 'Value': rds_proxy_name}], start_time, end_time, period)
 
             if fetched_proxy_metrics:
-                adoc_content.append("RDS Proxy Metrics Summary (Last 24 hours, hourly average):\n")
+                adoc_content.append("\nRDS Proxy Metrics Summary (Last 24 hours, hourly average):\n")
                 adoc_content.append(format_metrics_for_adoc(fetched_proxy_metrics))
                 structured_data["rds_proxy_metrics"] = {"status": "success", "data": fetched_proxy_metrics}
             else:
-                adoc_content.append("[NOTE]\n====\nNo RDS Proxy CloudWatch metrics could be fetched. Verify the proxy name and permissions.\n====\n")
+                adoc_content.append("\n[NOTE]\n====\nNo RDS Proxy CloudWatch metrics could be fetched. Verify the proxy name and permissions.\n====\n")
 
     except Exception as e:
         error_msg = f"Failed to connect to AWS or fetch CloudWatch metrics: {e}"
-        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        adoc_content.append(f"\n[ERROR]\n====\n{error_msg}\n====\n")
         structured_data["cloud_metrics"] = {"status": "error", "details": str(e)}
 
     return "\n".join(adoc_content), structured_data
@@ -100,7 +96,6 @@ def fetch_cloudwatch_metrics(cloudwatch_client, metrics_to_fetch, dimensions, st
             )
             
             if response['Datapoints']:
-                # Get the latest data point by sorting
                 latest_datapoint = sorted(response['Datapoints'], key=lambda x: x['Timestamp'], reverse=True)[0]
                 value = latest_datapoint.get(metric_info['Statistic'])
                 fetched_metrics[metric_info['MetricName']] = {
@@ -112,7 +107,6 @@ def fetch_cloudwatch_metrics(cloudwatch_client, metrics_to_fetch, dimensions, st
             else:
                 fetched_metrics[metric_info['MetricName']] = {"value": "N/A", "note": "No data points found."}
         except Exception as e:
-            # Catch errors per metric to allow others to succeed
             fetched_metrics[metric_info['MetricName']] = {"value": "Error", "note": str(e)}
             print(f"Warning: Could not fetch metric {metric_info['MetricName']}: {e}")
     return fetched_metrics
