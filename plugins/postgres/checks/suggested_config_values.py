@@ -1,5 +1,6 @@
 import re
-from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version
+# The import of get_postgresql_version is no longer needed as the connector handles version detection.
+# from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version
 
 def run_suggested_config_values(connector, settings):
     """
@@ -8,13 +9,13 @@ def run_suggested_config_values(connector, settings):
     adoc_content = ["=== Configuration Analysis vs. Best Practices (Version-Aware)", "Analyzes current configuration settings against established PostgreSQL best practices, adjusted for your specific version, to identify areas for review and tuning.\n"]
     structured_data = {}
 
-    try:
-        compatibility_info = get_postgresql_version(connector.cursor, connector.execute_query)
-        pg_major_version = compatibility_info.get('major_version_number', 0)
-        structured_data["postgres_version"] = pg_major_version
-    except Exception as e:
-        pg_major_version = 0 # Default if version detection fails
-        structured_data["postgres_version"] = f"Could not detect version: {e}"
+    # --- FIX START ---
+    # The version information is now fetched by the connector when it establishes a connection.
+    # We can access it directly from the connector object instead of calling the old function.
+    version_info = connector.version_info
+    pg_major_version = version_info.get('major_version', 0) # Use the 'major_version' key
+    structured_data["postgres_version"] = pg_major_version
+    # --- FIX END ---
 
     BEST_PRACTICE_GUIDELINES = {
         'shared_buffers': {

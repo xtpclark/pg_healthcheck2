@@ -1,4 +1,4 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+from plugins.postgres.utils.postgresql_version_compatibility import get_pg_stat_statements_query
 
 def run_top_queries_by_execution_time(connector, settings):
     """
@@ -13,17 +13,18 @@ def run_top_queries_by_execution_time(connector, settings):
             structured_data["top_queries"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
             return "\n".join(adoc_content), structured_data
         
-        compatibility = get_postgresql_version(connector.cursor, connector.execute_query)
-        is_supported, error_msg = validate_postgresql_version(compatibility)
-        if not is_supported:
-            raise ValueError(error_msg)
+        # FIX: Get version info from the connector
+        version_info = connector.version_info
+        if version_info.get('major_version', 0) < 13:
+            raise ValueError(f"PostgreSQL version {version_info.get('version_string', 'Unknown')} is not supported.")
 
-        top_queries_query = get_pg_stat_statements_query(compatibility, 'standard') + " LIMIT %(limit)s;"
+        # FIX: Pass the entire connector to the utility function
+        top_queries_query = get_pg_stat_statements_query(connector, 'standard') + " LIMIT %(limit)s;"
 
         if settings.get('show_qry') == 'true':
             adoc_content.append("Top queries by execution time query:")
             adoc_content.append("[,sql]\n----")
-            adoc_content.append(top_queries_query % {'limit': settings.get('row_limit', 10)}) # Show with limit
+            adoc_content.append(top_queries_query % {'limit': settings.get('row_limit', 10)})
             adoc_content.append("----")
 
         params_for_query = {'limit': settings.get('row_limit', 10)}

@@ -1,4 +1,4 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+from plugins.postgres.utils.postgresql_version_compatibility import get_pg_stat_statements_query
 
 def run_hot_queries(connector, settings):
     """
@@ -14,13 +14,29 @@ def run_hot_queries(connector, settings):
             structured_data["hot_queries"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
             return "\n".join(adoc_content), structured_data
             
-        compatibility = get_postgresql_version(connector.cursor, connector.execute_query)
-        is_supported, error_msg = validate_postgresql_version(compatibility)
-        if not is_supported:
-            raise ValueError(error_msg)
+        version_info = connector.version_info
+        if version_info.get('major_version', 0) < 13:
+            raise ValueError(f"PostgreSQL version {version_info.get('version_string', 'Unknown')} is not supported.")
 
-        # Query to find queries with the most buffer hits
-        hot_queries_query = get_pg_stat_statements_query(compatibility, 'standard') + " ORDER BY shared_blks_hit DESC LIMIT %(limit)s;"
+        # Determine the correct column name for execution time based on PG version
+        time_column = 'total_exec_time' if version_info.get('is_pg14_or_newer') else 'total_time'
+        mean_time_column = 'mean_exec_time' if version_info.get('is_pg14_or_newer') else 'mean_time'
+
+        # Construct the query correctly without the extra ORDER BY from the helper
+        hot_queries_query = f"""
+            SELECT
+                query,
+                calls,
+                {time_column},
+                {mean_time_column},
+                rows,
+                shared_blks_hit,
+                shared_blks_read
+            FROM pg_stat_statements
+            WHERE calls > 0
+            ORDER BY shared_blks_hit DESC
+            LIMIT %(limit)s;
+        """
         
         if settings.get('show_qry') == 'true':
             adoc_content.append("Hot queries query:")
