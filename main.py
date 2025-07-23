@@ -49,6 +49,10 @@ class HealthCheck:
         active_tech = self.settings.get('db_type')
         self.active_plugin = self.available_plugins.get(active_tech)
 
+        # Pass the report_config_file path to the plugin
+        self.report_sections = self.active_plugin.get_report_definition(report_config_file)
+        self.connector = self.active_plugin.get_connector(self.settings)
+
         if not self.active_plugin:
             raise ValueError(f"Unsupported or missing db_type: '{active_tech}'. Available plugins: {list(self.available_plugins.keys())}")
 
@@ -154,10 +158,11 @@ class HealthCheck:
 def main():
     parser = argparse.ArgumentParser(description='Database Health Check Tool')
     parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
+    parser.add_argument('--report-config', help='Path to a custom report configuration file for the active plugin.')
     parser.add_argument('--output', default='health_check.adoc', help='Output file name')
     args = parser.parse_args()
     
-    health_check = HealthCheck(args.config)
+    health_check = HealthCheck(args.config, args.report_config)
     health_check.run_report()
     health_check.write_adoc(args.output)
     

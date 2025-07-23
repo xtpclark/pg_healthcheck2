@@ -32,3 +32,24 @@ class PostgresPlugin(BasePlugin):
         """Returns the path to a specific report template."""
         # This assumes templates will live inside the plugin directory.
         return Path(__file__).parent / "templates" / template_name
+
+    def get_report_definition(self, report_config_file=None):
+        """
+        Dynamically loads a report definition from a file.
+        Falls back to the default if no file is specified.
+        """
+        if report_config_file:
+            config_path = Path(report_config_file)
+        else:
+            # Default location for the standard report definition
+            config_path = Path(__file__).parent / "reports" / "default.py"
+
+        if not config_path.is_file():
+            raise FileNotFoundError(f"Report configuration file not found: {config_path}")
+
+        # Dynamically load the module from the specified path
+        spec = importlib.util.spec_from_file_location("report_config_module", config_path)
+        report_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(report_module)
+        
+        return getattr(report_module, 'REPORT_SECTIONS')
