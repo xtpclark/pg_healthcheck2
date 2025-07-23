@@ -1,341 +1,225 @@
 #!/usr/bin/env python3
 """
-Dynamic Prompt Generator for PostgreSQL Health Check AI Analysis
+Dynamic Prompt Generator for PostgreSQL Health Check AI Analysis (Refactored)
 
 This module analyzes structured findings and generates context-aware prompts
 based on the severity and type of issues detected in the database.
+It uses a configurable approach for metric analysis and Jinja2 for templating.
+It also includes logic to manage prompt size to avoid exceeding AI model token limits.
 """
 
 import json
 from decimal import Decimal
 from datetime import datetime, timedelta
+import jinja2
+from pathlib import Path
+
+# --- Configuration for Metric Analysis ---
+METRIC_ANALYSIS_CONFIG = {
+    # --- Rule for Hot Query Workload Concentration ---
+    'query_workload_concentration': {
+        'metric_keywords': ['hot_query_summary'],
+        'data_conditions': [{'key': 'total_queries_tracked', 'exists': True}],
+        'rules': [
+            {
+                'expression': (
+                    "data.get('total_execution_time_all_queries_ms') and data['total_execution_time_all_queries_ms'] > 0 and "
+                    "(sum(q.get('total_exec_time', q.get('total_time', 0)) or 0 for q in all_structured_findings.get('hot_queries', {}).get('data', {}).get('top_hot_queries', {}).get('data', [])) / data['total_execution_time_all_queries_ms']) * 100 > 75"
+                ),
+                'level': 'critical',
+                'score': 5,
+                'reasoning': "High workload concentration detected. The top {settings['row_limit']} queries account for more than 75% of the total database execution time.",
+                'recommendations': ["Focus optimization efforts on the top queries, as this will yield the most significant performance improvements."]
+            }
+        ]
+    },
+    'connection_usage': {
+        'metric_keywords': ['connection'],
+        'data_conditions': [{'key': 'total_connections', 'exists': True}, {'key': 'max_connections', 'exists': True}],
+        'rules': [
+            {'expression': "not settings.get('using_connection_pooler', False) and (int(data['total_connections']) / int(data['max_connections'])) * 100 > 90", 'level': 'critical', 'score': 5, 'reasoning': "Connection usage at {(int(data['total_connections']) / int(data['max_connections'])) * 100:.1f}% of maximum", 'recommendations': ["Immediate action required: Connection pool near capacity"]},
+            {'expression': "not settings.get('using_connection_pooler', False) and (int(data['total_connections']) / int(data['max_connections'])) * 100 > 75", 'level': 'high', 'score': 4, 'reasoning': "Connection usage at {(int(data['total_connections']) / int(data['max_connections'])) * 100:.1f}% of maximum", 'recommendations': ["Monitor connection usage and consider connection pooling"]}
+        ]
+    },
+    'long_running_queries': {
+        'metric_keywords': ['query', 'statements'],
+        'data_conditions': [{'key': 'total_exec_time', 'exists': True}],
+        'rules': [
+            {'expression': "float(data['total_exec_time']) > 3600000", 'level': 'critical', 'score': 5, 'reasoning': "Query with {float(data['total_exec_time']) / 1000:.1f}s total execution time", 'recommendations': ["Optimize or terminate long-running queries"]},
+            {'expression': "float(data['total_exec_time']) > 600000", 'level': 'high', 'score': 4, 'reasoning': "Query with {float(data['total_exec_time']) / 1000:.1f}s total execution time", 'recommendations': ["Investigate query performance"]}
+        ]
+    },
+    'unused_indexes': {
+        'metric_keywords': ['index'],
+        'data_conditions': [{'key': 'idx_scan', 'exists': True}],
+        'rules': [
+            {'expression': "int(data['idx_scan']) == 0", 'level': 'medium', 'score': 3, 'reasoning': "Found potentially unused index: {data['index_name']}", 'recommendations': ["Review index usage on all replicas before removal"]}
+        ]
+    },
+    'vacuum_bloat': {
+        'metric_keywords': ['bloated_tables'],
+        'data_conditions': [{'key': 'n_dead_tup', 'exists': True}, {'key': 'n_live_tup', 'exists': True}],
+        'rules': [
+            {'expression': "int(data['n_live_tup']) > 0 and (int(data['n_dead_tup']) / (int(data['n_dead_tup']) + int(data['n_live_tup']))) > 0.5", 'level': 'critical', 'score': 5, 'reasoning': "Critically high dead tuple ratio in table {data.get('relname', 'N/A')}", 'recommendations': ["Immediate VACUUM required"]},
+            {'expression': "int(data['n_live_tup']) > 0 and (int(data['n_dead_tup']) / (int(data['n_dead_tup']) + int(data['n_live_tup']))) > 0.2", 'level': 'high', 'score': 4, 'reasoning': "High dead tuple ratio in table {data.get('relname', 'N/A')}", 'recommendations': ["Schedule VACUUM to prevent bloat"]}
+        ]
+    },
+    'systemic_bloat': {
+        'metric_keywords': ['bloat_summary'],
+        'data_conditions': [{'key': 'tables_with_high_bloat', 'exists': True}],
+        'rules': [
+            {'expression': "int(data['tables_with_critical_bloat']) > 5", 'level': 'critical', 'score': 5, 'reasoning': "Systemic bloat detected: {data['tables_with_critical_bloat']} tables have critical bloat levels (>50%).", 'recommendations': ["Global autovacuum settings are likely misconfigured for the workload. Review and tune immediately."]},
+            {'expression': "int(data['tables_with_high_bloat']) > 10", 'level': 'high', 'score': 4, 'reasoning': "Systemic bloat detected: {data['tables_with_high_bloat']} tables have high bloat levels (>20%).", 'recommendations': ["Global autovacuum settings may need tuning. Investigate workload patterns."]}
+        ]
+    },
+    'aws_cpu_utilization': {
+        'metric_keywords': ['CPUUtilization'],
+        'data_conditions': [{'key': 'value', 'exists': True}],
+        'rules': [
+            {'expression': "float(data['value']) > 90", 'level': 'critical', 'score': 5, 'reasoning': "CPU Utilization is critically high at {data['value']:.1f}%.", 'recommendations': ["Investigate top queries, consider scaling instance class."]},
+            {'expression': "float(data['value']) > 75", 'level': 'high', 'score': 4, 'reasoning': "CPU Utilization is high at {data['value']:.1f}%.", 'recommendations': ["Monitor CPU usage and optimize resource-intensive queries."]}
+        ]
+    },
+    'aws_free_storage': {
+        'metric_keywords': ['FreeStorageSpace'],
+        'data_conditions': [{'key': 'value', 'exists': True}],
+        'rules': [
+            {'expression': "float(data['value']) < 10 * 1024**3", 'level': 'critical', 'score': 5, 'reasoning': "Free storage space is critically low at {data['value'] / 1024**3:.2f} GB.", 'recommendations': ["Increase storage volume immediately to prevent outage."]},
+            {'expression': "float(data['value']) < 25 * 1024**3", 'level': 'high', 'score': 4, 'reasoning': "Free storage space is low at {data['value'] / 1024**3:.2f} GB.", 'recommendations': ["Plan to increase storage volume soon."]}
+        ]
+    },
+    'aws_burst_balance': {
+        'metric_keywords': ['BurstBalance'],
+        'data_conditions': [{'key': 'value', 'exists': True}],
+        'rules': [
+            {'expression': "float(data['value']) < 10", 'level': 'high', 'score': 4, 'reasoning': "Storage burst balance is low at {data['value']:.1f}%, performance may be throttled.", 'recommendations': ["Consider switching to Provisioned IOPS (io1) or gp3 storage if performance is impacted."]}
+        ]
+    },
+    'rds_proxy_pinning': {
+        'metric_keywords': ['ConnectionPinning'],
+        'data_conditions': [{'key': 'value', 'exists': True}],
+        'rules': [
+            {'expression': "float(data['value']) > 5", 'level': 'high', 'score': 4, 'reasoning': "RDS Proxy is experiencing connection pinning ({data['value']:.1f}%), reducing pooler efficiency.", 'recommendations': ["Investigate application queries for session-level settings that cause pinning."]}
+        ]
+    }
+}
 
 def convert_to_json_serializable(obj):
     """Convert non-JSON-serializable objects to JSON-compatible types."""
-    if isinstance(obj, Decimal):
-        return float(obj)
-    elif isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, timedelta):
-        return obj.total_seconds()
-    elif isinstance(obj, dict):
-        return {k: convert_to_json_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_json_serializable(item) for item in obj]
-    else:
-        return obj
+    if isinstance(obj, Decimal): return float(obj)
+    if isinstance(obj, datetime): return obj.isoformat()
+    if isinstance(obj, timedelta): return obj.total_seconds()
+    if isinstance(obj, dict): return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list): return [convert_to_json_serializable(item) for item in obj]
+    return obj
 
-def analyze_metric_severity(metric_name, data, settings):
+def analyze_metric_severity(metric_name, data_row, settings, all_findings):
     """
-    Analyze the severity of a specific metric based on its data and context.
-    
-    Args:
-        metric_name (str): Name of the metric being analyzed
-        data (dict/list): The metric data
-        settings (dict): Configuration settings
-        
-    Returns:
-        dict: Severity analysis with level, score, and reasoning
+    Analyzes the severity of a single row of metric data based on the configuration.
+    Accepts all_findings to enable cross-module checks.
     """
-    severity_levels = {
-        'critical': 5,
-        'high': 4, 
-        'medium': 3,
-        'low': 2,
-        'info': 1
-    }
-    
-    analysis = {
-        'level': 'info',
-        'score': 0,
-        'reasoning': '',
-        'recommendations': []
-    }
-    
-    # Database connection metrics
-    if 'connection' in metric_name.lower():
-        if isinstance(data, list) and len(data) > 0:
-            for row in data:
-                if 'total_connections' in row and 'max_connections' in row:
+    for config_name, config in METRIC_ANALYSIS_CONFIG.items():
+        if any(keyword in metric_name.lower() for keyword in config['metric_keywords']):
+            if all(cond['key'] in data_row for cond in config['data_conditions'] if cond.get('exists')):
+                for rule in config['rules']:
                     try:
-                        current = int(row['total_connections'])
-                        max_conn = int(row['max_connections'])
-                        usage_pct = (current / max_conn) * 100
-                        
-                        if usage_pct > 90:
-                            analysis['level'] = 'critical'
-                            analysis['score'] = 5
-                            analysis['reasoning'] = f"Connection usage at {usage_pct:.1f}% of maximum"
-                            analysis['recommendations'].append("Immediate action required: Connection pool near capacity")
-                        elif usage_pct > 75:
-                            analysis['level'] = 'high'
-                            analysis['score'] = 4
-                            analysis['reasoning'] = f"Connection usage at {usage_pct:.1f}% of maximum"
-                            analysis['recommendations'].append("Monitor connection usage and consider connection pooling")
-                    except (ValueError, TypeError):
-                        pass
-    
-    # Query performance metrics
-    elif 'query' in metric_name.lower() or 'statements' in metric_name.lower():
-        if isinstance(data, list) and len(data) > 0:
-            for row in data:
-                if 'total_exec_time' in row:
-                    try:
-                        exec_time = float(row['total_exec_time'])
-                        if exec_time > 3600000:  # > 1 hour total
-                            analysis['level'] = 'critical'
-                            analysis['score'] = 5
-                            analysis['reasoning'] = f"Query with {exec_time/1000:.1f}s total execution time"
-                            analysis['recommendations'].append("Optimize or terminate long-running queries")
-                        elif exec_time > 600000:  # > 10 minutes
-                            analysis['level'] = 'high'
-                            analysis['score'] = 4
-                            analysis['reasoning'] = f"Query with {exec_time/1000:.1f}s total execution time"
-                            analysis['recommendations'].append("Investigate query performance")
-                    except (ValueError, TypeError):
-                        pass
-    
-    # Index analysis
-    elif 'index' in metric_name.lower():
-        if isinstance(data, list) and len(data) > 0:
-            unused_count = 0
-            large_count = 0
-            
-            for row in data:
-                if 'idx_scan' in row:
-                    try:
-                        scans = int(row['idx_scan'])
-                        if scans == 0:
-                            unused_count += 1
-                    except (ValueError, TypeError):
-                        pass
-                
-                if 'pg_size_pretty' in str(row) or 'size' in row:
-                    large_count += 1
-            
-            if unused_count > 5:
-                analysis['level'] = 'high'
-                analysis['score'] = 4
-                analysis['reasoning'] = f"Found {unused_count} unused indexes"
-                analysis['recommendations'].append("Consider dropping unused indexes to improve write performance")
-                analysis['recommendations'].append("⚠️ CRITICAL: Check ALL read replicas before removing - indexes may be used on replicas!")
-            elif unused_count > 0:
-                analysis['level'] = 'medium'
-                analysis['score'] = 3
-                analysis['reasoning'] = f"Found {unused_count} unused indexes"
-                analysis['recommendations'].append("Review unused indexes for potential removal")
-                analysis['recommendations'].append("⚠️ IMPORTANT: Verify index usage on read replicas before removal")
-    
-    # Vacuum and bloat analysis
-    elif 'vacuum' in metric_name.lower() or 'bloat' in metric_name.lower():
-        if isinstance(data, list) and len(data) > 0:
-            for row in data:
-                if 'n_dead_tup' in row and 'n_live_tup' in row:
-                    try:
-                        dead = int(row['n_dead_tup'])
-                        live = int(row['n_live_tup'])
-                        if live > 0:
-                            dead_ratio = dead / (dead + live)
-                            if dead_ratio > 0.3:
-                                analysis['level'] = 'critical'
-                                analysis['score'] = 5
-                                analysis['reasoning'] = f"High dead tuple ratio: {dead_ratio:.1%}"
-                                analysis['recommendations'].append("Immediate VACUUM required to prevent bloat")
-                            elif dead_ratio > 0.1:
-                                analysis['level'] = 'high'
-                                analysis['score'] = 4
-                                analysis['reasoning'] = f"Elevated dead tuple ratio: {dead_ratio:.1%}"
-                                analysis['recommendations'].append("Schedule VACUUM to prevent bloat")
-                    except (ValueError, TypeError):
-                        pass
-    
-    # Security analysis
-    elif 'security' in metric_name.lower() or 'ssl' in metric_name.lower():
-        if isinstance(data, list) and len(data) > 0:
-            non_ssl_count = 0
-            total_count = 0
-            
-            for row in data:
-                if 'ssl' in row:
-                    total_count += 1
-                    if not row['ssl'] or row['ssl'] == 'f':
-                        non_ssl_count += 1
-            
-            if total_count > 0:
-                ssl_ratio = non_ssl_count / total_count
-                if ssl_ratio > 0.5:
-                    analysis['level'] = 'critical'
-                    analysis['score'] = 5
-                    analysis['reasoning'] = f"Only {((1-ssl_ratio)*100):.1f}% of connections use SSL"
-                    analysis['recommendations'].append("Enforce SSL connections for security")
-                elif ssl_ratio > 0.1:
-                    analysis['level'] = 'high'
-                    analysis['score'] = 4
-                    analysis['reasoning'] = f"{ssl_ratio*100:.1f}% of connections don't use SSL"
-                    analysis['recommendations'].append("Consider enforcing SSL for all connections")
-    
-    # Aurora-specific metrics
-    elif 'aurora' in metric_name.lower() and settings.get('is_aurora', False):
-        if isinstance(data, list) and len(data) > 0:
-            for row in data:
-                if 'replica_lag' in row:
-                    try:
-                        lag = float(row['replica_lag'])
-                        if lag > 300:  # > 5 minutes
-                            analysis['level'] = 'critical'
-                            analysis['score'] = 5
-                            analysis['reasoning'] = f"High replica lag: {lag:.1f} seconds"
-                            analysis['recommendations'].append("Investigate Aurora replica lag immediately")
-                        elif lag > 60:  # > 1 minute
-                            analysis['level'] = 'high'
-                            analysis['score'] = 4
-                            analysis['reasoning'] = f"Elevated replica lag: {lag:.1f} seconds"
-                            analysis['recommendations'].append("Monitor Aurora replica performance")
-                    except (ValueError, TypeError):
-                        pass
-    
-    return analysis
+                        # FIXED: Pass 'all_structured_findings' into the eval context
+                        if eval(rule['expression'], {"data": data_row, "settings": settings, "all_structured_findings": all_findings}):
+                            evaluated_reasoning = eval(f"f\"{rule['reasoning']}\"", {"data": data_row, "settings": settings})
+                            return {
+                                'level': rule['level'],
+                                'score': rule['score'],
+                                'reasoning': evaluated_reasoning,
+                                'recommendations': rule['recommendations']
+                            }
+                    except Exception as e:
+                        print(f"Warning: Error evaluating rule for metric '{metric_name}': {e}")
+    return {'level': 'info', 'score': 0, 'reasoning': '', 'recommendations': []}
+
 
 def generate_dynamic_prompt(all_structured_findings, settings):
-    """
-    Generate a dynamic, context-aware prompt based on the collected metrics.
-    Instruct the AI to return its analysis as properly formatted AsciiDoc, with a well-structured layout including:
-    - Headings
-    - An Executive Summary section
-    - Sections organized by priority/criticality
-    - Advanced formatting rules for clarity and professionalism
-    - SRE/DBA audience: technical language, SQL/config references, operational impact, risk, and downtime warnings
-    """
-    # Convert findings to JSON-serializable format
+    """Generates a dynamic prompt, managing token size by summarizing healthy modules."""
     findings_for_analysis = convert_to_json_serializable(all_structured_findings)
-    
-    # Analyze all metrics for severity
-    metric_analyses = {}
-    critical_issues = []
-    high_priority_issues = []
-    medium_priority_issues = []
-    
+
+    critical_issues, high_priority_issues, medium_priority_issues = [], [], []
+    module_issue_map = {}
+
     for module_name, module_findings in findings_for_analysis.items():
-        if module_findings.get("status") == "success" and module_findings.get("data"):
-            # Analyze each data key within the module
-            for data_key, data in module_findings.get("data", {}).items():
-                if isinstance(data, dict) and "data" in data:
-                    # Handle nested data structure
-                    analysis = analyze_metric_severity(f"{module_name}_{data_key}", data["data"], settings)
-                else:
-                    analysis = analyze_metric_severity(f"{module_name}_{data_key}", data, settings)
+        module_issue_map[module_name] = {'critical': 0, 'high': 0, 'medium': 0}
+        if module_findings.get("status") == "success" and isinstance(module_findings.get("data"), dict):
+            for data_key, data_value in module_findings["data"].items():
+                data_list = []
+                if 'cloud_metrics' in data_key and isinstance(data_value, dict):
+                    for metric_name, metric_data in data_value.items():
+                        if isinstance(metric_data, dict) and 'value' in metric_data and isinstance(metric_data['value'], (int, float)):
+                            analysis = analyze_metric_severity(f"{module_name}_{data_key}_{metric_name}", metric_data, settings, findings_for_analysis)
+                            if analysis['level'] in ['critical', 'high', 'medium']:
+                                issue_details = {'metric': f"AWS.{metric_name}", 'analysis': analysis, 'data': metric_data}
+                                module_issue_map[module_name][analysis['level']] += 1
+                                if analysis['level'] == 'critical': critical_issues.append(issue_details)
+                                elif analysis['level'] == 'high': high_priority_issues.append(issue_details)
+                                elif analysis['level'] == 'medium': medium_priority_issues.append(issue_details)
+                    continue
+
+                if isinstance(data_value, dict) and isinstance(data_value.get('data'), list): data_list = data_value['data']
+                elif isinstance(data_value, list): data_list = data_value
                 
-                metric_analyses[f"{module_name}_{data_key}"] = analysis
-                
-                # Categorize by severity
-                if analysis['level'] == 'critical':
-                    critical_issues.append({
-                        'metric': f"{module_name}_{data_key}",
-                        'analysis': analysis
-                    })
-                elif analysis['level'] == 'high':
-                    high_priority_issues.append({
-                        'metric': f"{module_name}_{data_key}",
-                        'analysis': analysis
-                    })
-                elif analysis['level'] == 'medium':
-                    medium_priority_issues.append({
-                        'metric': f"{module_name}_{data_key}",
-                        'analysis': analysis
-                    })
-    
-    # Generate context-aware prompt
-    prompt_parts = []
-    prompt_parts.append("You are an expert PostgreSQL health check analyst. Your audience is SREs and DBAs.\n")
-    prompt_parts.append("Use technical language, include relevant SQL commands, configuration parameters, and catalog/table references.\n")
-    prompt_parts.append("Focus on operational impact, performance, reliability, and risk mitigation.\n")
-    prompt_parts.append("For each recommendation, include the specific metric, table, or finding that triggered it, the expected operational impact, and any risk or urgency tags (e.g., [IMMEDIATE], [HIGH RISK]).\n")
-    prompt_parts.append("If a recommendation requires downtime or a restart, clearly state this in a [CAUTION] or [IMPORTANT] block.\n")
-    prompt_parts.append("If there are no issues in a section, state 'No action needed.'\n")
-    prompt_parts.append("Keep the Executive Summary concise and technical.\n")
-    prompt_parts.append("If possible, include summary tables or AsciiDoc code blocks for clarity.\n")
-    prompt_parts.append("\nYour output MUST follow these formatting requirements:\n")
-    prompt_parts.append("- Use `===` for the main section title (e.g., `=== AI-Generated Recommendations`).\n")
-    prompt_parts.append("- Use `====` for major subsections (e.g., `==== Executive Summary`, `==== Critical Issues`).\n")
-    prompt_parts.append("- Use `=====` for individual recommendations or grouped topics within each priority.\n")
-    prompt_parts.append("- Include an 'Executive Summary' section (with a heading) summarizing the overall health, most urgent issues, and general trends.\n")
-    prompt_parts.append("- Order sections by severity: Critical, High, Medium, Low, Info. If a section is empty, state 'No issues of this priority detected.'\n")
-    prompt_parts.append("- For each recommendation, include:\n")
-    prompt_parts.append("  * A short, actionable title\n")
-    prompt_parts.append("  * A brief description (1–2 sentences) explaining the issue and why it matters\n")
-    prompt_parts.append("  * Action steps (bulleted or numbered list)\n")
-    prompt_parts.append("  * Relevant data (inline code or table, if applicable)\n")
-    prompt_parts.append("  * References (optional: link to docs or best practices)\n")
-    prompt_parts.append("- Use AsciiDoc tables for comparisons, before/after, or lists of affected objects.\n")
-    prompt_parts.append("- Use bullet points for steps, warnings, or grouped findings.\n")
-    prompt_parts.append("- Use [IMPORTANT], [CAUTION], [TIP], [NOTE] blocks for emphasis.\n")
-    prompt_parts.append("- Use [source,sql] or [source,bash] for SQL or shell commands.\n")
-    prompt_parts.append("- Optionally, add a 'Further Reading' or 'References' section at the end.\n")
-    prompt_parts.append("- Include the date/time of the analysis at the top, and optionally the database version and environment.\n")
-    prompt_parts.append("- Do NOT include any markdown, only AsciiDoc.\n\n")
-    prompt_parts.append("Here is the structured findings data for your analysis:\n\n")
-    prompt_parts.append(json.dumps(findings_for_analysis, indent=2))
-    prompt_parts.append("\n\nFocus on performance, stability, and security improvements relevant to a PostgreSQL database.\nIf 'is_aurora' is true in settings, include Aurora-specific advice where relevant.\n")
-    
+                for row in data_list:
+                    if isinstance(row, dict):
+                        # MODIFIED: Pass the full findings dictionary to the analyzer
+                        analysis = analyze_metric_severity(f"{module_name}_{data_key}", row, settings, findings_for_analysis)
+                        if analysis['level'] in ['critical', 'high', 'medium']:
+                            issue_details = {'metric': f"{module_name}_{data_key}", 'analysis': analysis, 'data': row}
+                            module_issue_map[module_name][analysis['level']] += 1
+                            if analysis['level'] == 'critical': critical_issues.append(issue_details)
+                            elif analysis['level'] == 'high': high_priority_issues.append(issue_details)
+                            elif analysis['level'] == 'medium': medium_priority_issues.append(issue_details)
+
+    # (Smart summarization and template rendering logic remains the same)
+    TOKEN_CHARACTER_RATIO = 4
+    max_prompt_tokens = settings.get('ai_max_prompt_tokens', 8000)
+    token_budget = max_prompt_tokens * TOKEN_CHARACTER_RATIO
+    findings_for_prompt = {}
+    estimated_size = 0
+    for module_name, issues in module_issue_map.items():
+        if issues['critical'] > 0 or issues['high'] > 0:
+            findings_for_prompt[module_name] = findings_for_analysis[module_name]
+            estimated_size += len(json.dumps(findings_for_analysis[module_name]))
+    for module_name, module_data in findings_for_analysis.items():
+        if module_name not in findings_for_prompt:
+            module_size = len(json.dumps(module_data))
+            if estimated_size + module_size < token_budget:
+                findings_for_prompt[module_name] = module_data
+                estimated_size += module_size
+            else:
+                findings_for_prompt[module_name] = {
+                    "status": "success",
+                    "note": "Data for this module was summarized due to prompt size limits. No critical or high-priority issues were detected."
+                }
+    template_dir = Path(__file__).parent.parent / 'templates'
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(template_dir)), trim_blocks=True, lstrip_blocks=True)
+    template_name = settings.get('prompt_template', 'prompt_template.j2')
+    template = env.get_template(template_name)
+    overview_data = findings_for_analysis.get('postgres_overview', {}).get('data', {})
+    version_info_data = overview_data.get('version_info', {}).get('data', [{}])[0]
+    database_size_data = overview_data.get('database_size', {}).get('data', [{}])[0]
+    postgres_version = version_info_data.get('version', 'N/A')
+    database_name = database_size_data.get('database', 'N/A')
+    analysis_timestamp = datetime.utcnow().isoformat() + "Z"
+    prompt = template.render(
+        findings_json=json.dumps(findings_for_prompt, indent=2),
+        settings=settings,
+        postgres_version=postgres_version,
+        database_name=database_name,
+        analysis_timestamp=analysis_timestamp,
+        critical_issues=critical_issues,
+        high_priority_issues=high_priority_issues
+    )
+
     return {
-        'prompt': ''.join(prompt_parts),
+        'prompt': prompt,
         'critical_issues': critical_issues,
         'high_priority_issues': high_priority_issues,
         'medium_priority_issues': medium_priority_issues,
         'total_issues': len(critical_issues) + len(high_priority_issues) + len(medium_priority_issues)
     }
-
-def run_dynamic_prompt_generator(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
-    """
-    Generate a dynamic prompt based on the collected metrics and their severity analysis.
-    
-    This function can be used as an alternative to the standard prompt generation
-    in run_recommendation.py, providing more context-aware and prioritized recommendations.
-    """
-    adoc_content = ["Generates context-aware prompts based on metric severity analysis.\n"]
-    structured_data = {}
-    
-    # Generate the dynamic prompt
-    dynamic_analysis = generate_dynamic_prompt(all_structured_findings, settings)
-    
-    # Store the analysis results
-    structured_data["dynamic_prompt_analysis"] = {
-        "status": "success",
-        "data": {
-            "total_issues": dynamic_analysis['total_issues'],
-            "critical_issues": len(dynamic_analysis['critical_issues']),
-            "high_priority_issues": len(dynamic_analysis['high_priority_issues']),
-            "medium_priority_issues": len(dynamic_analysis['medium_priority_issues']),
-            "metric_analyses": dynamic_analysis['metric_analyses']
-        }
-    }
-    
-    # Add summary to the report
-    adoc_content.append(f"** Dynamic Analysis Summary **\n")
-    adoc_content.append(f"- Total Issues Detected: {dynamic_analysis['total_issues']}\n")
-    adoc_content.append(f"- Critical Issues: {len(dynamic_analysis['critical_issues'])}\n")
-    adoc_content.append(f"- High Priority Issues: {len(dynamic_analysis['high_priority_issues'])}\n")
-    adoc_content.append(f"- Medium Priority Issues: {len(dynamic_analysis['medium_priority_issues'])}\n\n")
-    
-    if dynamic_analysis['critical_issues']:
-        adoc_content.append("🚨 **CRITICAL ISSUES REQUIRING IMMEDIATE ATTENTION:**\n")
-        for issue in dynamic_analysis['critical_issues']:
-            adoc_content.append(f"- {issue['metric'].replace('_', ' ').title()}: {issue['analysis']['reasoning']}\n")
-        adoc_content.append("\n")
-    
-    if dynamic_analysis['high_priority_issues']:
-        adoc_content.append("⚠️ **HIGH PRIORITY ISSUES:**\n")
-        for issue in dynamic_analysis['high_priority_issues']:
-            adoc_content.append(f"- {issue['metric'].replace('_', ' ').title()}: {issue['analysis']['reasoning']}\n")
-        adoc_content.append("\n")
-    
-    # Store the generated prompt for use in AI analysis
-    structured_data["generated_prompt"] = dynamic_analysis['prompt']
-    
-    adoc_content.append("[TIP]\n====\n")
-    adoc_content.append("This dynamic analysis provides context-aware prompting for AI recommendations. ")
-    adoc_content.append("The prompt is tailored based on the severity and type of issues detected in your database. ")
-    adoc_content.append("Critical issues are prioritized for immediate attention, while medium-priority issues are flagged for monitoring.\n")
-    adoc_content.append("====\n")
-    
-    return "\n".join(adoc_content), structured_data 

@@ -1,100 +1,65 @@
+# Import the centralized compatibility module
+from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+
 def run_hot_queries(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
     """
-    Identifies "Hot Queries" (most frequently executed queries) from pg_stat_statements,
-    analyzing their call frequency and average execution time to pinpoint
-    potential performance bottlenecks due to high volume.
+    Analyzes top queries by total execution time from pg_stat_statements,
+    providing both a detailed list of the top offenders and a high-level summary of the overall query workload.
+    This module is version-aware.
     """
-    adoc_content = ["=== Hot Queries", "Identifies frequently executed queries to pinpoint potential performance bottlenecks due to high volume.\n"]
-    structured_data = {} # Dictionary to hold structured findings for this module
-    
-    # Explanation of Hot Queries for the report
-    adoc_content.append("By querying `pg_stat_statements`, this section identifies queries that are executed most frequently (`calls`). "
-                        "Even if a query is individually fast, a very high call count can lead to significant cumulative resource consumption (CPU, I/O) "
-                        "and impact overall database performance. These queries could potentially impact performance and are likely to also "
-                        "show up in the 'Missing Indexes' section or other analyses dealing with `pg_stat_user_tables` if they are inefficient.\n")
+    adoc_content = ["=== Top Queries by Execution Time (Hot Queries)\nIdentifies the most resource-intensive queries based on their total execution time.\n"]
+    structured_data = {}
 
-    # Import version compatibility module
-    from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
+    # --- Get PostgreSQL Version and Check pg_stat_statements ---
+    try:
+        compatibility = get_postgresql_version(cursor, execute_query)
+        is_supported, error_msg = validate_postgresql_version(compatibility)
+        if not is_supported:
+            adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+            return "\n".join(adoc_content), {"status": "error", "details": error_msg}
+        
+        if settings['has_pgstat'] != 't':
+            adoc_content.append("[NOTE]\n====\n`pg_stat_statements` extension is not installed or enabled. Hot query analysis cannot be performed.\n====\n")
+            return "\n".join(adoc_content), {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
+    except Exception as e:
+        adoc_content.append(f"[ERROR]\n====\nCould not determine PostgreSQL version or pg_stat_statements status: {e}\n====\n")
+        return "\n".join(adoc_content), {"status": "error", "details": str(e)}
+
+    # --- Define Queries ---
+    # Query for the top N most time-consuming queries
+    top_queries_query = get_pg_stat_statements_query(compatibility, 'standard') + " LIMIT %(limit)s;"
     
-    # Get PostgreSQL version compatibility information
-    compatibility = get_postgresql_version(cursor, execute_query)
-    
-    # Validate PostgreSQL version
-    is_supported, error_msg = validate_postgresql_version(compatibility)
-    if not is_supported:
-        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
-        structured_data["version_error"] = {"status": "error", "details": error_msg}
-        return "\n".join(adoc_content), structured_data
-    
-    # Build version-specific query for hot queries
-    if compatibility['is_pg14_or_newer']:
-        hot_queries_query = """
-            SELECT
-                trim(regexp_replace(query, '\\s+',' ','g')) AS query,
-                calls,
-                total_exec_time,
-                mean_exec_time,
-                rows,
-                shared_blks_hit,
-                shared_blks_read
-            FROM pg_stat_statements
-            WHERE calls > 0
-            ORDER BY calls DESC LIMIT %(limit)s;
-        """
-    else:
-        hot_queries_query = """
-            SELECT
-                trim(regexp_replace(query, '\\s+',' ','g')) AS query,
-                calls,
-                total_time,
-                mean_time,
-                rows,
-                shared_blks_hit,
-                shared_blks_read
-            FROM pg_stat_statements
-            WHERE calls > 0
-            ORDER BY calls DESC LIMIT %(limit)s;
-        """
+    # NEW: Query for summary statistics across all queries
+    total_time_column = "total_exec_time" if compatibility['is_pg13_or_newer'] else "total_time"
+    query_summary_query = f"""
+        SELECT
+            COUNT(*) AS total_queries_tracked,
+            SUM({total_time_column}) AS total_execution_time_all_queries_ms
+        FROM pg_stat_statements;
+    """
 
     if settings['show_qry'] == 'true':
-        adoc_content.append("Hot Queries query:")
+        adoc_content.append("Hot query analysis queries:")
         adoc_content.append("[,sql]\n----")
-        adoc_content.append(hot_queries_query)
+        adoc_content.append(top_queries_query)
+        adoc_content.append(query_summary_query)
         adoc_content.append("----")
-
-    # Check condition for pg_stat_statements
-    condition = settings['has_pgstat'] == 't'
-
-    if not condition:
-        note_msg = "pg_stat_statements extension is not installed or enabled. Install pg_stat_statements to analyze hot queries."
-        adoc_content.append(f"[NOTE]\n====\n{note_msg}\n====\n")
-        structured_data["hot_queries"] = {"status": "not_applicable", "reason": note_msg}
-    else:
-        # Standardized parameter passing pattern:
-        params_for_query = {'limit': settings['row_limit']}
-        formatted_result, raw_result = execute_query(hot_queries_query, params=params_for_query, return_raw=True)
-        
-        if "[ERROR]" in formatted_result:
-            adoc_content.append(f"Hot Queries\n{formatted_result}")
-            structured_data["hot_queries"] = {"status": "error", "details": raw_result}
-        else:
-            adoc_content.append("Hot Queries")
-            adoc_content.append(formatted_result)
-            structured_data["hot_queries"] = {"status": "success", "data": raw_result}
     
-    adoc_content.append("[TIP]\n====\n"
-                   "Focus on queries with a high `calls` count. Even if their `mean_exec_time_ms` is low, their cumulative impact can be significant. "
-                   "Investigate these queries for potential micro-optimizations, such as reducing redundant executions, optimizing caching at the application level, "
-                   "or ensuring they are fully covered by appropriate indexes. "
-                   "High `shared_blks_read` for hot queries indicates frequent disk I/O, which can be a bottleneck. "
-                   "For Aurora, highly frequent queries directly contribute to `CPUUtilization` and `IOPS`.\n"
-                   "====\n")
-    if settings['is_aurora'] == 'true':
-        adoc_content.append("[NOTE]\n====\n"
-                       "AWS RDS Aurora's architecture is designed for high throughput, but extremely hot queries can still saturate instance resources. "
-                       "Use Amazon RDS Performance Insights to visualize the impact of these high-frequency queries on database load. "
-                       "Ensure `pg_stat_statements.track` is set to `all` for comprehensive data collection.\n"
-                       "====\n")
+    # --- Execute Queries ---
     
-    # Return both formatted AsciiDoc content and structured data
+    # 1. Top N "Hot" Queries
+    params = {'limit': settings['row_limit']}
+    formatted_result, raw_result = execute_query(top_queries_query, params=params, return_raw=True)
+    adoc_content.append("Top 'Hot' Queries by Total Execution Time")
+    adoc_content.append(formatted_result)
+    structured_data["top_hot_queries"] = {"status": "success", "data": raw_result}
+
+    # 2. Query Workload Summary
+    formatted_result, raw_result_summary = execute_query(query_summary_query, return_raw=True)
+    adoc_content.append("\nOverall Query Workload Summary")
+    adoc_content.append(formatted_result)
+    structured_data["hot_query_summary"] = {"status": "success", "data": raw_result_summary}
+    
+    adoc_content.append("\n[TIP]\n====\nAnalyze the 'Overall Query Workload Summary'. If the top queries contribute a large percentage of the total execution time, optimizing them will have a significant impact on database performance.\n====")
+
     return "\n".join(adoc_content), structured_data
