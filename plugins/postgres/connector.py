@@ -36,6 +36,18 @@ class PostgresConnector:
             print(f"❌ Error connecting to PostgreSQL: {e}")
             raise
 
+    def _check_pg_stat_statements(self):
+        """Checks if the pg_stat_statements extension is available."""
+        try:
+            query = "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');"
+            # The execute_query method is part of this class
+            _, ext_exists = self.execute_query(query, is_check=True, return_raw=True)
+            self.has_pgstat = (str(ext_exists).lower() == 't' or str(ext_exists).lower() == 'true')
+        except Exception as e:
+            print(f"Warning: Could not check for pg_stat_statements extension: {e}")
+            self.has_pgstat = False
+
+
     def disconnect(self):
         """Closes the database connection."""
         if self.conn:
