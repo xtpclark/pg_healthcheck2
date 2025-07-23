@@ -1,0 +1,34 @@
+from plugins.base import BasePlugin
+from .connector import PostgresConnector
+# We will create the analysis_rules.py file in a later step
+# from .rules.analysis_rules import METRIC_ANALYSIS_CONFIG
+from pathlib import Path
+
+class PostgresPlugin(BasePlugin):
+    """The PostgreSQL implementation of the plugin interface."""
+
+    @property
+    def technology_name(self):
+        return "postgres"
+
+    def get_connector(self, settings):
+        """Returns an instance of the PostgreSQL connector."""
+        return PostgresConnector(settings)
+
+    def get_rules_config(self):
+        """Returns the PostgreSQL-specific analysis rules."""
+        # For now, we return an empty dict. We will implement this
+        # when we refactor the dynamic_prompt_generator.
+        # return METRIC_ANALYSIS_CONFIG
+        return {}
+
+    def get_report_definition(self):
+        """Returns the report blueprint for PostgreSQL."""
+        # This will be implemented in a future step when we move the
+        # report_config.py logic into the plugin.
+        return []
+
+    def get_template_path(self, template_name):
+        """Returns the path to a specific report template."""
+        # This assumes templates will live inside the plugin directory.
+        return Path(__file__).parent / "templates" / template_name
