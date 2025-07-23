@@ -1,10 +1,10 @@
-def run_postgres_overview(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+def run_postgres_overview(connector, settings):
     """
     Provides an overview of the PostgreSQL database, including version, uptime, size, and key configuration settings.
     """
     adoc_content = ["Provides an overview of the PostgreSQL database, including version, uptime, size, and key configuration settings."]
     structured_data = {} # Dictionary to hold structured findings for this module
-    
+
     if settings['show_qry'] == 'true':
         adoc_content.append("Overview queries:")
         adoc_content.append("[,sql]\n----")
@@ -17,7 +17,7 @@ def run_postgres_overview(cursor, settings, execute_query, execute_pgbouncer, al
     queries = [
         ("Database Version", "SELECT version();", True, "version_info"),
         ("Database Size", "SELECT current_database() AS database, pg_size_pretty(pg_database_size(current_database())) AS size;", True, "database_size"),
-        ("Uptime", "SELECT setting AS uptime FROM pg_settings WHERE name = 'pg_uptime';", settings['is_aurora'] == 'false', "uptime"), # Aurora-specific condition
+        ("Uptime", "SELECT setting AS uptime FROM pg_settings WHERE name = 'pg_uptime';", settings.get('is_aurora', 'false') == 'false', "uptime"), # Aurora-specific condition
         ("Key Configuration Settings", "SELECT name, setting, unit FROM pg_settings WHERE name IN ('max_connections', 'work_mem', 'shared_buffers', 'effective_cache_size') ORDER BY name;", True, "key_config")
     ]
 
@@ -28,9 +28,9 @@ def run_postgres_overview(cursor, settings, execute_query, execute_pgbouncer, al
             structured_data[data_key] = {"status": "not_applicable", "reason": note_msg}
             continue
         
-        # Execute query, requesting raw data
+        # Execute query using the connector, requesting raw data
         params_for_query = None # No named parameters for these specific queries
-        formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
+        formatted_result, raw_result = connector.execute_query(query, params=params_for_query, return_raw=True)
         
         if "[ERROR]" in formatted_result:
             adoc_content.append(f"{title}\n{formatted_result}")
@@ -44,4 +44,3 @@ def run_postgres_overview(cursor, settings, execute_query, execute_pgbouncer, al
     
     # Return both formatted AsciiDoc content and structured data
     return "\n".join(adoc_content), structured_data
-
