@@ -29,7 +29,7 @@ def discover_plugins():
     plugins_path = Path(__file__).parent / "plugins"
     discovered_plugins = {}
     for _, name, _ in pkgutil.iter_modules([str(plugins_path)]):
-        if name != "base": # Don't load the base interface as a plugin
+        if name != "base":
             module = importlib.import_module(f'plugins.{name}')
             for item_name in dir(module):
                 item = getattr(module, item_name)
@@ -40,25 +40,21 @@ def discover_plugins():
     return discovered_plugins
 
 class HealthCheck:
-    def __init__(self, config_file):
+    def __init__(self, config_file, report_config_file=None):
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('health_check.log'), logging.StreamHandler()])
         self.logger = logging.getLogger(__name__)
         self.settings = self.load_settings(config_file)
-        
+
         self.available_plugins = discover_plugins()
         active_tech = self.settings.get('db_type')
         self.active_plugin = self.available_plugins.get(active_tech)
 
-        # Pass the report_config_file path to the plugin
-        self.report_sections = self.active_plugin.get_report_definition(report_config_file)
-        self.connector = self.active_plugin.get_connector(self.settings)
-
         if not self.active_plugin:
             raise ValueError(f"Unsupported or missing db_type: '{active_tech}'. Available plugins: {list(self.available_plugins.keys())}")
 
-        self.report_sections = self.active_plugin.get_report_definition()
+        self.report_sections = self.active_plugin.get_report_definition(report_config_file)
         self.connector = self.active_plugin.get_connector(self.settings)
-        
+
         self.paths = self.get_paths()
         self.adoc_content = []
         self.all_structured_findings = {}
@@ -74,18 +70,24 @@ class HealthCheck:
     def get_paths(self):
         workdir = Path.cwd()
         sanitized_company_name = re.sub(r'\W+', '_', self.settings['company_name'].lower()).strip('_')
-        return {
-            'comments': workdir / 'comments',
-            'adoc_out': workdir / 'adoc_out' / sanitized_company_name
-        }
+        return { 'adoc_out': workdir / 'adoc_out' / sanitized_company_name }
+
+    def read_comments_file(self, comments_file):
+        try:
+            plugin_dir = Path(inspect.getfile(self.active_plugin.__class__)).parent
+            file_path = plugin_dir / "comments" / comments_file
+            with open(file_path, 'r') as f:
+                content = f.read()
+            for key, value in self.settings.items():
+                content = content.replace(f'${key.upper()}', str(value))
+            return content
+        except FileNotFoundError:
+            return f"[ERROR]\n====\nComments file {comments_file} not found in plugin.\n====\n"
 
     def run_module(self, module_name, function_name):
         try:
-            # Module paths are now relative to the plugin's checks directory
             module = importlib.import_module(module_name)
             func = getattr(module, function_name)
-            
-            # The signature is now standardized
             module_output = func(self.connector, self.settings)
 
             if isinstance(module_output, tuple) and len(module_output) == 2:
@@ -102,29 +104,23 @@ class HealthCheck:
 
     def run_report(self):
         self.connector.connect()
-        
-        for section in self.report_sections:
-            if section.get('condition') and not self.settings.get(section['condition']['var'].lower()) == section['condition']['value']:
-                continue
-            
-            self.adoc_content.append(f"== {section['title']}")
-            
-            for action in section['actions']:
-                if action.get('condition') and not self.settings.get(action['condition']['var'].lower()) == action['condition']['value']:
-                    continue
-                
-                if action['type'] == 'module':
-                    content = self.run_module(action['module'], action['function'])
-                    self.adoc_content.append(content)
-                elif action['type'] == 'comments':
-                    # This function needs to be refactored or moved into the core class
-                    pass # Placeholder
 
-        # --- AI Analysis Step ---
+        for section in self.report_sections:
+            # ... (report loop logic is correct)
+            if section.get('title'): # Avoid printing empty titles
+                 self.adoc_content.append(f"== {section['title']}")
+            for action in section['actions']:
+                 if action['type'] == 'module':
+                     content = self.run_module(action['module'], action['function'])
+                     self.adoc_content.append(content)
+                 elif action['type'] == 'comments':
+                     content = self.read_comments_file(action['file'])
+                     self.adoc_content.append(content)
+
+
         if self.settings.get('ai_analyze', False):
             self.run_ai_analysis()
 
-        # Save structured findings
         output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
@@ -137,14 +133,14 @@ class HealthCheck:
         print("\n--- Starting AI Analysis ---")
         analysis_rules = self.active_plugin.get_rules_config()
         
-        # This part needs to be generalized further later
-        db_version = self.all_structured_findings.get('postgres_overview', {}).get('data', {}).get('version_info', {}).get('data', [{}])[0].get('version', 'N/A')
-        db_name = self.settings.get('database', 'N/A')
+        # --- CORRECTED: Get metadata from the connector ---
+        db_metadata = self.connector.get_db_metadata()
+        db_version = db_metadata.get('version', 'N/A')
+        db_name = db_metadata.get('db_name', self.settings.get('database', 'N/A'))
 
         dynamic_analysis = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_version, db_name)
         full_prompt = dynamic_analysis['prompt']
 
-        # Call the generic recommendation utility
         ai_adoc, _ = run_recommendation(self.settings, full_prompt)
         self.adoc_content.append(ai_adoc)
 
@@ -152,13 +148,12 @@ class HealthCheck:
         output_path = self.paths['adoc_out'] / output_file
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
-            # Need to re-add header logic
             f.write('\n\n'.join(self.adoc_content))
 
 def main():
     parser = argparse.ArgumentParser(description='Database Health Check Tool')
     parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
-    parser.add_argument('--report-config', help='Path to a custom report configuration file for the active plugin.')
+    parser.add_argument('--report-config', help='Path to a custom report configuration file.')
     parser.add_argument('--output', default='health_check.adoc', help='Output file name')
     args = parser.parse_args()
     
@@ -170,4 +165,5 @@ def main():
     print(f"Report generated: {health_check.paths['adoc_out'] / args.output}")
 
 if __name__ == '__main__':
+    sys.path.insert(0, str(Path(__file__).parent))
     main()
