@@ -1,0 +1,16 @@
+=== Connection Management Best Practices
+
+Efficiently managing database connections is vital for performance and scalability, preventing connection storms and resource exhaustion.
+
+.  **Monitor Connection Count**: Continuously track the total number of active connections against your `max_connections` limit. Approaching the limit can lead to application errors and connection rejections.
+.  **Identify Idle Connections**: Look for `idle` and especially `idle in transaction` connections in `pg_stat_activity`. `idle in transaction` connections hold locks and consume resources, preventing vacuuming and potentially causing bloat.
+.  **Implement Connection Pooling**: Use an external connection pooler (like PgBouncer or Amazon RDS Proxy) for applications with high connection churn or many concurrent processes. This reduces the overhead of establishing new connections and allows more efficient reuse of existing connections.
+.  **Set Timeouts**: Configure `idle_in_transaction_session_timeout`, `idle_session_timeout`, `statement_timeout`, and `lock_timeout` to automatically terminate problematic or inactive sessions/queries. This prevents resource leaks and long-held locks.
+.  **Optimize Application Connection Behavior**: Ensure your application properly closes connections, uses prepared statements effectively, and avoids long-running transactions.
+.  **Review `max_connections`**: Adjust `max_connections` based on your server's resources and workload. Setting it too high can lead to excessive memory consumption and contention.
+.  **Connection Throttling**: Consider implementing connection throttling at the application or load balancer layer to prevent sudden spikes from overwhelming the database.
+
+[TIP]
+====
+Connection pooling is often the single most effective way to improve performance and stability for applications with high connection demands.
+====

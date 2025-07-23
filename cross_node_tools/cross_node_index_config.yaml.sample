@@ -1,0 +1,52 @@
+# Cross-Node Index Usage Analyzer Configuration for Docker Environment
+# 
+# This configuration connects to the PostgreSQL cluster running in Docker containers
+
+# Primary/Master node configuration
+primary:
+  host: "localhost"
+  port: 5435
+  database: "testdb"
+  user: "testuser"
+  password: "testpass"
+
+# Read replica configurations
+replicas:
+  # Replica 1
+  - host: "localhost"
+    port: 5436
+    database: "testdb"
+    user: "testuser"
+    password: "testpass"
+  
+  # Replica 2
+  - host: "localhost"
+    port: 5437
+    database: "testdb"
+    user: "testuser"
+    password: "testpass"
+
+# Analysis settings
+analysis:
+  # Minimum index size to consider for removal (in bytes)
+  min_index_size_bytes: 1024  # 1KB
+  
+  # Whether to include system schemas in analysis
+  include_system_schemas: false
+  
+  # Whether to generate SQL statements for index removal
+  generate_removal_sql: true
+  
+  # Whether to include constraint analysis
+  include_constraint_analysis: true
+
+# Report settings
+report:
+  # Include detailed usage statistics per node
+  include_detailed_stats: true
+  
+  # Include storage savings calculation
+  include_storage_calculation: true
+  
+  # Include risk assessment
+  include_risk_assessment: true 

@@ -1,0 +1,100 @@
+= Cross-Node Index Usage Analysis Report
+:doctype: book
+:encoding: utf-8
+:lang: en
+:toc: left
+:numbered:
+
+Generated on: 2025-07-11 13:59:06
+
+== Executive Summary
+
+This report analyzes index usage across 3 database nodes 
+to identify indexes that can be safely removed.
+
+**Analysis Results:**
+- Total nodes analyzed: 3
+- Unused indexes identified: 5
+- Potential storage savings: 15.0 MB
+
+== Node Analysis Summary
+
+=== Primary
+
+- Total indexes: 15
+- Used indexes: 2
+- Unused indexes: 13
+- Usage rate: 13.3%
+
+=== Replica_1
+
+- Total indexes: 15
+- Used indexes: 5
+- Unused indexes: 10
+- Usage rate: 33.3%
+
+=== Replica_2
+
+- Total indexes: 15
+- Used indexes: 2
+- Unused indexes: 13
+- Usage rate: 13.3%
+
+== Unused Indexes Analysis
+
+The following indexes appear unused across all nodes and may be candidates for removal:
+
+[cols="1,1,1,1,1",options="header"]
+|===
+|Index Name|Table Name|Size|Usage Summary|Supports Constraints
+|idx_users_created_at|public.users|16 kB|primary: 0 scans; replica_1: 0 scans; replica_2: 0 scans|No
+|idx_orders_backup|public.orders|16 kB|primary: 0 scans; replica_1: 0 scans; replica_2: 0 scans|No
+|idx_orders_amount|public.orders|16 kB|primary: 0 scans; replica_1: 0 scans; replica_2: 0 scans|No
+|idx_products_backup|public.products|16 kB|primary: 0 scans; replica_1: 0 scans; replica_2: 0 scans|No
+|idx_users_name_backup|public.users|16 kB|primary: 0 scans; replica_1: 0 scans; replica_2: 0 scans|No
+|===
+== Index Removal Recommendations
+
+[IMPORTANT]
+=====
+**Before removing any indexes:**
+
+1. **Verify the analysis**: Double-check that these indexes are truly unused
+2. **Test in staging**: Remove indexes in a staging environment first
+3. **Monitor performance**: Watch for any performance impact after removal
+4. **Low-traffic window**: Remove during maintenance windows
+5. **Backup plan**: Have a rollback strategy ready
+=====
+
+=== Recommended SQL Statements
+
+The following SQL statements can be used to remove unused indexes:
+
+[source,sql]
+----
+-- Remove unused index: idx_users_created_at
+-- Table: public.users
+-- Reason: Unused across all nodes
+DROP INDEX CONCURRENTLY IF EXISTS idx_users_created_at;
+
+-- Remove unused index: idx_orders_backup
+-- Table: public.orders
+-- Reason: Unused across all nodes
+DROP INDEX CONCURRENTLY IF EXISTS idx_orders_backup;
+
+-- Remove unused index: idx_orders_amount
+-- Table: public.orders
+-- Reason: Unused across all nodes
+DROP INDEX CONCURRENTLY IF EXISTS idx_orders_amount;
+
+-- Remove unused index: idx_products_backup
+-- Table: public.products
+-- Reason: Unused across all nodes
+DROP INDEX CONCURRENTLY IF EXISTS idx_products_backup;
+
+-- Remove unused index: idx_users_name_backup
+-- Table: public.users
+-- Reason: Unused across all nodes
+DROP INDEX CONCURRENTLY IF EXISTS idx_users_name_backup;
+
+----

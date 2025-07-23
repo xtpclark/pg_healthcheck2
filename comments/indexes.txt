@@ -1,0 +1,18 @@
+=== Index Management
+
+Indexes are crucial for optimizing query performance, especially for read-heavy workloads. However, poorly designed or unused indexes can degrade write performance and consume unnecessary storage.
+
+.  **Use Indexes Judiciously**: Create indexes only on columns frequently used in `WHERE` clauses, `JOIN` conditions, `ORDER BY`, `GROUP BY`, and `DISTINCT` operations. Avoid over-indexing, especially on tables with high write activity.
+.  **Monitor Index Usage**: Regularly review `pg_stat_user_indexes` to identify unused or rarely used indexes (`idx_scan = 0`). These indexes incur overhead without providing benefits and should be considered for removal.
+.  **Avoid Duplicate Indexes**: Ensure you don't have redundant indexes that cover the same set of columns in the same order. Duplicate indexes waste disk space and increase write overhead.
+.  **Consider Partial Indexes**: For large tables where queries often filter on a specific subset of data (e.g., `WHERE status = 'active'`), a partial index can be smaller and more efficient.
+.  **Choose the Right Index Type**: Most indexes are B-tree, but consider other types like BRIN (for large, ordered data like timestamps), GIN (for full-text search or array columns), and GiST (for geometric or spatial data).
+.  **Index Foreign Keys**: Always index foreign key columns on the child table. This prevents full table scans on the child table when rows are `DELETE`d or `UPDATE`d in the parent table, significantly reducing write amplification.
+.  **Regularly Analyze Tables**: Ensure `autovacuum` is properly configured to run `ANALYZE` regularly. Up-to-date statistics are vital for the query planner to choose efficient index usage.
+.  **`CREATE INDEX CONCURRENTLY`**: Use `CREATE INDEX CONCURRENTLY` for creating new indexes on busy tables to avoid locking the table for writes.
+.  **Reindex Bloated Indexes**: If an index becomes significantly bloated (e.g., after many updates/deletes), `REINDEX` can reclaim space and improve performance, but this is an exclusive lock operation unless done concurrently.
+
+[TIP]
+====
+A well-indexed database is a performant database. Continuously review and optimize your indexing strategy as your application and data evolve.
+====
