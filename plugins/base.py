@@ -28,3 +28,11 @@ class BasePlugin(ABC):
     def get_template_path(self, template_name):
         """Return the path to a specific report template."""
         pass
+
+    @abstractmethod
+    def get_report_definition(self, report_config_file=None):
+        """
+        Return the list of sections for the report.
+        Can optionally load from a specific file path.
+        """
+        pass
