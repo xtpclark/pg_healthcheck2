@@ -104,14 +104,6 @@ class HealthCheck:
     def run_report(self):
         self.connector.connect()
 
-        try:
-            _, ext_exists = self.connector.execute_query("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');", is_check=True, return_raw=True)
-            self.settings['has_pgstat'] = 't' if (str(ext_exists).lower() == 't' or str(ext_exists).lower() == 'true') else 'f'
-            print(f"pg_stat_statements check: {'Enabled' if self.settings['has_pgstat'] == 't' else 'Not Found'}")
-        except Exception as e:
-            print(f"Warning: Could not check for pg_stat_statements extension: {e}")
-            self.settings['has_pgstat'] = 'f'
-
         for section in self.report_sections:
             if section.get('title'):
                  self.adoc_content.append(f"== {section['title']}")
