@@ -89,47 +89,40 @@ class PostgresConnector:
     def _get_version_info(self):
         """
         Private method to get PostgreSQL version information.
-        This logic is moved from the compatibility module.
         """
         try:
-            # Use `current_setting` for a cleaner output
-            version_query = "SELECT current_setting('server_version_num');"
-            self.cursor.execute(version_query)
-            # Use .strip() just in case the raw output has whitespace
+            self.cursor.execute("SELECT current_setting('server_version_num');")
             version_num = int(self.cursor.fetchone()[0].strip())
             
-            version_string_query = "SELECT current_setting('server_version');"
-            self.cursor.execute(version_string_query)
+            self.cursor.execute("SELECT current_setting('server_version');")
             version_string = self.cursor.fetchone()[0].strip()
             
             major_version = version_num // 10000
             
+            # --- CORRECTED: Added all necessary version flags ---
             return {
                 'version_num': version_num,
                 'version_string': version_string,
                 'major_version': major_version,
+                'is_pg10_or_newer': major_version >= 10,
+                'is_pg11_or_newer': major_version >= 11,
+                'is_pg12_or_newer': major_version >= 12,
                 'is_pg13_or_newer': major_version >= 13,
                 'is_pg14_or_newer': major_version >= 14,
                 'is_pg15_or_newer': major_version >= 15,
                 'is_pg16_or_newer': major_version >= 16,
                 'is_pg17_or_newer': major_version >= 17,
-                'is_pg18_or_newer': major_version >= 18,
-                'is_pg13': major_version == 13,
-                'is_pg14': major_version == 14,
-                'is_pg15': major_version == 15,
-                'is_pg16': major_version == 16,
-                'is_pg17': major_version == 17,
-                'is_pg18': major_version >= 18
+                'is_pg18_or_newer': major_version >= 18
             }
         except Exception:
             # Fallback if all methods fail
             return {
                 'version_num': 0, 'version_string': 'unknown', 'major_version': 0,
-                'is_pg13_or_newer': False, 'is_pg14_or_newer': False,
-                'is_pg15_or_newer': False, 'is_pg16_or_newer': False,
-                'is_pg17_or_newer': False, 'is_pg18_or_newer': False,
-                'is_pg13': False, 'is_pg14': False, 'is_pg15': False,
-                'is_pg16': False, 'is_pg17': False, 'is_pg18': False
+                'is_pg10_or_newer': False, 'is_pg11_or_newer': False,
+                'is_pg12_or_newer': False, 'is_pg13_or_newer': False,
+                'is_pg14_or_newer': False, 'is_pg15_or_newer': False,
+                'is_pg16_or_newer': False, 'is_pg17_or_newer': False,
+                'is_pg18_or_newer': False
             }
 
     def get_db_metadata(self):
@@ -190,3 +183,14 @@ class PostgresConnector:
                 self.conn.rollback()
             error_str = f"[ERROR]\n====\nQuery failed: {e}\n====\n"
             return (error_str, {"error": str(e), "query": query}) if return_raw else error_str
+
+    def has_select_privilege(self, view_name):
+        """Checks if the current user has SELECT privilege on a given view/table."""
+        try:
+            # Use has_table_privilege for a direct boolean check
+            query = f"SELECT has_table_privilege(current_user, '{view_name}', 'SELECT');"
+            _, has_priv = self.execute_query(query, is_check=True, return_raw=True)
+            return (str(has_priv).lower() in ['t', 'true'])
+        except Exception as e:
+            print(f"Warning: Could not check privilege for {view_name}: {e}")
+            return False

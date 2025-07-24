@@ -9,6 +9,23 @@ REPORT_SECTIONS = [
             {'type': 'header', 'file': 'report_header.txt'},
         ]
     },
+
+    # --- Section 2: Configuration Analysis ---
+    {
+        'title': 'Testing Modules',
+        'actions': [
+            {'type': 'module', 'module': 'plugins.postgres.checks.bgwriter', 'function': 'run_bgwriter_analysis'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.extensions_update_check', 'function': 'run_extensions_update_check'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.function_audit', 'function': 'run_function_audit'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.query_analysis', 'function': 'run_query_analysis'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.high_insert_tables', 'function': 'run_high_insert_tables'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.cache_analysis', 'function': 'run_cache_analysis'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.foreign_key_audit', 'function': 'run_foreign_key_audit'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.replication_health', 'function': 'run_replication_health'},
+        ]
+    },
+
+
     {
         'title': 'PostgreSQL Overview',
         'actions': [
@@ -25,6 +42,7 @@ REPORT_SECTIONS = [
             {'type': 'module', 'module': 'plugins.postgres.checks.autovacuum_config', 'function': 'run_autovacuum_config'},
         ]
     },
+
 
     # --- Section 3: Performance and Query Analysis ---
     {

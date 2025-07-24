@@ -600,45 +600,28 @@ def get_fk_summary_query(connector):
         WHERE c.contype = 'f';
     """
 
-# Add these new functions to your existing compatibility file
 
 # ==== Used by replication_health.py ====
+
+
 def get_physical_replication_query(connector):
     """
     Returns a version-aware query to check physical replication status.
-    Handles changes in LSN functions and lag columns across PostgreSQL versions.
+    This relies on the connector's pre-fetched version information.
     """
-    # CORRECTED: This now correctly uses the reliable flag from the connector.
+    # This check correctly uses the pre-fetched version info from the connector
     if connector.version_info.get('is_pg10_or_newer'):
         return """
-            SELECT
-                usename,
-                application_name,
-                client_addr,
-                state,
-                sync_state,
-                pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn) AS sent_lag_bytes,
-                pg_wal_lsn_diff(sent_lsn, write_lsn) AS write_lag_bytes,
-                pg_wal_lsn_diff(write_lsn, flush_lsn) AS flush_lag_bytes,
-                pg_wal_lsn_diff(flush_lsn, replay_lsn) AS replay_lag_bytes,
-                write_lag,
-                flush_lag,
-                replay_lag
+            SELECT usename, application_name, client_addr, state, sync_state,
+                   pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn) AS sent_lag_bytes,
+                   write_lag, flush_lag, replay_lag
             FROM pg_stat_replication;
         """
     else:
-        # Fallback for older versions (pre-PG10)
+        # Fallback for legacy versions older than 10
         return """
-            SELECT
-                usename,
-                application_name,
-                client_addr,
-                state,
-                sync_state,
-                pg_xlog_location_diff(pg_current_xlog_location(), sent_location) AS sent_lag_bytes,
-                pg_xlog_location_diff(sent_location, write_location) AS write_lag_bytes,
-                pg_xlog_location_diff(write_location, flush_location) AS flush_lag_bytes,
-                pg_xlog_location_diff(flush_location, replay_location) AS replay_lag_bytes
+            SELECT usename, application_name, client_addr, state, sync_state,
+                   pg_xlog_location_diff(pg_current_xlog_location(), sent_location) AS sent_lag_bytes
             FROM pg_stat_replication;
         """
 
@@ -646,29 +629,59 @@ def get_replication_slots_query(connector):
     """
     Returns a version-aware query to check all replication slots.
     """
-    # CORRECTED: This logic is now simpler and more reliable.
+    # This check also correctly uses the connector's version info
     if connector.version_info.get('is_pg10_or_newer'):
         lsn_diff_func = 'pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)'
     else:
         lsn_diff_func = 'pg_xlog_location_diff(pg_current_xlog_location(), restart_lsn)'
+#        lsn_diff_func = 'pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)'
 
     return f"""
         SELECT
-            slot_name,
-            plugin,
-            slot_type,
-            database,
-            active,
-            pg_size_pretty({lsn_diff_func}) AS replication_lag_size
+            slot_name, plugin, slot_type, database, active,
+            pg_size_pretty({lsn_diff_func}) AS replication_lag_size,
+            wal_status, safe_wal_size
         FROM pg_replication_slots;
     """
 
 def get_subscription_stats_query(connector):
     """
     Returns a query for logical replication subscription stats.
-    Requires PostgreSQL 10+.
     """
     if connector.version_info.get('is_pg10_or_newer'):
-        return "SELECT subname, received_lsn, last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time FROM pg_stat_subscription;"
+        return "SELECT subname, received_lsn, last_msg_send_time, last_msg_receipt_time FROM pg_stat_subscription;"
     else:
-        return None # Return None if not supported
+        return None
+
+def get_security_audit_query(connector):
+    """
+    Returns a query to audit user roles and password encryption methods.
+    Checks for superuser status and MD5 password usage.
+    """
+    # In PostgreSQL 10+, the column is `rolpassword`. Before that, it was `passwd`.
+    # For simplicity across modern versions, we can check if the string starts with 'md5'.
+    password_check_column = "rolpassword"
+    
+    return f"""
+        SELECT
+            rolname AS user_name,
+            rolsuper AS is_superuser,
+            rolcreaterole AS can_create_roles,
+            rolcreatedb AS can_create_db,
+            {password_check_column} ~ 'md5' AS uses_md5_password
+        FROM pg_authid
+        ORDER BY rolsuper DESC, rolname;
+    """
+
+def get_ssl_stats_query(connector):
+    """
+    Returns a query to get statistics on SSL/TLS encrypted connections.
+    """
+    return """
+        SELECT
+            ssl,
+            count(*) as connection_count
+        FROM pg_stat_ssl
+        JOIN pg_stat_activity ON pg_stat_ssl.pid = pg_stat_activity.pid
+        GROUP BY ssl;
+    """
