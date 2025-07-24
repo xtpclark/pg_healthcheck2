@@ -1,102 +1,58 @@
-def run_table_object_counts(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+from plugins.postgres.utils.postgresql_version_compatibility import get_object_counts_query
+
+def run_table_object_counts(connector, settings):
     """
-    Counts various types of PostgreSQL database objects (tables, functions, views,
-    materialized views, schemas, indexes, sequences, foreign keys, partitions)
-    to provide an overview of database structure.
+    Counts various types of PostgreSQL database objects to provide an
+    overview of the database structure and complexity.
     """
-    adoc_content = ["=== Database Object Counts", "Provides a summary count of various database object types."]
-    structured_data = {} # Dictionary to hold structured findings for this module
-    
-    if settings['show_qry'] == 'true':
-        adoc_content.append("Database object count queries:")
-        adoc_content.append("[,sql]\n----")
-        adoc_content.append("SELECT 'Tables' AS object_type, count(*) FROM pg_class WHERE relkind = 'r' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');")
-        adoc_content.append("SELECT 'Views' AS object_type, count(*) FROM pg_class WHERE relkind = 'v' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');")
-        adoc_content.append("SELECT 'Materialized Views' AS object_type, count(*) FROM pg_class WHERE relkind = 'm' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');")
-        adoc_content.append("SELECT 'Indexes' AS object_type, count(*) FROM pg_class WHERE relkind = 'i' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');")
-        adoc_content.append("SELECT 'Sequences' AS object_type, count(*) FROM pg_class WHERE relkind = 'S' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');")
-        adoc_content.append("SELECT 'Functions/Procedures' AS object_type, count(*) FROM pg_proc WHERE pronamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');")
-        adoc_content.append("SELECT 'Schemas' AS object_type, count(*) FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema';")
-        adoc_content.append("SELECT 'Foreign Keys' AS object_type, count(*) FROM pg_constraint WHERE contype = 'f';")
-        adoc_content.append("SELECT 'Partitions' AS object_type, count(*) FROM pg_class WHERE relispartition = true;")
-        adoc_content.append("----")
+    adoc_content = ["=== Database Object Counts", "Provides a summary count of various database object types to give a high-level view of the database's complexity.\n"]
+    structured_data = {}
 
-    # Define individual queries for each object type
-    # This makes the module more resilient to errors in a single count query
-    object_count_queries = [
-        ("Tables", "SELECT count(*) FROM pg_class WHERE relkind = 'r' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');"),
-        ("Views", "SELECT count(*) FROM pg_class WHERE relkind = 'v' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');"),
-        ("Materialized Views", "SELECT count(*) FROM pg_class WHERE relkind = 'm' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');"),
-        ("Indexes", "SELECT count(*) FROM pg_class WHERE relkind = 'i' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');"),
-        ("Sequences", "SELECT count(*) FROM pg_class WHERE relkind = 'S' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');"),
-        ("Functions/Procedures", "SELECT count(*) FROM pg_proc WHERE pronamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname = 'information_schema');"),
-        ("Schemas", "SELECT count(*) FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema';"),
-        ("Foreign Keys", "SELECT count(*) FROM pg_constraint WHERE contype = 'f';"),
-        ("Partitions", "SELECT count(*) FROM pg_class WHERE relispartition = true;")
-    ]
+    try:
+        # Get the single, consolidated query from the compatibility module
+        object_counts_query = get_object_counts_query(connector)
 
-    # Prepare results for the formatted table and structured data
-    formatted_results_table = ['|===', '|Object Type|Count']
-    structured_counts = []
+        if settings.get('show_qry') == 'true':
+            adoc_content.append("Database object counts query:")
+            adoc_content.append("[,sql]\n----")
+            adoc_content.append(object_counts_query)
+            adoc_content.append("----")
 
-    for object_type, query_string in object_count_queries:
-        # Execute each query individually, requesting raw data
-        # No named parameters are needed for these count queries, so params=None
-        formatted_result, raw_result = execute_query(query_string, params=None, return_raw=True) 
-        
-        count_value = "N/A"
-        status = "error"
-        details = raw_result # Store raw error details if any
+        # Execute the query
+        formatted_result, raw_result = connector.execute_query(object_counts_query, return_raw=True)
 
         if "[ERROR]" in formatted_result:
-            count_value = "Error"
-            status = "error"
-        elif "[NOTE]" in formatted_result: # "No results returned" etc.
-            count_value = "0" # For counts, "No results" implies 0
-            status = "success"
-            details = [] # Empty list for no data
+            adoc_content.append(formatted_result)
+            structured_data["object_counts_summary"] = {"status": "error", "details": raw_result}
+        elif not raw_result:
+            adoc_content.append("[NOTE]\n====\nCould not retrieve database object counts.\n====\n")
+            structured_data["object_counts_summary"] = {"status": "success", "data": {}}
         else:
-            # Assuming raw_result for count queries is a single value (e.g., an integer)
-            if isinstance(raw_result, list) and len(raw_result) > 0 and 'count' in raw_result[0]:
-                count_value = raw_result[0]['count']
-                status = "success"
-                details = raw_result
-            elif isinstance(raw_result, (int, float)): # Direct count value from execute_query(is_check=True)
-                 count_value = raw_result
-                 status = "success"
-                 details = raw_result
-            else:
-                count_value = "N/A (Parse Error)"
-                status = "error"
-                details = "Could not parse count from raw result."
+            # The raw_result is a list with a single dictionary, e.g., [{'tables': 10, 'indexes': 15}]
+            counts_data = raw_result[0]
+            
+            # --- Format for AsciiDoc Report ---
+            adoc_content.append("Summary of Database Objects")
+            table = ['[cols="2,1",options="header"]', '|===', '| Object Type | Count']
+            for obj_type, count in counts_data.items():
+                # Make the key more readable for the report
+                readable_type = obj_type.replace('_', ' ').title()
+                table.append(f"| {readable_type} | {count}")
+            table.append('|===')
+            adoc_content.append('\n'.join(table))
+            
+            # --- Store the raw dictionary as the summary for AI Analysis ---
+            structured_data["object_counts_summary"] = {"status": "success", "data": counts_data}
 
-        formatted_results_table.append(f"|{object_type}|{count_value}")
-        structured_counts.append({
-            "object_type": object_type,
-            "count": count_value,
-            "status": status,
-            "details": details
-        })
-    
-    formatted_results_table.append('|===')
-    adoc_content.append("Summary of Database Objects")
-    adoc_content.append('\n'.join(formatted_results_table))
-    structured_data["object_counts_summary"] = {"status": "success", "data": structured_counts}
+    except Exception as e:
+        error_msg = f"Failed during object count analysis: {e}"
+        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
+        structured_data["object_counts_summary"] = {"status": "error", "details": str(e)}
 
-
-    adoc_content.append("[TIP]\n====\n"
-                   "Monitoring object counts provides a high-level view of database complexity and growth. "
-                   "A sudden increase in certain object types (e.g., tables, functions) might indicate application changes or unexpected behavior. "
-                   "High numbers of indexes or foreign keys should prompt a review of their necessity and proper indexing to avoid performance overheads.\n"
-                   "====\n")
-    if settings['is_aurora'] == 'true':
-        adoc_content.append("[NOTE]\n====\n"
-                       "For AWS RDS Aurora, while object counts don't directly impact managed services like storage, "
-                       "they are indicative of the application's complexity. "
-                       "A large number of objects can increase metadata overhead and impact DDL operations. "
-                       "Ensure that object proliferation is managed, especially for temporary or unused objects.\n"
+    adoc_content.append("\n[TIP]\n====\n"
+                       "Monitoring object counts provides a high-level view of database complexity and growth. "
+                       "A sudden increase in certain object types might indicate application changes or unexpected behavior. "
+                       "High numbers of indexes should prompt a review of their necessity to avoid performance overhead on write operations.\n"
                        "====\n")
-    
-    # Return both formatted AsciiDoc content and structured data
-    return "\n".join(adoc_content), structured_data
 
+    return "\n".join(adoc_content), structured_data

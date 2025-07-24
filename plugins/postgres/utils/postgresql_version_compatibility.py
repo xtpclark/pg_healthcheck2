@@ -685,3 +685,181 @@ def get_ssl_stats_query(connector):
         JOIN pg_stat_activity ON pg_stat_ssl.pid = pg_stat_activity.pid
         GROUP BY ssl;
     """
+
+# Add these new functions to your existing compatibility file
+
+def get_pk_exhaustion_summary_query(connector):
+    """
+    Returns a query that provides a high-level summary of primary keys that
+    are integer-based, for AI analysis.
+    """
+    return """
+        SELECT
+            COUNT(*) AS total_integer_pks,
+            COUNT(*) FILTER (WHERE a.atttypid = 21) AS smallint_pk_count,
+            COUNT(*) FILTER (WHERE a.atttypid = 23) AS integer_pk_count
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_constraint con ON con.conrelid = c.oid
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
+        WHERE con.contype = 'p'
+          AND a.atttypid IN (21, 23) -- smallint, integer
+          AND n.nspname NOT IN ('information_schema', 'pg_catalog');
+    """
+
+def get_pk_exhaustion_details_query(connector):
+    """
+    Returns a query to find integer-based primary keys that are nearing
+    their maximum value (exhaustion) by correctly finding the associated sequence.
+    """
+    # This query now uses pg_get_serial_sequence to reliably find the sequence name
+    # and correctly uses a WHERE clause for filtering.
+    return """
+        WITH pk_info AS (
+            SELECT
+                n.nspname,
+                c.relname,
+                a.attname,
+                a.atttypid,
+                pg_get_serial_sequence(quote_ident(n.nspname) || '.' || quote_ident(c.relname), a.attname) AS seq_name
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_constraint con ON con.conrelid = c.oid
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
+            WHERE con.contype = 'p'
+              AND a.atttypid IN (21, 23) -- smallint, integer
+              AND n.nspname NOT IN ('information_schema', 'pg_catalog')
+        )
+        SELECT
+            pi.nspname AS table_schema,
+            pi.relname AS table_name,
+            pi.attname AS column_name,
+            format_type(pi.atttypid, -1) AS data_type,
+            s.last_value,
+            CASE
+                WHEN pi.atttypid = 21 THEN 32767
+                WHEN pi.atttypid = 23 THEN 2147483647
+            END as max_value,
+            ROUND((s.last_value::numeric / (
+                CASE
+                    WHEN pi.atttypid = 21 THEN 32767
+                    WHEN pi.atttypid = 23 THEN 2147483647
+                END
+            )::numeric) * 100, 2) AS percentage_used
+        FROM pk_info pi
+        JOIN pg_sequences s ON pi.seq_name = s.schemaname || '.' || s.sequencename
+        WHERE s.last_value IS NOT NULL
+          -- CORRECTED: Filtering logic moved from HAVING to WHERE
+          AND (s.last_value::numeric / (
+                CASE
+                    WHEN pi.atttypid = 21 THEN 32767
+                    WHEN pi.atttypid = 23 THEN 2147483647
+                END
+            )::numeric) > 0.80 -- Threshold for reporting (80%)
+        ORDER BY percentage_used DESC;
+    """
+
+def get_object_counts_query(connector):
+    """
+    Returns a single, efficient query to count various database object types.
+    This serves as both the detailed data and the AI summary.
+    """
+    return """
+        SELECT
+            (SELECT COUNT(*) FROM pg_class WHERE relkind = 'r' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%%' OR nspname = 'information_schema')) AS tables,
+            (SELECT COUNT(*) FROM pg_class WHERE relkind = 'i' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%%' OR nspname = 'information_schema')) AS indexes,
+            (SELECT COUNT(*) FROM pg_class WHERE relkind = 'S' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%%' OR nspname = 'information_schema')) AS sequences,
+            (SELECT COUNT(*) FROM pg_class WHERE relkind = 'v' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%%' OR nspname = 'information_schema')) AS views,
+            (SELECT COUNT(*) FROM pg_class WHERE relkind = 'm' AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%%' OR nspname = 'information_schema')) AS materialized_views,
+            (SELECT COUNT(*) FROM pg_proc WHERE pronamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%%' OR nspname = 'information_schema')) AS functions_procedures,
+            (SELECT COUNT(*) FROM pg_namespace WHERE nspname NOT LIKE 'pg_%%' AND nspname != 'information_schema') AS schemas,
+            (SELECT COUNT(*) FROM pg_constraint WHERE contype = 'f') AS foreign_keys,
+            (SELECT COUNT(*) FROM pg_class WHERE relispartition = true) AS partitions;
+    """
+
+def get_specialized_indexes_summary_query(connector):
+    """
+    Returns a query that provides a summary count of each specialized index type.
+    """
+    return """
+        SELECT
+            am.amname AS index_type,
+            COUNT(*) AS count
+        FROM pg_class i
+        JOIN pg_am am ON am.oid = i.relam
+        JOIN pg_namespace n ON n.oid = i.relnamespace
+        WHERE i.relkind = 'i'
+          AND am.amname NOT IN ('btree')
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        GROUP BY am.amname;
+    """
+
+def get_specialized_indexes_details_query(connector):
+    """
+    Returns a query to get detailed information about all non-B-Tree indexes.
+    """
+    return """
+        SELECT
+            n.nspname AS schema_name,
+            c.relname AS table_name,
+            i.relname AS index_name,
+            am.amname AS index_type,
+            pg_size_pretty(pg_relation_size(i.oid)) as index_size
+        FROM pg_class c
+        JOIN pg_index ix ON ix.indrelid = c.oid
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_am am ON am.oid = i.relam
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE am.amname NOT IN ('btree')
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY am.amname, n.nspname, c.relname, i.relname;
+    """
+
+def get_unused_indexes_query(connector):
+    """
+    Returns a query to find large, unused indexes. This is a key indicator of
+    unnecessary write overhead and wasted space.
+    """
+    return """
+        SELECT
+            schemaname AS schema_name,
+            relname AS table_name,
+            indexrelname AS index_name,
+            pg_size_pretty(pg_relation_size(indexrelid)) AS index_size,
+            idx_scan AS index_scans
+        FROM pg_stat_user_indexes
+        WHERE idx_scan < 100 AND pg_relation_size(indexrelid) > 1048576 -- Scanned < 100 times and > 1MB
+        ORDER BY pg_relation_size(indexrelid) DESC
+        LIMIT %(limit)s;
+    """
+
+def get_duplicate_indexes_query(connector):
+    """
+    Returns a query to find indexes that are functionally duplicates of each other.
+    """
+    return """
+        SELECT n.nspname || '.' || t.relname AS table_name,
+        pg_size_pretty(SUM(pg_relation_size(pi.indexrelid))::bigint) AS total_wasted_size,
+        array_agg(i.relname ORDER BY i.relname) AS redundant_indexes
+        FROM pg_index AS pi
+        JOIN pg_class AS i ON i.oid = pi.indexrelid
+        JOIN pg_class AS t ON t.oid = pi.indrelid
+        JOIN pg_namespace AS n ON n.oid = t.relnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND pi.indisprimary = false
+        GROUP BY pi.indrelid, pi.indkey, pi.indclass, pi.indpred, n.nspname, t.relname
+        HAVING COUNT(*) > 1 ORDER BY SUM(pg_relation_size(pi.indexrelid)) DESC LIMIT %(limit)s;
+    """
+
+def get_invalid_indexes_query(connector):
+    """
+    Returns a query to find invalid indexes that are unusable by the planner.
+    """
+    return """
+        SELECT n.nspname AS schema_name, c.relname AS table_name, i.relname AS index_name
+        FROM pg_class c, pg_index ix, pg_class i, pg_namespace n
+        WHERE ix.indisvalid = false
+          AND ix.indexrelid = i.oid
+          AND i.relnamespace = c.relnamespace -- Simplified join condition
+          AND c.oid = ix.indrelid
+          AND i.relnamespace = n.oid;
+    """
