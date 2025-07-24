@@ -6,9 +6,10 @@ from plugins.postgres.utils.postgresql_version_compatibility import (
 def run_query_analysis(connector, settings):
     """
     Performs a deep analysis of query performance using pg_stat_statements,
-    covering execution time, call frequency, and I/O.
+    creating a summary and identifying top queries.
     """
     adoc_content = ["=== Deep Query Analysis (pg_stat_statements)"]
+    # This will hold all data for this module, including the new summary
     structured_data = {}
     params = {'limit': settings.get('row_limit', 10)}
 
@@ -18,27 +19,38 @@ def run_query_analysis(connector, settings):
         return "\n".join(adoc_content), structured_data
 
     try:
-        # --- Top Queries by Total Time ---
+        # --- NEW: Create a high-level summary for AI analysis ---
+        summary_query = """
+            SELECT
+                COUNT(*) as total_queries_tracked,
+                SUM(calls) as total_calls,
+                SUM(total_exec_time) as total_execution_time_all_queries_ms,
+                SUM(rows) as total_rows_processed
+            FROM pg_stat_statements;
+        """
+        _, summary_raw = connector.execute_query(summary_query, return_raw=True)
+        # Store the summary. We use summary_raw[0] because it returns a list with one dict.
+        structured_data["query_workload_summary"] = {"status": "success", "data": summary_raw[0] if summary_raw else {}}
+        
+        # --- Top Queries by Total Time (for AsciiDoc report) ---
         adoc_content.append("==== Top Queries by Total Execution Time")
         time_query = get_pg_stat_statements_query(connector, 'total_time') + " LIMIT %(limit)s;"
         time_formatted, time_raw = connector.execute_query(time_query, params=params, return_raw=True)
         adoc_content.append(time_formatted)
         structured_data["top_by_time"] = {"status": "success", "data": time_raw}
 
-        # --- Top Queries by Calls ---
+        # --- Top Queries by Calls (for AsciiDoc report) ---
         adoc_content.append("\n==== Top Queries by Call Count")
         calls_query = get_pg_stat_statements_query(connector, 'calls') + " LIMIT %(limit)s;"
         calls_formatted, calls_raw = connector.execute_query(calls_query, params=params, return_raw=True)
         adoc_content.append(calls_formatted)
         structured_data["top_by_calls"] = {"status": "success", "data": calls_raw}
 
-        # --- Top Queries by I/O ---
+        # --- Top Queries by I/O (for AsciiDoc report) ---
         adoc_content.append("\n==== Top Queries by I/O Wait Time")
         io_query = get_top_queries_by_io_time_query(connector)
         io_formatted, io_raw = connector.execute_query(io_query, params=params, return_raw=True)
 
-        # --- NEW: Improved, more helpful note ---
-        # Check if the returned data actually contains non-zero I/O times
         has_io_data = any(item.get('total_io_time', 0) > 0 for item in io_raw) if isinstance(io_raw, list) else False
 
         if not has_io_data:

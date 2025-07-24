@@ -453,3 +453,222 @@ def get_top_queries_by_io_time_query(connector):
             FROM pg_stat_statements
             ORDER BY total_time DESC LIMIT %(limit)s;
         """
+
+# Add this new function to your existing compatibility file
+
+def get_cache_analysis_queries(connector):
+    """
+    Returns a dictionary of queries for cache analysis, adjusted for PG version.
+    Handles the split of stats from pg_stat_bgwriter to pg_stat_checkpointer in PG17+.
+    """
+    queries = {
+        "database_cache_hit_ratio": """
+            SELECT
+                datname,
+                blks_hit,
+                blks_read,
+                round((blks_hit::float / NULLIF(blks_hit + blks_read, 0) * 100)::numeric, 2) AS hit_ratio_percent
+            FROM pg_stat_database
+            WHERE blks_read > 0 AND datname = %(database)s;
+        """
+    }
+    
+    # In PostgreSQL 17, checkpoint stats moved from pg_stat_bgwriter to pg_stat_checkpointer.
+    # We now query both to get a complete picture.
+    if connector.version_info.get('is_pg17_or_newer'):
+        queries["bgwriter_buffer_statistics"] = "SELECT buffers_alloc, buffers_clean FROM pg_stat_bgwriter;"
+        queries["checkpoint_buffer_statistics"] = "SELECT num_timed AS checkpoints_timed, num_requested AS checkpoints_req, buffers_written AS buffers_checkpoint FROM pg_stat_checkpointer;"
+    else:
+        # For older versions, all stats are in pg_stat_bgwriter
+        queries["buffer_cache_statistics"] = "SELECT buffers_alloc, buffers_backend, buffers_clean, buffers_checkpoint, checkpoints_timed, checkpoints_req FROM pg_stat_bgwriter;"
+
+    return queries
+
+def get_high_insert_tables_query(connector):
+    """
+    Returns a query to identify tables with a high rate of inserts.
+    This query is version-agnostic but centralized for consistency.
+    """
+    return """
+        SELECT
+            schemaname || '.' || relname AS table_name,
+            n_tup_ins,
+            n_dead_tup,
+            last_autovacuum
+        FROM pg_stat_user_tables
+        WHERE n_tup_ins > %(min_tup_ins_threshold)s
+        ORDER BY n_tup_ins DESC
+        LIMIT %(limit)s;
+    """
+
+def get_top_write_queries_query(connector):
+    """
+    Returns a version-aware query to find top write-intensive queries
+    from pg_stat_statements.
+    """
+    # Sanitize query text for safe AsciiDoc table display
+    query_select_prefix = "REPLACE(REPLACE(LEFT(query, 150), E'\\n', ' '), '|', ' ') || '...' AS query"
+
+    if connector.version_info.get('is_pg14_or_newer'):
+        return f"""
+            SELECT {query_select_prefix}, calls, total_exec_time, mean_exec_time, rows,
+                   shared_blks_written, local_blks_written, temp_blks_written, wal_bytes
+            FROM pg_stat_statements
+            ORDER BY wal_bytes DESC, shared_blks_written DESC
+            LIMIT %(limit)s;
+        """
+    else:
+        # For older versions, we rely on blocks written as the primary indicator
+        return f"""
+            SELECT {query_select_prefix}, calls, total_time AS total_exec_time, mean_time AS mean_exec_time, rows,
+                   shared_blks_written, local_blks_written, temp_blks_written
+            FROM pg_stat_statements
+            ORDER BY shared_blks_written DESC, rows DESC
+            LIMIT %(limit)s;
+        """
+
+# Used by foreign_key_audit.py
+def get_all_foreign_keys_query(connector):
+    """
+    Returns a query to list all foreign key constraints in the database.
+    This query is version-agnostic.
+    """
+    return """
+        SELECT
+            conname AS foreign_key_name,
+            conrelid::regclass AS child_table,
+            pg_get_constraintdef(oid) AS constraint_definition
+        FROM pg_constraint
+        WHERE contype = 'f'
+        ORDER BY conrelid::regclass, conname
+        LIMIT %(limit)s;
+    """
+
+def get_missing_fk_indexes_query(connector):
+    """
+    Returns a query to find foreign keys on child tables that are missing
+    a corresponding index on the key column(s). This is a major cause of
+    write amplification and locking issues.
+    This query is version-aware for optimal performance.
+    """
+    # The core logic is stable across recent PostgreSQL versions, but centralizing it here
+    # allows for future optimizations (e.g., for newer PG versions with improved catalog views).
+    return """
+        SELECT
+            fk.conname AS foreign_key_name,
+            n_child.nspname || '.' || fk_table.relname AS child_table,
+            ARRAY(SELECT attname FROM pg_attribute WHERE attrelid = fk.conrelid AND attnum = ANY(fk.conkey)) AS fk_col_names,
+            n_parent.nspname || '.' || pk_table.relname AS parent_table,
+            ARRAY(SELECT attname FROM pg_attribute WHERE attrelid = fk.confrelid AND attnum = ANY(fk.confkey)) AS pk_col_names
+        FROM
+            pg_constraint fk
+        JOIN pg_class fk_table ON fk_table.oid = fk.conrelid
+        JOIN pg_namespace n_child ON n_child.oid = fk_table.relnamespace
+        JOIN pg_class pk_table ON pk_table.oid = fk.confrelid
+        JOIN pg_namespace n_parent ON n_parent.oid = pk_table.relnamespace
+        WHERE
+            fk.contype = 'f'
+            AND NOT EXISTS (
+                SELECT 1
+                FROM pg_index i
+                WHERE i.indrelid = fk.conrelid
+                -- Ensure the leading columns of the index match the foreign key columns
+                AND (i.indkey::int[] @> fk.conkey::int[] AND i.indkey::int[] <@ fk.conkey::int[])
+            )
+        ORDER BY
+            child_table, foreign_key_name
+        LIMIT %(limit)s;
+    """
+
+def get_fk_summary_query(connector):
+    """
+    Returns a query that provides a summary of foreign key health,
+    counting total FKs and those missing an index.
+    """
+    return """
+        SELECT
+            COUNT(*) AS total_foreign_keys,
+            COUNT(*) FILTER (
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM pg_index i
+                    WHERE i.indrelid = c.conrelid
+                    AND (i.indkey::int[] @> c.conkey::int[] AND i.indkey::int[] <@ c.conkey::int[])
+                )
+            ) AS unindexed_foreign_keys
+        FROM pg_constraint c
+        WHERE c.contype = 'f';
+    """
+
+# Add these new functions to your existing compatibility file
+
+# ==== Used by replication_health.py ====
+def get_physical_replication_query(connector):
+    """
+    Returns a version-aware query to check physical replication status.
+    Handles changes in LSN functions and lag columns across PostgreSQL versions.
+    """
+    # CORRECTED: This now correctly uses the reliable flag from the connector.
+    if connector.version_info.get('is_pg10_or_newer'):
+        return """
+            SELECT
+                usename,
+                application_name,
+                client_addr,
+                state,
+                sync_state,
+                pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn) AS sent_lag_bytes,
+                pg_wal_lsn_diff(sent_lsn, write_lsn) AS write_lag_bytes,
+                pg_wal_lsn_diff(write_lsn, flush_lsn) AS flush_lag_bytes,
+                pg_wal_lsn_diff(flush_lsn, replay_lsn) AS replay_lag_bytes,
+                write_lag,
+                flush_lag,
+                replay_lag
+            FROM pg_stat_replication;
+        """
+    else:
+        # Fallback for older versions (pre-PG10)
+        return """
+            SELECT
+                usename,
+                application_name,
+                client_addr,
+                state,
+                sync_state,
+                pg_xlog_location_diff(pg_current_xlog_location(), sent_location) AS sent_lag_bytes,
+                pg_xlog_location_diff(sent_location, write_location) AS write_lag_bytes,
+                pg_xlog_location_diff(write_location, flush_location) AS flush_lag_bytes,
+                pg_xlog_location_diff(flush_location, replay_location) AS replay_lag_bytes
+            FROM pg_stat_replication;
+        """
+
+def get_replication_slots_query(connector):
+    """
+    Returns a version-aware query to check all replication slots.
+    """
+    # CORRECTED: This logic is now simpler and more reliable.
+    if connector.version_info.get('is_pg10_or_newer'):
+        lsn_diff_func = 'pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)'
+    else:
+        lsn_diff_func = 'pg_xlog_location_diff(pg_current_xlog_location(), restart_lsn)'
+
+    return f"""
+        SELECT
+            slot_name,
+            plugin,
+            slot_type,
+            database,
+            active,
+            pg_size_pretty({lsn_diff_func}) AS replication_lag_size
+        FROM pg_replication_slots;
+    """
+
+def get_subscription_stats_query(connector):
+    """
+    Returns a query for logical replication subscription stats.
+    Requires PostgreSQL 10+.
+    """
+    if connector.version_info.get('is_pg10_or_newer'):
+        return "SELECT subname, received_lsn, last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time FROM pg_stat_subscription;"
+    else:
+        return None # Return None if not supported
