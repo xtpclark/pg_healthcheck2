@@ -9,8 +9,13 @@ class PostgresConnector:
         self.settings = settings
         self.conn = None
         self.cursor = None
-        self.version_info = {}  # Attribute to store version details
-        self.has_pgstat = False  # Attribute to store pg_stat_statements availability
+        self.version_info = {}
+        self.has_pgstat = False
+        # --- NEW ATTRIBUTES ---
+        # Flag for PG13-16 style I/O columns (e.g., blk_read_time)
+        self.has_pgstat_legacy_io_time = False 
+        # Flag for PG17+ style I/O columns (e.g., shared_blk_read_time)
+        self.has_pgstat_new_io_time = False 
 
     def connect(self):
         """Establishes a connection to the database and fetches version info."""
@@ -30,26 +35,50 @@ class PostgresConnector:
             # Get and store version info immediately after connecting
             self.version_info = self._get_version_info()
             
-            # Check for pg_stat_statements after establishing the connection
-            self._check_pg_stat_statements()
+            # --- MODIFIED: Consolidated capability checks ---
+            self._check_pg_stat_capabilities()
             
+            # --- MODIFIED: Enhanced connection status message ---
             print("✅ Successfully connected to PostgreSQL.")
             print(f"   - Version: {self.version_info.get('version_string', 'Unknown')}")
-            print(f"   - pg_stat_statements enabled: {self.has_pgstat}")
+            print(f"   - pg_stat_statements: {'Enabled' if self.has_pgstat else 'Not Found'}")
+            if self.has_pgstat:
+                io_status = "Not Available"
+                if self.has_pgstat_new_io_time:
+                    io_status = "Available (PG17+ Style)"
+                elif self.has_pgstat_legacy_io_time:
+                    io_status = "Available (Legacy Style)"
+                print(f"   - I/O Timings in pg_stat_statements: {io_status}")
 
         except psycopg2.Error as e:
             print(f"❌ Error connecting to PostgreSQL: {e}")
             raise
 
-    def _check_pg_stat_statements(self):
-        """Checks if the pg_stat_statements extension is available."""
+    # --- REPLACED _check_pg_stat_statements with a more comprehensive method ---
+    def _check_pg_stat_capabilities(self):
+        """Checks for the existence and capabilities of the pg_stat_statements extension."""
         try:
-            query = "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');"
-            _, ext_exists = self.execute_query(query, is_check=True, return_raw=True)
-            self.has_pgstat = (str(ext_exists).lower() == 't' or str(ext_exists).lower() == 'true')
+            # First, check if the extension exists at all
+            _, ext_exists = self.execute_query("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');", is_check=True, return_raw=True)
+            self.has_pgstat = (str(ext_exists).lower() in ['t', 'true'])
+
+            if self.has_pgstat:
+                # If it exists, check for PG17+ style columns FIRST for forward-compatibility
+                query_new = "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'pg_stat_statements' AND column_name = 'shared_blk_read_time');"
+                _, col_exists_new = self.execute_query(query_new, is_check=True, return_raw=True)
+                self.has_pgstat_new_io_time = (str(col_exists_new).lower() in ['t', 'true'])
+
+                # If new columns don't exist, check for legacy columns
+                if not self.has_pgstat_new_io_time:
+                    query_legacy = "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'pg_stat_statements' AND column_name = 'blk_read_time');"
+                    _, col_exists_legacy = self.execute_query(query_legacy, is_check=True, return_raw=True)
+                    self.has_pgstat_legacy_io_time = (str(col_exists_legacy).lower() in ['t', 'true'])
+
         except Exception as e:
-            print(f"Warning: Could not check for pg_stat_statements extension: {e}")
+            print(f"Warning: Could not check for pg_stat_statements capabilities: {e}")
             self.has_pgstat = False
+            self.has_pgstat_legacy_io_time = False
+            self.has_pgstat_new_io_time = False
 
     def disconnect(self):
         """Closes the database connection."""

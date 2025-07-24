@@ -272,27 +272,6 @@ def get_available_extensions_query(connector):
         WHERE installed_version IS NOT NULL AND default_version <> installed_version;
     """
 
-def get_function_volatility_query(connector):
-    """
-    Returns a query to find functions with a 'volatile' volatility setting,
-    which can prevent query parallelization.
-    """
-    return """
-        SELECT
-            n.nspname as schema_name,
-            p.proname as function_name,
-            CASE p.provolatile
-                WHEN 'i' THEN 'immutable'
-                WHEN 's' THEN 'stable'
-                WHEN 'v' THEN 'volatile'
-            END as volatility
-        FROM pg_proc p
-        JOIN pg_namespace n ON p.pronamespace = n.oid
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-          AND p.provolatile = 'v'
-        ORDER BY 1, 2;
-    """
-
 def get_high_insert_tables_query(connector):
     """
     Returns a query to identify tables with high rates of inserts, which
@@ -347,3 +326,130 @@ def get_vacuum_stats_query(connector):
         ORDER BY n_dead_tup DESC
         LIMIT %(limit)s;
     """
+
+
+def get_security_definer_functions_query(connector):
+    """
+    Returns a query to find potentially insecure SECURITY DEFINER functions.
+    These functions execute with the privileges of their owner, not the calling user.
+    """
+    return """
+        SELECT
+            p.proname AS function_name,
+            n.nspname AS schema_name,
+            pg_get_userbyid(p.proowner) AS owner
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE p.prosecdef IS TRUE
+        ORDER BY schema_name, function_name
+        LIMIT %(limit)s;
+    """
+
+def get_superuser_owned_functions_query(connector):
+    """
+    Returns a query to find functions owned by superusers. These should be reviewed
+    to ensure they don't present a security risk.
+    """
+    return """
+        SELECT
+            p.proname AS function_name,
+            n.nspname AS schema_name,
+            pg_get_userbyid(p.proowner) AS owner
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE (SELECT rolsuper FROM pg_authid WHERE oid = p.proowner) IS TRUE
+        ORDER BY schema_name, function_name
+        LIMIT %(limit)s;
+    """
+
+def get_function_volatility_query(connector):
+    """
+    Returns a query to find functions with a 'volatile' volatility setting,
+    which can prevent query parallelization.
+    """
+    return """
+        SELECT
+            n.nspname as schema_name,
+            p.proname as function_name,
+            CASE p.provolatile
+                WHEN 'i' THEN 'immutable'
+                WHEN 's' THEN 'stable'
+                WHEN 'v' THEN 'volatile'
+            END as volatility
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND p.provolatile = 'v'
+        ORDER BY 1, 2
+        LIMIT %(limit)s;
+    """
+
+def get_transaction_wraparound_query(connector):
+    """
+    Returns a query to check for databases approaching transaction ID wraparound.
+    The formula for calculating 'percent_towards_wraparound' is version-agnostic.
+    """
+    return """
+        SELECT
+            datname,
+            age(datfrozenxid),
+            current_setting('autovacuum_freeze_max_age')::float8,
+            round(100 * age(datfrozenxid) / current_setting('autovacuum_freeze_max_age')::float8) as percent_towards_wraparound
+        FROM pg_database
+        ORDER BY age(datfrozenxid) DESC
+        LIMIT %(limit)s;
+    """
+
+def get_inserted_tuples_query(connector):
+    """
+    Returns a query to find tables with the highest number of inserted tuples.
+    This helps identify tables with high write activity.
+    """
+    return """
+        SELECT
+            schemaname,
+            relname,
+            n_tup_ins
+        FROM pg_stat_user_tables
+        WHERE n_tup_ins > 0
+        ORDER BY n_tup_ins DESC
+        LIMIT %(limit)s;
+    """
+
+def get_top_queries_by_io_time_query(connector):
+    """
+    Returns a query for top queries by I/O time, supporting multiple generations
+    of pg_stat_statements column names.
+    """
+    if connector.has_pgstat_new_io_time:
+        # PG17+ style: Sums up shared, local, and temp I/O times
+        return """
+            SELECT
+                (COALESCE(shared_blk_read_time, 0) + COALESCE(shared_blk_write_time, 0) +
+                 COALESCE(local_blk_read_time, 0) + COALESCE(local_blk_write_time, 0) +
+                 COALESCE(temp_blk_read_time, 0) + COALESCE(temp_blk_write_time, 0)) as total_io_time,
+                calls,
+                query
+            FROM pg_stat_statements
+            ORDER BY total_io_time DESC LIMIT %(limit)s;
+        """
+    elif connector.has_pgstat_legacy_io_time:
+        # PG13-16 style
+        return """
+            SELECT
+                (blk_read_time + blk_write_time) as total_io_time,
+                calls,
+                query
+            FROM pg_stat_statements
+            ORDER BY total_io_time DESC LIMIT %(limit)s;
+        """
+    else:
+        # Fallback for older versions or outdated extensions
+        return """
+            SELECT
+                total_exec_time as total_exec_time_as_proxy_for_io,
+                calls,
+                query
+            FROM pg_stat_statements
+            ORDER BY total_time DESC LIMIT %(limit)s;
+        """
