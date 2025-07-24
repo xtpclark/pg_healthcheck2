@@ -1,0 +1,28 @@
+# Core application dependencies
+PyYAML
+requests
+Jinja2
+
+# --- PostgreSQL Plugin ---
+psycopg2-binary
+
+# --- MySQL Plugin ---
+mysql-connector-python
+
+# --- Cassandra Plugin ---
+cassandra-driver
+
+# --- Kafka Plugin ---
+kafka-python
+
+# --- OpenSearch Plugin ---
+opensearch-py
+
+# --- Valkey Plugin ---
+valkey
+
+# --- ClickHouse Plugin ---
+clickhouse-connect
+
+# --- AWS Integration (for RDS/Aurora metrics) ---
+boto3
