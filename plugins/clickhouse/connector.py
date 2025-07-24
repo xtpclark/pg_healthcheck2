@@ -35,12 +35,27 @@ class ClickHouseConnector:
             return {}
 
     def execute_query(self, query, params=None, return_raw=False):
-        # (Implementation for AsciiDoc formatting would go here)
+        """Executes a query and returns formatted and raw results."""
         try:
             result = self.client.query(query, parameters=params)
-            raw_results = result.result_set
-            formatted_result = "Table formatting not yet implemented for ClickHouse."
-            return (formatted_result, raw_results) if return_raw else formatted_result
+            raw_results = result.result_rows # Returns a list of tuples
+            columns = result.column_names
+
+            if not raw_results:
+                return "[NOTE]\n====\nNo results returned.\n====\n", [] if return_raw else ""
+
+            # --- AsciiDoc Formatting Logic ---
+            table = ['|===', '|' + '|'.join(columns)]
+            for row_tuple in raw_results:
+                sanitized_row = [str(v).replace('|', '\\|') if v is not None else '' for v in row_tuple]
+                table.append('|' + '|'.join(sanitized_row))
+            table.append('|===')
+            formatted_result = '\n'.join(table)
+            
+            # Convert list of tuples to list of dicts for structured data
+            structured_results = [dict(zip(columns, row)) for row in raw_results]
+            
+            return (formatted_result, structured_results) if return_raw else formatted_result
         except Exception as e:
             error_str = f"[ERROR]\n====\nQuery failed: {e}\n====\n"
             return (error_str, {"error": str(e)}) if return_raw else error_str

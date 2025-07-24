@@ -17,7 +17,7 @@ class CassandraConnector:
                 password=self.settings['password']
             )
             self.cluster = Cluster(
-                self.settings['contact_points'], # List of contact points
+                self.settings['contact_points'],
                 port=self.settings.get('port', 9042),
                 auth_provider=auth_provider
             )
@@ -42,11 +42,22 @@ class CassandraConnector:
             return {}
 
     def execute_query(self, query, params=None, return_raw=False):
-        # (Implementation for AsciiDoc formatting would go here)
+        """Executes a CQL query and returns formatted and raw results."""
         try:
             rows = self.session.execute(query, params or ())
             raw_results = [row._asdict() for row in rows]
-            formatted_result = "Table formatting not yet implemented for Cassandra."
+
+            if not raw_results:
+                return "[NOTE]\n====\nNo results returned.\n====\n", [] if return_raw else ""
+
+            columns = raw_results[0].keys()
+            table = ['|===', '|' + '|'.join(columns)]
+            for row_dict in raw_results:
+                sanitized_row = [str(v).replace('|', '\\|') if v is not None else '' for v in row_dict.values()]
+                table.append('|' + '|'.join(sanitized_row))
+            table.append('|===')
+            formatted_result = '\n'.join(table)
+            
             return (formatted_result, raw_results) if return_raw else formatted_result
         except Exception as e:
             error_str = f"[ERROR]\n====\nQuery failed: {e}\n====\n"
