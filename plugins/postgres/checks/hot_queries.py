@@ -9,7 +9,8 @@ def run_hot_queries(connector, settings):
     structured_data = {}
 
     try:
-        if settings.get('has_pgstat') != 't':
+        # Check if pg_stat_statements is enabled using the connector
+        if not connector.has_pgstat:
             adoc_content.append("[NOTE]\n====\n`pg_stat_statements` extension is not enabled. Analysis cannot be performed.\n====\n")
             structured_data["hot_queries"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
             return "\n".join(adoc_content), structured_data

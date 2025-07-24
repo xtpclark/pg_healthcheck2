@@ -8,17 +8,18 @@ def run_top_queries_by_execution_time(connector, settings):
     structured_data = {}
 
     try:
-        if settings.get('has_pgstat') != 't':
+        # Check if pg_stat_statements is enabled using the connector
+        if not connector.has_pgstat:
             adoc_content.append("[NOTE]\n====\n`pg_stat_statements` extension is not enabled. Analysis cannot be performed.\n====\n")
             structured_data["top_queries"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
             return "\n".join(adoc_content), structured_data
         
-        # FIX: Get version info from the connector
+        # Get version info from the connector
         version_info = connector.version_info
         if version_info.get('major_version', 0) < 13:
             raise ValueError(f"PostgreSQL version {version_info.get('version_string', 'Unknown')} is not supported.")
 
-        # FIX: Pass the entire connector to the utility function
+        # Pass the entire connector to the utility function
         top_queries_query = get_pg_stat_statements_query(connector, 'standard') + " LIMIT %(limit)s;"
 
         if settings.get('show_qry') == 'true':

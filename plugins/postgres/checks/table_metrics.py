@@ -1,15 +1,20 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version, validate_postgresql_version
-
 def run_table_metrics(connector, settings):
     """
     Analyzes key table-level metrics, focusing on bloat estimation and scan efficiency to identify performance bottlenecks.
     """
-    adoc_content = ["=== Table Health and Scan Efficiency", "Provides an analysis of table size, bloat, and scan patterns. High bloat or frequent sequential scans on large tables can severely degrade performance.\n"]
+    adoc_content = [
+        "=== Table Health and Scan Efficiency",
+        "Provides an analysis of table size, bloat, and scan patterns. High bloat or frequent sequential scans on large tables can severely degrade performance.\n"
+    ]
     structured_data = {}
 
     try:
-        # This single, powerful query calculates bloat and analyzes scan types.
-        # It's more efficient than running multiple separate queries.
+        # Optional: Check minimum PostgreSQL version for compatibility
+        version_info = connector.version_info
+        if version_info.get('major_version', 0) < 9:
+            raise ValueError(f"PostgreSQL version {version_info.get('version_string', 'Unknown')} is not supported for table metrics analysis.")
+
+        # Updated query to correctly extract fillfactor
         table_metrics_query = """
         WITH table_scans AS (
             SELECT
@@ -34,7 +39,15 @@ def run_table_metrics(connector, settings):
                     (SELECT setting FROM pg_settings WHERE name = 'block_size')::numeric AS bs,
                     CASE WHEN c.reltoastrelid = 0 THEN 0 ELSE c.relpages * 8192 * (1 - (c.reltuples / (c.relpages * ((SELECT setting FROM pg_settings WHERE name = 'block_size')::numeric - 24) / 8192))) END AS extra_size,
                     CASE WHEN c.reltoastrelid = 0 THEN 0 ELSE 1 - (c.reltuples / (c.relpages * ((SELECT setting FROM pg_settings WHERE name = 'block_size')::numeric - 24) / 8192)) END AS extra_ratio,
-                    (SELECT (string_to_array(reloptions::text, ','))[1] FROM pg_class WHERE oid = c.oid AND reloptions::text LIKE '%%fillfactor%%')::numeric AS fillfactor
+                    COALESCE(
+                        NULLIF(
+                            regexp_replace(
+                                (SELECT reloptions::text FROM pg_class WHERE oid = c.oid AND reloptions::text LIKE '%%fillfactor%%'),
+                                '.*fillfactor=(\\d+).*', '\\1'
+                            ), ''
+                        )::numeric,
+                        100
+                    ) AS fillfactor
                 FROM pg_class c
                 WHERE c.relkind = 'r'
             ) AS s
@@ -44,7 +57,7 @@ def run_table_metrics(connector, settings):
             c.relname AS table_name,
             pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size,
             pg_size_pretty(tb.bloat_size::bigint) AS estimated_bloat,
-            ROUND((tb.bloat_size * 100 / tb.real_size)::numeric, 2) AS bloat_pct,
+            ROUND((tb.bloat_size * 100 / NULLIF(tb.real_size, 0))::numeric, 2) AS bloat_pct,
             ts.seq_scan,
             COALESCE(ts.idx_scan, 0) AS idx_scan,
             CASE WHEN ts.seq_scan > 0 THEN ROUND((COALESCE(ts.idx_scan, 0) * 100.0 / (ts.seq_scan + COALESCE(ts.idx_scan, 0)))::numeric, 2) ELSE 100 END AS idx_scan_pct
@@ -54,7 +67,7 @@ def run_table_metrics(connector, settings):
         LEFT JOIN table_bloat tb ON tb.tblid = c.oid
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
           AND pg_total_relation_size(c.oid) > (10 * 1024 * 1024) -- Only tables > 10MB
-        ORDER BY tb.bloat_size DESC, ts.seq_scan DESC
+        ORDER BY tb.bloat_size DESC NULLS LAST, ts.seq_scan DESC
         LIMIT %(limit)s;
         """
 

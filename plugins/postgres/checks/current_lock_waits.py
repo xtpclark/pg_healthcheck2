@@ -1,22 +1,31 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version, get_blocking_query
+from plugins.postgres.utils.postgresql_version_compatibility import get_blocking_query
 
 def run_current_lock_waits(connector, settings):
     """
     Identifies any sessions that are currently blocked, waiting to acquire a lock, which can indicate contention issues.
+    
+    Args:
+        connector: The database connector object.
+        settings: Configuration settings dictionary.
+    
+    Returns:
+        tuple: (formatted output as string, structured data as dict)
     """
     adoc_content = ["=== Current Session Lock Waits", "Shows active sessions that are currently waiting for a lock to be released by another session. Persistent lock waits are a sign of transaction contention.\n"]
     structured_data = {}
 
     try:
-        # This query identifies sessions that are blocked by other sessions.
-        blocking_query = get_blocking_query(connector.cursor, connector.execute_query)
+        # Get the version-specific blocking query using the connector
+        blocking_query = get_blocking_query(connector)
         
+        # Optionally display the query if requested
         if settings.get('show_qry') == 'true':
             adoc_content.append("Current lock waits query:")
             adoc_content.append("[,sql]\n----")
             adoc_content.append(blocking_query)
             adoc_content.append("----")
 
+        # Execute the query using the connector
         formatted_result, raw_result = connector.execute_query(blocking_query, return_raw=True)
 
         if "[ERROR]" in formatted_result:

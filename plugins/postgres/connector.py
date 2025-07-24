@@ -10,6 +10,7 @@ class PostgresConnector:
         self.conn = None
         self.cursor = None
         self.version_info = {}  # Attribute to store version details
+        self.has_pgstat = False  # Attribute to store pg_stat_statements availability
 
     def connect(self):
         """Establishes a connection to the database and fetches version info."""
@@ -29,8 +30,12 @@ class PostgresConnector:
             # Get and store version info immediately after connecting
             self.version_info = self._get_version_info()
             
+            # Check for pg_stat_statements after establishing the connection
+            self._check_pg_stat_statements()
+            
             print("✅ Successfully connected to PostgreSQL.")
             print(f"   - Version: {self.version_info.get('version_string', 'Unknown')}")
+            print(f"   - pg_stat_statements enabled: {self.has_pgstat}")
 
         except psycopg2.Error as e:
             print(f"❌ Error connecting to PostgreSQL: {e}")
@@ -40,13 +45,11 @@ class PostgresConnector:
         """Checks if the pg_stat_statements extension is available."""
         try:
             query = "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements');"
-            # The execute_query method is part of this class
             _, ext_exists = self.execute_query(query, is_check=True, return_raw=True)
             self.has_pgstat = (str(ext_exists).lower() == 't' or str(ext_exists).lower() == 'true')
         except Exception as e:
             print(f"Warning: Could not check for pg_stat_statements extension: {e}")
             self.has_pgstat = False
-
 
     def disconnect(self):
         """Closes the database connection."""
