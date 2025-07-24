@@ -1,91 +1,40 @@
-def run_checkpoint(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+# Correct: Import the stateless query builder from the central utility
+from plugins.postgres.utils.postgresql_version_compatibility import get_checkpoint_query
+
+def run_checkpoint_analysis(connector, settings):
     """
-    Analyzes checkpoint activity to optimize WAL performance and reduce I/O load.
+    Analyzes checkpoint performance metrics from pg_stat_bgwriter.
     """
-    adoc_content = ["Analyzes checkpoint activity to optimize WAL performance and reduce I/O load.\n"]
-    structured_data = {} # Dictionary to hold structured findings for this module
-    
-    # Import version compatibility module
-    from .postgresql_version_compatibility import get_postgresql_version, validate_postgresql_version
-    
-    # Get PostgreSQL version compatibility information
-    compatibility = get_postgresql_version(cursor, execute_query)
-    
-    # Validate PostgreSQL version
-    is_supported, error_msg = validate_postgresql_version(compatibility)
-    if not is_supported:
-        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
-        structured_data["version_error"] = {"status": "error", "details": error_msg}
-        return "\n".join(adoc_content), structured_data
+    adoc_content = ["=== Checkpoint Analysis"]
+    # 1. Initialize a dictionary to hold all structured data for this check
+    structured_data = {}
 
-    if settings['show_qry'] == 'true':
-        adoc_content.append("Checkpoint queries:")
-        adoc_content.append("[,sql]\n----")
-        # Show checkpoint queries based on PostgreSQL version
-        if compatibility['is_pg17_or_newer']:
-            adoc_content.append("SELECT num_timed AS checkpoints_timed, num_requested AS checkpoints_req, write_time AS checkpoint_write_time, sync_time AS checkpoint_sync_time, buffers_written AS buffers_checkpoint FROM pg_stat_checkpointer;")
+    try:
+        # Get the correct, version-aware query
+        checkpoint_query = get_checkpoint_query(connector)
+        
+        # The connector returns both formatted text and raw data
+        formatted, raw = connector.execute_query(checkpoint_query, return_raw=True)
+        
+        if "[ERROR]" in formatted:
+            adoc_content.append(formatted)
+            # 2. Populate structured data with an error status
+            structured_data["checkpoint_stats"] = {"status": "error", "data": raw}
+        elif not raw:
+            adoc_content.append("[NOTE]\n====\nCould not retrieve checkpoint statistics.\n====\n")
+            # 2. Populate structured data for the "no results" case
+            structured_data["checkpoint_stats"] = {"status": "success", "data": []}
         else:
-            adoc_content.append("SELECT checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time, buffers_checkpoint FROM pg_stat_bgwriter;")
-        adoc_content.append("SELECT name, setting, unit, short_desc FROM pg_settings WHERE name IN ('checkpoint_timeout', 'max_wal_size', 'checkpoint_completion_target') ORDER BY name;")
-        adoc_content.append("----")
+            adoc_content.append("[IMPORTANT]\n====\nFrequent checkpoints can indicate an undersized `max_wal_size`. Checkpoints should primarily be time-based (`checkpoints_timed`), not requested (`checkpoints_req`).\n====\n")
+            adoc_content.append(formatted)
+            # 2. Populate structured data with the raw results on success
+            structured_data["checkpoint_stats"] = {"status": "success", "data": raw}
+            
+    except Exception as e:
+        error_msg = f"[ERROR]\n====\nCould not analyze checkpoints: {e}\n====\n"
+        adoc_content.append(error_msg)
+        # 2. Populate structured data in case of a fatal exception
+        structured_data["checkpoint_stats"] = {"status": "error", "error": str(e)}
 
-    queries = []
-
-    if compatibility['is_pg17_or_newer']:
-        queries.append(
-            (
-                "Checkpoint Statistics (PostgreSQL 17+)", 
-                "SELECT num_timed AS checkpoints_timed, num_requested AS checkpoints_req, write_time AS checkpoint_write_time, sync_time AS checkpoint_sync_time, buffers_written AS buffers_checkpoint FROM pg_stat_checkpointer;", 
-                True,
-                "checkpoint_statistics" # Data key - keeping consistent key name
-            )
-        )
-    else:
-        queries.append(
-            (
-                "Checkpoint Statistics (PostgreSQL < 17)", 
-                "SELECT checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time, buffers_checkpoint FROM pg_stat_bgwriter;", 
-                True,
-                "checkpoint_statistics" # Data key
-            )
-        )
-    
-    queries.append(
-        (
-            "Checkpoint Configuration", 
-            "SELECT name, setting, unit, short_desc FROM pg_settings WHERE name IN ('checkpoint_timeout', 'max_wal_size', 'checkpoint_completion_target') ORDER BY name;", 
-            True,
-            "checkpoint_configuration" # Data key
-        )
-    )
-
-    for title, query, condition, data_key in queries:
-        if not condition:
-            adoc_content.append(f"{title}\n[NOTE]\n====\nQuery not applicable.\n====\n")
-            structured_data[data_key] = {"status": "not_applicable", "reason": "Query not applicable due to condition."}
-            continue
-        
-        # Standardized parameter passing pattern:
-        # These queries do not use %(limit)s or %(database)s, so params_for_query will be None.
-        params_for_query = None 
-        
-        formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
-        
-        if "[ERROR]" in formatted_result:
-            adoc_content.append(f"{title}\n{formatted_result}")
-            structured_data[data_key] = {"status": "error", "details": raw_result}
-        else:
-            adoc_content.append(title)
-            adoc_content.append(formatted_result)
-            structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
-    
-    adoc_content.append("[TIP]\n====\nHigh checkpoint frequency can increase I/O load. Adjust `checkpoint_timeout` or `max_wal_size` to reduce checkpoint frequency. For Aurora, tune these settings via the RDS parameter group to mitigate CPU and IOPS saturation.\n====\n")
-    
-    if compatibility['is_pg17_or_newer']:
-        adoc_content.append("[NOTE]\n====\nIn PostgreSQL 17 and newer, checkpoint statistics like timed and requested checkpoints, write time, sync time, and buffers written are available in `pg_stat_checkpointer`.\n====\n")
-
-    if settings['is_aurora'] == 'true':
-        adoc_content.append("[NOTE]\n====\nAWS RDS Aurora manages checkpoint settings via the parameter group. Use the AWS Console to adjust `checkpoint_timeout` or `max_wal_size`.\n====\n")
-    
-    # Return both formatted AsciiDoc content and structured data
+    # 3. ALWAYS return the tuple: (AsciiDoc string, structured data dictionary)
     return "\n".join(adoc_content), structured_data

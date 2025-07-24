@@ -1,312 +1,81 @@
-def run_function_audit(cursor, settings, execute_query, execute_pgbouncer, all_structured_findings):
+from plugins.postgres.utils.postgresql_version_compatibility import (
+    get_security_definer_functions_query,
+    get_superuser_owned_functions_query,
+    get_function_volatility_query,
+    get_pg_stat_statements_query
+)
+
+def run_function_audit(connector, settings):
     """
-    Audits database functions for security risks and performance insights.
+    Audits database functions for security risks (SECURITY DEFINER, superuser ownership),
+    performance anti-patterns (volatile functions), and execution statistics.
     """
-    adoc_content = ["=== Function/Stored Proc Audit","Audits database functions for security risks and performance insights."]
-    structured_data = {} # Dictionary to hold structured findings for this module
+    adoc_content = ["=== Function and Stored Procedure Audit", "Audits functions for security, performance, and usage patterns.\n"]
+    structured_data = {}
+    params = {'limit': settings.get('row_limit', 10)}
 
-    # Import version compatibility module
-    from .postgresql_version_compatibility import get_postgresql_version, get_pg_stat_statements_query, validate_postgresql_version
-    
-    # Get PostgreSQL version compatibility information
-    compatibility = get_postgresql_version(cursor, execute_query)
-    
-    # Validate PostgreSQL version
-    is_supported, error_msg = validate_postgresql_version(compatibility)
-    if not is_supported:
-        adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
-        structured_data["version_error"] = {"status": "error", "details": error_msg}
-        return "\n".join(adoc_content), structured_data
-
-    if settings['show_qry'] == 'true':
-        adoc_content.append("Function audit queries:")
-        adoc_content.append("[,sql]\n----")
-        adoc_content.append("""
--- Query for SECURITY DEFINER functions
-SELECT
-    p.proname AS function_name,
-    n.nspname AS schema_name,
-    pg_get_userbyid(p.proowner) AS owner,
-    p.prosecdef AS is_security_definer,
-    p.proacl AS access_privileges
-FROM
-    pg_proc p
-JOIN
-    pg_namespace n ON p.pronamespace = n.oid
-WHERE
-    p.prosecdef IS TRUE
-ORDER BY
-    schema_name, function_name
-LIMIT %(limit)s;
-""")
-        adoc_content.append("""
--- Query for functions owned by superusers
-SELECT
-    p.proname AS function_name,
-    n.nspname AS schema_name,
-    pg_get_userbyid(p.proowner) AS owner,
-    (SELECT rolsuper FROM pg_authid WHERE oid = p.proowner) AS owner_is_superuser
-FROM
-    pg_proc p
-JOIN
-    pg_namespace n ON p.pronamespace = n.oid
-WHERE
-    (SELECT rolsuper FROM pg_authid WHERE oid = p.proowner) IS TRUE
-ORDER BY
-    schema_name, function_name
-LIMIT %(limit)s;
-""")
-        if settings['has_pgstat'] == 't':
-            # Get version-specific pg_stat_statements query
-            pg_stat_query = get_pg_stat_statements_query(compatibility, 'function_performance')
-            adoc_content.append(f"""
--- Query for function performance (PostgreSQL {compatibility['version_string']})
-{pg_stat_query}
-LIMIT %(limit)s;
-""")
-        adoc_content.append("----")
-
-    queries = [
-        (
-            "Functions with SECURITY DEFINER",
-            """
-SELECT
-    p.proname AS function_name,
-    n.nspname AS schema_name,
-    pg_get_userbyid(p.proowner) AS owner,
-    p.proacl AS access_privileges
-FROM
-    pg_proc p
-JOIN
-    pg_namespace n ON p.pronamespace = n.oid
-WHERE
-    p.prosecdef IS TRUE
-ORDER BY
-    schema_name, function_name
-LIMIT %(limit)s;
-""",
-            True, # Always applicable
-            "security_definer_functions"
-        ),
-        (
-            "Functions Owned by Superusers",
-            """
-SELECT
-    p.proname AS function_name,
-    n.nspname AS schema_name,
-    pg_get_userbyid(p.proowner) AS owner
-FROM
-    pg_proc p
-JOIN
-    pg_namespace n ON p.pronamespace = n.oid
-WHERE
-    (SELECT rolsuper FROM pg_authid WHERE oid = p.proowner) IS TRUE
-ORDER BY
-    schema_name, function_name
-LIMIT %(limit)s;
-""",
-            True, # Always applicable
-            "superuser_owned_functions"
-        )
-    ]
-
-    # Initialize flags for security findings summary
-    found_security_definer = False
-    found_superuser_owned = False
-
-    # Process security-related queries first to determine summary
-    security_queries_to_process = [q for q in queries if q[3] in ["security_definer_functions", "superuser_owned_functions"]]
-
-    for title, query, condition, data_key in security_queries_to_process:
-        if not condition:
-            # This path is not expected for these queries, but kept for robustness
-            structured_data[data_key] = {"status": "not_applicable", "reason": "Query not applicable due to condition."}
-            continue
+    # --- Security Checks ---
+    try:
+        adoc_content.append("==== Security Analysis")
         
-        params_for_query = {'limit': settings['row_limit']} if '%(limit)s' in query else None
-        formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
+        # Check for SECURITY DEFINER functions
+        sec_def_query = get_security_definer_functions_query(connector)
+        sec_def_formatted, sec_def_raw = connector.execute_query(sec_def_query, params=params, return_raw=True)
 
-        if "[ERROR]" in formatted_result:
-            # Append error immediately
-            adoc_content.append(f"{title}\n{formatted_result}")
-            structured_data[data_key] = {"status": "error", "details": raw_result}
+        if sec_def_raw:
+            adoc_content.append("[WARNING]\n====\n**SECURITY DEFINER Functions Found:** These functions execute with the privileges of their owner. Review them carefully to prevent potential privilege escalation vulnerabilities.\n====\n")
+            adoc_content.append(sec_def_formatted)
         else:
-            # Append successful results
-            adoc_content.append(title)
-            adoc_content.append(formatted_result)
-            structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
-            
-            # Check for security findings to set flags
-            if data_key == "security_definer_functions" and raw_result:
-                found_security_definer = True
-            if data_key == "superuser_owned_functions" and raw_result:
-                found_superuser_owned = True
+            adoc_content.append("[NOTE]\n====\nNo `SECURITY DEFINER` functions found. This is a good security practice.\n====\n")
+        structured_data["security_definer_functions"] = {"status": "success", "data": sec_def_raw}
 
-    # NEW: Add a summary of security findings at the top of the section, after the main title/description
-    security_summary_lines = []
-    if found_security_definer or found_superuser_owned:
-        security_summary_lines.append("[IMPORTANT]\n====\nPotential security vulnerabilities identified in functions:\n")
-        if found_security_definer:
-            security_summary_lines.append("* One or more `SECURITY DEFINER` functions were found. These require careful review to prevent privilege escalation.\n")
-        if found_superuser_owned:
-            security_summary_lines.append("* One or more functions are owned by superusers. Consider reassigning ownership to less privileged roles where appropriate.\n")
-        security_summary_lines.append("====\n")
-        
-        # Insert the summary right after the initial section title and description
-        # adoc_content[0] is "=== Function Audit", adoc_content[1] is "Audits database functions..."
-        adoc_content.insert(2, "\n".join(security_summary_lines))
+        # Check for superuser-owned functions
+        su_owned_query = get_superuser_owned_functions_query(connector)
+        su_owned_formatted, su_owned_raw = connector.execute_query(su_owned_query, params=params, return_raw=True)
 
+        if su_owned_raw:
+            adoc_content.append("\n[CAUTION]\n====\n**Superuser-Owned Functions Found:** Functions owned by superusers can be a security risk if not properly secured. Consider reassigning ownership to less-privileged roles where appropriate.\n====\n")
+            adoc_content.append(su_owned_formatted)
+        structured_data["superuser_owned_functions"] = {"status": "success", "data": su_owned_raw}
 
-    # Add pg_stat_statements related queries conditionally
-    if settings['has_pgstat'] == 't':
-        if compatibility['is_pg14_or_newer']:
-            adoc_content.append("\nTop Statements by Execution Time (pg_stat_statements, PostgreSQL 14+)")
-            adoc_content.append("[NOTE]\n====\nFor PostgreSQL 14 and newer, `pg_stat_statements` tracks statistics per `queryid` (hashed statement). Direct linking to function OIDs (`funcid`) is not available in this view. The following table shows top statements by execution time, which may include function calls. Manual inspection of the `query` column is required to identify specific function calls.\n====\n")
-            queries.append(
-                (
-                    "Top Statements by Total Execution Time (pg_stat_statements)",
-                    """
-SELECT
-    query,
-    calls,
-    total_exec_time,
-    min_exec_time,
-    max_exec_time,
-    mean_exec_time
-FROM
-    pg_stat_statements
-ORDER BY
-    total_exec_time DESC
-LIMIT %(limit)s;
-""",
-                    True, # Applicable if pg_stat_statements is enabled
-                    "top_statements_by_time" # Changed key name to reflect "statements" not "functions"
-                )
-            )
-            queries.append(
-                (
-                    "Top Statements by Call Count (pg_stat_statements)",
-                    """
-SELECT
-    query,
-    calls,
-    total_exec_time,
-    min_exec_time,
-    max_exec_time,
-    mean_exec_time
-FROM
-    pg_stat_statements
-ORDER BY
-    calls DESC
-LIMIT %(limit)s;
-""",
-                    True, # Applicable if pg_stat_statements is enabled
-                    "top_statements_by_calls" # Changed key name
-                )
-            )
+    except Exception as e:
+        adoc_content.append(f"\n[ERROR]\n====\nCould not perform function security audit: {e}\n====\n")
+
+    # --- Volatility Check ---
+    try:
+        adoc_content.append("\n==== Performance: Volatility Analysis")
+        volatility_query = get_function_volatility_query(connector)
+        volatility_formatted, volatility_raw = connector.execute_query(volatility_query, params=params, return_raw=True)
+
+        if volatility_raw:
+            adoc_content.append("[IMPORTANT]\n====\n**Volatile Functions Found:** Functions marked as `VOLATILE` can inhibit query parallelization and other optimizations. Review these functions to see if they can be safely changed to `STABLE` or `IMMUTABLE`.\n====\n")
+            adoc_content.append(volatility_formatted)
         else:
-            adoc_content.append("\nTop Functions by Execution Time/Calls (pg_stat_statements, PostgreSQL < 14)")
-            adoc_content.append("[NOTE]\n====\nFor PostgreSQL versions before 14, `pg_stat_statements` tracks statistics per function OID (`funcid`). This provides direct function-level metrics.\n====\n")
-            queries.append(
-                (
-                    "Top Functions by Total Execution Time (pg_stat_statements)",
-                    """
-SELECT
-    p.proname AS function_name,
-    n.nspname AS schema_name,
-    s.calls,
-    s.total_time,
-    s.min_time,
-    s.max_time,
-    s.mean_time
-FROM
-    pg_stat_statements s
-JOIN
-    pg_proc p ON s.funcid = p.oid
-JOIN
-    pg_namespace n ON p.pronamespace = n.oid
-ORDER BY
-    s.total_time DESC
-LIMIT %(limit)s;
-""",
-                    True, # Applicable if pg_stat_statements is enabled
-                    "top_functions_by_time"
-                )
-            )
-            queries.append(
-                (
-                    "Top Functions by Call Count (pg_stat_statements)",
-                    """
-SELECT
-    p.proname AS function_name,
-    n.nspname AS schema_name,
-    s.calls,
-    s.total_time,
-    s.min_time,
-    s.max_time,
-    s.mean_time
-FROM
-    pg_stat_statements s
-JOIN
-    pg_proc p ON s.funcid = p.oid
-JOIN
-    pg_namespace n ON p.pronamespace = n.oid
-ORDER BY
-    s.calls DESC
-LIMIT %(limit)s;
-""",
-                    True, # Applicable if pg_stat_statements is enabled
-                    "top_functions_by_calls"
-                )
-            )
-    else:
-        adoc_content.append("\nTop Functions/Statements by Execution Time/Calls")
-        adoc_content.append("[NOTE]\n====\n`pg_stat_statements` extension is not enabled. Enable it to get detailed function/statement performance metrics.\n====\n")
-        queries.append(
-            (
-                "pg_stat_statements Not Enabled",
-                "SELECT 'pg_stat_statements extension not enabled' AS note;",
-                False, # Not applicable if pg_stat_statements is not enabled
-                "pg_stat_statements_disabled"
-            )
-        )
+            adoc_content.append("[NOTE]\n====\nNo volatile functions found in user schemas. This is a good sign for query optimization.\n====\n")
+        structured_data["volatile_functions"] = {"status": "success", "data": volatility_raw}
 
+    except Exception as e:
+        adoc_content.append(f"\n[ERROR]\n====\nCould not analyze function volatility: {e}\n====\n")
 
-    # Re-process performance related queries if pg_stat_statements is enabled
-    # This loop is separate to ensure security findings are summarized first
-    if settings['has_pgstat'] == 't':
-        # Filter queries to only include performance related ones for this loop
-        performance_queries = [q for q in queries if q[3] in ["top_statements_by_time", "top_statements_by_calls", "top_functions_by_time", "top_functions_by_calls"]]
-        
-        for title, query, condition, data_key in performance_queries:
-            if not condition: # Should always be true here if has_pgstat is 't'
-                continue
+    # --- pg_stat_statements Performance Check ---
+    try:
+        adoc_content.append("\n==== Performance: Execution Statistics")
+        if connector.has_pgstat:
+            # The get_pg_stat_statements_query already handles version differences (PG14+ vs older)
+            stats_query = get_pg_stat_statements_query(connector, 'function_performance') + " LIMIT %(limit)s;"
+            stats_formatted, stats_raw = connector.execute_query(stats_query, params=params, return_raw=True)
             
-            params_for_query = {'limit': settings['row_limit']} if '%(limit)s' in query else None
-            
-            formatted_result, raw_result = execute_query(query, params=params_for_query, return_raw=True)
-
-            if "[ERROR]" in formatted_result:
-                adoc_content.append(f"{title}\n{formatted_result}")
-                structured_data[data_key] = {"status": "error", "details": raw_result}
+            if not connector.version_info.get('is_pg14_or_newer'):
+                 adoc_content.append("[NOTE]\n====\nShowing top functions by total execution time based on `pg_stat_statements`.\n====\n")
             else:
-                adoc_content.append(title)
-                adoc_content.append(formatted_result)
-                structured_data[data_key] = {"status": "success", "data": raw_result} # Store raw data
+                 adoc_content.append("[NOTE]\n====\nFor PostgreSQL 14+, `pg_stat_statements` does not directly track function calls. The list below shows the top statements by execution time, which may include function calls.\n====\n")
 
+            adoc_content.append(stats_formatted)
+            structured_data["function_performance_stats"] = {"status": "success", "data": stats_raw}
+        else:
+            adoc_content.append("[NOTE]\n====\n`pg_stat_statements` is not enabled. No function performance data is available.\n====\n")
+            structured_data["function_performance_stats"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
+    except Exception as e:
+        adoc_content.append(f"\n[ERROR]\n====\nCould not analyze function performance statistics: {e}\n====\n")
 
-    adoc_content.append("[TIP]\n====\n"
-                       "Functions with `SECURITY DEFINER` can pose a security risk if not carefully managed, as they execute with the privileges of their creator, not the caller. "
-                       "Review these functions to ensure their functionality is strictly necessary and their execution is limited to trusted users. "
-                       "Functions owned by superusers should also be scrutinized; consider reassigning ownership to less privileged roles where possible. "
-                       "Monitoring function execution time and call counts (via `pg_stat_statements`) is crucial for identifying performance bottlenecks within your application's database logic.\n"
-                       "====\n")
-    
-    # Add a note about dynamic SQL as a future/manual audit point
-    adoc_content.append("[NOTE]\n====\n"
-                       "Functions employing dynamic SQL (e.g., using `EXECUTE` statements) should be manually audited for potential SQL injection vulnerabilities. "
-                       "Ensure all external inputs used in dynamic queries are properly sanitized using `FORMAT()` or `quote_ident()`/`quote_literal()` to prevent malicious code execution.\n"
-                       "====\n")
-
-    # Return both formatted AsciiDoc content and structured data
     return "\n".join(adoc_content), structured_data

@@ -1,0 +1,145 @@
+A Prioritized Approach to Refactoring
+
+Not all modules are created equal. I recommend tackling them in logical groups, starting with the most foundational checks. This ensures that the core of the health check tool is robustly using the new pattern first.
+
+Phase 1: Core Configuration & Performance Settings
+These are the most critical modules to update first as they often provide the context for other checks.
+
+    critical_performance_settings.py
+
+    general_config_settings.py
+
+    section_postgresql_settings.py
+
+    data_checksums_analysis.py
+
+    lock_wait_config.py
+
+Phase 2: High-Impact Performance Metrics
+These modules analyze core performance areas and are the heart of the health check.
+
+    bgwriter.py
+
+    checkpoint.py
+
+    wal_usage.py
+
+    vacstat2.py
+
+    section_cache_analysis.py
+
+Phase 3: Auditing and Security
+These modules are important for security and compliance.
+
+    foreign_key_audit.py
+
+    function_audit.py
+
+    hba_rules_audit.py
+
+    primary_key_analysis.py
+
+    users.py / users2.py
+
+Phase 4: Remaining Modules & Tooling
+This final phase covers the remaining checks and internal tooling.
+
+    Includes all other modules like aurora_cpu_metrics.py, connection_pooling.py, datadog_setup.py, etc.
+
+Refactoring Example: checkpoint.py
+
+Let's walk through a complete refactoring of a module from your list. The checkpoint.py module likely analyzes data from the pg_stat_bgwriter view, whose columns changed in PostgreSQL 15.
+
+Step 1: Create the Query Builder in postgresql_version_compatibility.py
+
+First, we add a new function to our central compatibility module. This function will be responsible for providing the correct query based on the version information stored in the connector.
+
+File: plugins/postgres/utils/postgresql_version_compatibility.py
+Python
+
+# ... (add this new function to the file)
+
+def get_checkpoint_query(connector):
+    """
+    Returns the appropriate query for checkpoint analysis based on PG version.
+    The 'pg_stat_bgwriter' view was expanded in PostgreSQL 15.
+    """
+    if connector.version_info.get('is_pg15_or_newer'):
+        # PostgreSQL 15 and newer query
+        return """
+            SELECT
+                checkpoints_timed,
+                checkpoints_req,
+                checkpoint_write_time,
+                checkpoint_sync_time,
+                checkpoint_proc_time,
+                (checkpoints_timed + checkpoints_req) as total_checkpoints
+            FROM pg_stat_bgwriter;
+        """
+    else:
+        # Query for versions older than 15
+        return """
+            SELECT
+                checkpoints_timed,
+                checkpoints_req,
+                checkpoint_write_time,
+                checkpoint_sync_time,
+                (checkpoints_timed + checkpoints_req) as total_checkpoints
+            FROM pg_stat_bgwriter;
+        """
+
+Step 2: Refactor the checkpoint.py Module
+
+Now, we update the check module itself. We remove all local version detection and instead use our new, centralized function.
+
+File: plugins/postgres/checks/checkpoint.py
+
+👎 Before (Old Pattern):
+Python
+
+# from plugins.postgres.utils.misc import get_postgresql_version # REMOVE THIS
+
+def run_checkpoint_analysis(connector, settings):
+    # version = get_postgresql_version(connector) # REMOVE THIS
+    #
+    # if version['major_version'] >= 15: # REMOVE THIS LOGIC
+    #     query = "SELECT ... -- PG15+ query"
+    # else:
+    #     query = "SELECT ... -- Pre-PG15 query"
+    #
+    # ...
+
+👍 After (New, Correct Pattern):
+Python
+
+# Import the new function from the central compatibility module
+from plugins.postgres.utils.postgresql_version_compatibility import get_checkpoint_query
+
+def run_checkpoint_analysis(connector, settings):
+    """
+    Analyzes checkpoint performance metrics from pg_stat_bgwriter.
+    """
+    adoc_content = ["=== Checkpoint Analysis"]
+    
+    try:
+        # Get the version-aware query from our centralized helper
+        checkpoint_query = get_checkpoint_query(connector)
+        
+        # Execute the query
+        formatted, raw = connector.execute_query(checkpoint_query, return_raw=True)
+        
+        if "[ERROR]" in formatted:
+            adoc_content.append(formatted)
+        elif not raw:
+            adoc_content.append("[NOTE]\n====\nCould not retrieve checkpoint statistics.\n====\n")
+        else:
+            # The module now focuses on *analyzing* the data, not fetching it
+            adoc_content.append("[IMPORTANT]\n====\nFrequent checkpoints can indicate an undersized `max_wal_size`. Checkpoints should primarily be time-based (`checkpoints_timed`), not requested (`checkpoints_req`).\n====\n")
+            adoc_content.append(formatted)
+            
+    except Exception as e:
+        adoc_content.append(f"[ERROR]\n====\nCould not analyze checkpoints: {e}\n====\n")
+
+    return "\n".join(adoc_content), {"checkpoint_stats": raw}
+
+This refactored module is now cleaner, adheres to the new architecture, and is much easier to maintain. By applying this same two-step process to the other modules in your list, your development team can systematically and efficiently complete this important refactoring effort.

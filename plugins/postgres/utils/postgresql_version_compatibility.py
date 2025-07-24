@@ -217,3 +217,133 @@ def get_blocking_query(connector):
           AND blocked.locked_by = blocking.pid;
         """
     return query
+
+def get_checkpoint_query(connector):
+    """
+    Returns the appropriate query for checkpoint analysis based on PG version.
+    The 'pg_stat_bgwriter' view was expanded in PostgreSQL 15.
+    """
+    if connector.version_info.get('is_pg15_or_newer'):
+        # PostgreSQL 15 and newer query
+        return """
+            SELECT
+                checkpoints_timed,
+                checkpoints_req,
+                checkpoint_write_time,
+                checkpoint_sync_time,
+                checkpoint_proc_time,
+                (checkpoints_timed + checkpoints_req) as total_checkpoints
+            FROM pg_stat_bgwriter;
+        """
+    else:
+        # Query for versions older than 15
+        return """
+            SELECT
+                checkpoints_timed,
+                checkpoints_req,
+                checkpoint_write_time,
+                checkpoint_sync_time,
+                (checkpoints_timed + checkpoints_req) as total_checkpoints
+            FROM pg_stat_bgwriter;
+        """
+
+
+def get_bgwriter_query(connector):
+    """
+    Returns the appropriate query for bgwriter/checkpointer analysis.
+    The 'pg_stat_bgwriter' view was expanded in PostgreSQL 15 and the checkpointer
+    stats were moved to their own view in 17.
+    """
+    if connector.version_info.get('is_pg17_or_newer'):
+        return "SELECT * FROM pg_stat_checkpointer;"
+    elif connector.version_info.get('is_pg15_or_newer'):
+        return "SELECT *, (checkpoints_timed + checkpoints_req) as total_checkpoints FROM pg_stat_bgwriter;"
+    else:
+        return "SELECT *, (checkpoints_timed + checkpoints_req) as total_checkpoints FROM pg_stat_bgwriter;"
+
+def get_available_extensions_query(connector):
+    """
+    Returns a query to find installed extensions that have available updates.
+    The query is version-agnostic but is placed here for consistency.
+    """
+    return """
+        SELECT name, default_version, installed_version
+        FROM pg_available_extensions
+        WHERE installed_version IS NOT NULL AND default_version <> installed_version;
+    """
+
+def get_function_volatility_query(connector):
+    """
+    Returns a query to find functions with a 'volatile' volatility setting,
+    which can prevent query parallelization.
+    """
+    return """
+        SELECT
+            n.nspname as schema_name,
+            p.proname as function_name,
+            CASE p.provolatile
+                WHEN 'i' THEN 'immutable'
+                WHEN 's' THEN 'stable'
+                WHEN 'v' THEN 'volatile'
+            END as volatility
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND p.provolatile = 'v'
+        ORDER BY 1, 2;
+    """
+
+def get_high_insert_tables_query(connector):
+    """
+    Returns a query to identify tables with high rates of inserts, which
+    can be candidates for tuning.
+    """
+    return """
+        SELECT
+            schemaname,
+            relname,
+            n_ins_since_vacuum AS inserts_since_last_vacuum
+        FROM pg_stat_user_tables
+        WHERE n_ins_since_vacuum > 100000 -- Threshold for high inserts
+        ORDER BY n_ins_since_vacuum DESC
+        LIMIT %(limit)s;
+    """
+
+def get_cache_hit_ratio_query(connector):
+    """
+    Returns a query to calculate the cache hit ratio for indexes and tables.
+    A low cache hit ratio can indicate an undersized shared_buffers.
+    """
+    return """
+        SELECT
+            'index' AS object_type,
+            SUM(heap_blks_read) AS heap_read,
+            SUM(heap_blks_hit)  AS heap_hit,
+            (SUM(heap_blks_hit) - SUM(heap_blks_read)) / SUM(heap_blks_hit) AS ratio
+        FROM pg_statio_user_indexes
+        UNION ALL
+        SELECT
+            'table' AS object_type,
+            SUM(idx_blks_read) AS idx_read,
+            SUM(idx_blks_hit)  AS idx_hit,
+            (SUM(idx_blks_hit) - SUM(idx_blks_read)) / SUM(idx_blks_hit) AS ratio
+        FROM pg_statio_user_tables;
+    """
+
+def get_vacuum_stats_query(connector):
+    """
+    Returns a query to find tables that may need vacuuming.
+    """
+    return """
+        SELECT
+            schemaname,
+            relname,
+            n_live_tup,
+            n_dead_tup,
+            last_autovacuum,
+            last_autoanalyze
+        FROM pg_stat_user_tables
+        WHERE n_dead_tup > 10000 -- Threshold for dead tuples
+        ORDER BY n_dead_tup DESC
+        LIMIT %(limit)s;
+    """
