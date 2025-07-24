@@ -1,0 +1,99 @@
+= pg_healthcheck2: Architectural Overview
+:toc: left
+:toclevels: 3
+:sectnums:
+
+This document outlines the refactored architecture of the `pg_healthcheck2` tool. The primary goal of this redesign is to create a **decoupled, modular, and extensible framework** that is easy to maintain and can be adapted to support different database technologies in the future.
+
+The core of the architecture is a **connector-centric model** with a clear separation of responsibilities between components.
+
+'''
+
+== Core Components
+
+The system is built around several key components, each with a distinct and well-defined role.
+
+=== The Orchestrator (`main.py`)
+
+*Role*:: The entry point and main controller of the application.
+*Responsibilities*::
+** Parses command-line arguments (`--config`, `--output`, etc.).
+** Loads the main `config.yaml` settings.
+** Discovers and loads the appropriate database **plugin** (e.g., the PostgreSQL plugin) based on the `db_type` setting.
+** Instantiates the plugin's **connector**.
+** Iterates through a report definition file, calling the specified **check modules**.
+** Orchestrates the AI analysis workflow by calling the agnostic prompt generator and recommendation engine.
+** Writes the final AsciiDoc report and structured JSON findings to disk.
+*Key Principle*:: `main.py` is **database-agnostic**. It contains no SQL queries or logic specific to any database technology. It interacts with the database entirely through the generic connector interface.
+
+=== The Connector (`plugins/postgres/connector.py`)
+
+*Role*:: The **single source of truth** for all interactions with the database.
+*Responsibilities*::
+** Manages the database connection lifecycle (`connect()`, `disconnect()`).
+** Upon connection, it immediately determines and stores critical database metadata, such as the PostgreSQL version (`version_info`) and the availability of extensions (`has_pgstat`). This prevents redundant checks.
+** Provides a robust `execute_query()` method that handles query execution, error handling, and formatting of results into both AsciiDoc tables and raw Python dictionaries.
+** Contains helper methods to check for specific database capabilities, such as the different generations of I/O timing columns in `pg_stat_statements`.
+*Key Principle*:: All database state is determined **once** by the connector and then passed to other components. Check modules should never perform their own version or capability checks.
+
+=== The Compatibility Module (`plugins/postgres/utils/postgresql_version_compatibility.py`)
+
+*Role*:: A library of **stateless helper functions** that build version-aware SQL queries.
+*Responsibilities*::
+** Contains functions that accept the `connector` object as an argument.
+** Uses the `connector.version_info` dictionary to select the correct SQL syntax for the connected PostgreSQL version.
+** Handles all version-specific differences, such as the renaming of WAL functions (`pg_xlog...` vs. `pg_wal...`) or changes in system views (`pg_stat_bgwriter` vs. `pg_stat_checkpointer`).
+*Key Principle*:: All non-trivial SQL queries should be centralized in this module. This keeps the check modules clean and focused on analysis, and it makes the system easy to update when new PostgreSQL versions are released.
+
+=== The Check Modules (`plugins/postgres/checks/`)
+
+*Role*:: Small, focused modules that each perform a single, specific health check.
+*Responsibilities*::
+** Each module contains a single primary function (e.g., `run_replication_health(connector, settings)`).
+** It receives a fully initialized `connector` object.
+** It calls the `postgresql_version_compatibility.py` module to get the correct SQL query string(s).
+** It uses `connector.execute_query()` to get the data.
+** It formats the results with AsciiDoc notes and tips.
+** It returns both the AsciiDoc content and a dictionary of structured data.
+*Key Principle*:: Check modules are **"dumb" consumers** of information. They do not perform their own version detection or contain hardcoded SQL. They trust the connector and the compatibility module to provide the right data.
+
+'''
+
+== The AI Analysis Workflow
+
+The AI analysis is designed to be as decoupled and technology-agnostic as the database checks themselves.
+
+=== The Rules Engine (`plugins/postgres/rules/analysis_rules.py`)
+
+*Role*:: A configuration file that defines what constitutes a "problem" in the raw data.
+*Responsibilities*::
+** Contains a dictionary of rules that map specific data patterns to a severity level (`critical`, `high`, `medium`), a human-readable reason, and a recommended action.
+*Key Principle*:: This file allows the programmatic, pre-analysis of the structured data before it is sent to the AI, giving the AI context on what the system has already identified as a potential issue.
+
+=== The Prompt Generator (`utils/dynamic_prompt_generator.py`)
+
+*Role*:: An agnostic "brain" that intelligently constructs the prompt for the AI.
+*Responsibilities*::
+** Loads the structured findings and the analysis rules.
+** Performs a **severity analysis** to identify modules with high-priority issues.
+** Uses **smart summarization**: it includes the full data for problematic modules but only a brief summary for healthy ones to stay within the AI's token limits.
+** Uses Jinja2 templates to build the final, detailed prompt.
+
+=== The Recommendation Engine (`utils/run_recommendation.py`)
+
+*Role*:: A simple, agnostic "messenger" that communicates with the AI API.
+*Responsibilities*::
+** Takes the final, pre-built prompt from the generator.
+** Handles the technical details of the API call (headers, authentication, SSL).
+** Parses the AI's response and returns the recommendations.
+
+'''
+
+== Developer Guidelines
+
+To maintain the integrity of this architecture, all new and refactored modules must follow these rules:
+
+. **Never Check the Version Locally**: Do not add any version detection logic to a check module. Always rely on the `connector.version_info` dictionary.
+. **Centralize All SQL**: All non-trivial SQL queries **must** be placed in a function within `postgresql_version_compatibility.py`. The check module should import and call this function.
+. **Return Both Content and Data**: Every check module function must return a tuple containing two items: the formatted AsciiDoc string and the dictionary of structured data.
+. **Create Summaries for AI**: For modules that produce long lists of data (e.g., query analysis, index lists), create a high-level summary query. The structured data should include this summary, which the AI will use for its analysis, while the detailed list is used for the human-readable report.
