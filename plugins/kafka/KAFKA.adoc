@@ -1,0 +1,36 @@
+= Apache Kafka Health Check Plugin
+:toc: left
+:toclevels: 2
+:sectnums:
+
+This document provides an overview of the Apache Kafka Health Check Plugin for `pg_healthcheck2`.
+
+== Overview
+
+The Kafka plugin allows `pg_healthcheck2` to connect to an Apache Kafka cluster and retrieve administrative information. It uses the `kafka-python` library's `KafkaAdminClient` to describe the cluster's state.
+
+== Configuration
+
+To use the Kafka plugin, set the `db_type` in your `config.yaml` to `kafka`. The plugin requires the following configuration settings:
+
+[source,yaml]
+----
+# config.yaml
+db_type: kafka
+
+# Connection settings
+bootstrap_servers:
+  - 'kafka1:9092' # A list of one or more broker addresses
+# security_protocol: SASL_SSL # Example for a secure cluster
+----
+
+== Available Checks
+
+This section details the checks included in the default report.
+
+=== Broker Metadata Check
+
+*Module*:: `plugins.kafka.checks.broker_metadata_check`
+*Function*:: `run_broker_metadata_check`
+
+This check connects to the Kafka cluster and retrieves metadata about the brokers that form the cluster. It lists each broker's node ID, hostname, and port. This is a fundamental check to ensure that the client can see all expected brokers.

@@ -1,0 +1,38 @@
+= Apache Cassandra Health Check Plugin
+:toc: left
+:toclevels: 2
+:sectnums:
+
+This document provides an overview of the Apache Cassandra Health Check Plugin for `pg_healthcheck2`.
+
+== Overview
+
+The Cassandra plugin allows `pg_healthcheck2` to connect to an Apache Cassandra cluster and perform basic health and status checks. It uses the DataStax Python Driver to communicate with the cluster via CQL.
+
+== Configuration
+
+To use the Cassandra plugin, set the `db_type` in your `config.yaml` to `cassandra`. The plugin requires the following configuration settings:
+
+[source,yaml]
+----
+# config.yaml
+db_type: cassandra
+
+# Connection settings
+contact_points:
+  - '127.0.0.1' # A list of one or more cluster nodes
+port: 9042
+user: 'your_username'
+password: 'your_password'
+----
+
+== Available Checks
+
+This section details the checks included in the default report.
+
+=== Node Status Check
+
+*Module*:: `plugins.cassandra.checks.nodetool_status_check`
+*Function*:: `run_nodetool_status_check`
+
+This check simulates the output of the `nodetool status` command by querying the `system.peers` table. It provides a quick overview of the nodes in the cluster, their status, load, and rack information. This is useful for verifying that all nodes are up and in a `NORMAL` state.

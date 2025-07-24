@@ -1,0 +1,44 @@
+= Valkey Health Check Plugin
+:toc: left
+:toclevels: 2
+:sectnums:
+
+This document provides an overview of the Valkey Health Check Plugin for `pg_healthcheck2`.
+
+== Overview
+
+The Valkey plugin allows `pg_healthcheck2` to connect to a Valkey (or Redis) server and perform basic operational checks. It uses the `valkey-py` client library.
+
+== Configuration
+
+To use the Valkey plugin, set the `db_type` in your `config.yaml` to `valkey`. The plugin requires the following configuration settings:
+
+[source,yaml]
+----
+# config.yaml
+db_type: valkey
+
+# Connection settings
+host: 'localhost'
+port: 6379
+password: 'your_password' # Can be null if not set
+db: 0
+----
+
+== Available Checks
+
+This section details the checks included in the default report.
+
+=== Ping Check
+
+*Module*:: `plugins.valkey.checks.ping_check`
+*Function*:: `run_ping_check`
+
+This performs a simple `PING` command against the server. A successful response confirms that the server is running and network connectivity is established.
+
+=== Info Check
+
+*Module*:: `plugins.valkey.checks.info_check`
+*Function*:: `run_info_check`
+
+This check runs the `INFO` command and displays a selection of key metrics, such as the Valkey version, uptime, connected clients, and memory usage. It provides a quick snapshot of the server's health and workload.

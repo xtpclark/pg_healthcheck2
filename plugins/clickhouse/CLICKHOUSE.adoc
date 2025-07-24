@@ -1,0 +1,37 @@
+= ClickHouse Health Check Plugin
+:toc: left
+:toclevels: 2
+:sectnums:
+
+This document provides an overview of the ClickHouse Health Check Plugin for `pg_healthcheck2`.
+
+== Overview
+
+The ClickHouse plugin allows `pg_healthcheck2` to connect to a ClickHouse server and perform health and status checks. It uses the `clickhouse-connect` client library.
+
+== Configuration
+
+To use the ClickHouse plugin, set the `db_type` in your `config.yaml` to `clickhouse`. The plugin requires the following configuration settings:
+
+[source,yaml]
+----
+# config.yaml
+db_type: clickhouse
+
+# Connection settings
+host: 'localhost'
+port: 8123
+user: 'your_username'
+password: 'your_password'
+----
+
+== Available Checks
+
+This section details the checks included in the default report.
+
+=== System Metrics Check
+
+*Module*:: `plugins.clickhouse.checks.system_metrics_check`
+*Function*:: `run_system_metrics_check`
+
+This check queries the `system.metrics` table to provide a snapshot of various internal metrics of the ClickHouse server. This can be useful for monitoring server activity and resource usage at a low level.
