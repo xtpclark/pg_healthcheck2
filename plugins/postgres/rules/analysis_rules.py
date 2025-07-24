@@ -1,20 +1,21 @@
 # --- Configuration for Metric Analysis ---
 # PostgreSQL Rules
 METRIC_ANALYSIS_CONFIG = {
-    # --- Rule for Hot Query Workload Concentration ---
     'query_workload_concentration': {
-        'metric_keywords': ['hot_query_summary'],
-        'data_conditions': [{'key': 'total_queries_tracked', 'exists': True}],
+        # This now correctly looks for the summary key from the query_analysis module
+        'metric_keywords': ['query_workload_summary'],
+        'data_conditions': [{'key': 'total_execution_time_all_queries_ms', 'exists': True}],
         'rules': [
             {
+                # This expression is updated to point to the correct data structures
                 'expression': (
                     "data.get('total_execution_time_all_queries_ms') and data['total_execution_time_all_queries_ms'] > 0 and "
-                    "(sum(q.get('total_exec_time', q.get('total_time', 0)) or 0 for q in all_structured_findings.get('hot_queries', {}).get('data', {}).get('top_hot_queries', {}).get('data', [])) / data['total_execution_time_all_queries_ms']) * 100 > 75"
+                    "(sum(q.get('total_exec_time', 0) for q in all_structured_findings.get('query_analysis', {}).get('top_by_time', {}).get('data', [])) / data['total_execution_time_all_queries_ms']) * 100 > 75"
                 ),
                 'level': 'critical',
                 'score': 5,
                 'reasoning': "High workload concentration detected. The top {settings['row_limit']} queries account for more than 75% of the total database execution time.",
-                'recommendations': ["Focus optimization efforts on the top queries, as this will yield the most significant performance improvements."]
+                'recommendations': ["Focus optimization efforts on the top queries from the 'Top Queries by Total Execution Time' section, as this will yield the most significant performance improvements."]
             }
         ]
     },
