@@ -92,13 +92,15 @@ class HealthCheck:
     def run_ai_analysis(self):
         print("\n--- Starting AI Analysis ---")
         analysis_rules = self.active_plugin.get_rules_config()
+        
         db_metadata = self.connector.get_db_metadata()
         db_version = db_metadata.get('version', 'N/A')
         db_name = db_metadata.get('db_name', self.settings.get('database', 'N/A'))
 
-        dynamic_analysis = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_version, db_name)
+        # MODIFIED: Pass 'self.active_plugin' as the last argument
+        dynamic_analysis = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_version, db_name, self.active_plugin)
         full_prompt = dynamic_analysis['prompt']
-        
+
         ai_adoc, _ = run_recommendation(self.settings, full_prompt)
         # Append AI content to the main report content
         self.adoc_content += f"\n\n{ai_adoc}"

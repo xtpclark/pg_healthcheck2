@@ -1,125 +1,101 @@
 import json
-import requests
+import argparse
+from pathlib import Path
 import sys
 import yaml
-from pathlib import Path
-import time
-import argparse
-# --- Import the prompt generator ---
-# This path might need to be adjusted based on your final directory structure.
-from modules.dynamic_prompt_generator import generate_dynamic_prompt
+import pkgutil
+import importlib
 
-def load_config(config_file_path):
-    """Loads configuration settings from config.yaml."""
-    try:
-        with open(config_file_path, 'r') as f:
-            return yaml.safe_load(f)
-    except (FileNotFoundError, yaml.YAMLError) as e:
-        print(f"Error loading config file {config_file_path}: {e}")
-        sys.exit(1)
+# Add the project root to the path to allow for correct module imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-def run_offline_ai_analysis(config_file, findings_file, template_file):
+from utils.dynamic_prompt_generator import generate_dynamic_prompt
+from utils.run_recommendation import run_recommendation
+from plugins.base import BasePlugin
+
+def discover_plugins():
     """
-    Performs AI analysis by loading raw structured data, generating a prompt
-    using a specified template, and sending it to the AI endpoint.
+    Finds and loads all available plugins.
+    This is the same resilient discovery function used in main.py.
     """
-    print(f"--- Starting Offline AI Analysis ---")
-    settings = load_config(config_file)
-    
-    # --- Override the template in settings with the command-line argument ---
-    if template_file:
-        settings['prompt_template'] = Path(template_file).name
-    
-    try:
-        with open(findings_file, 'r') as f:
-            all_structured_findings = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Error loading findings file {findings_file}: {e}")
-        sys.exit(1)
+    plugins_path = Path(__file__).parent.parent / "plugins"
+    discovered_plugins = {}
+    for _, name, _ in pkgutil.iter_modules([str(plugins_path)]):
+        if name != "base":
+            try:
+                module = importlib.import_module(f'plugins.{name}')
+                for item_name in dir(module):
+                    item = getattr(module, item_name)
+                    if isinstance(item, type) and issubclass(item, BasePlugin) and item is not BasePlugin:
+                        try:
+                            plugin_instance = item()
+                            discovered_plugins[plugin_instance.technology_name] = plugin_instance
+                            print(f"✅ Discovered and loaded plugin: {plugin_instance.technology_name}")
+                        except Exception as e:
+                            print(f"⚠️  Warning: Could not instantiate plugin '{name}'. Error: {e}. Skipping.")
+            except ImportError as e:
+                print(f"⚠️  Warning: Could not import plugin '{name}'. Missing dependency: {e}. Skipping.")
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to load plugin '{name}' due to an unexpected error: {e}. Skipping.")
+    return discovered_plugins
 
-    # --- Generate the prompt on-the-fly ---
-    try:
-        print(f"--- Generating prompt using template: {settings.get('prompt_template', 'prompt_template.j2')} ---")
-        dynamic_analysis = generate_dynamic_prompt(all_structured_findings, settings)
-        full_prompt = dynamic_analysis['prompt']
-    except Exception as e:
-        print(f"Error generating dynamic prompt: {e}")
-        sys.exit(1)
-
-    print("\n--- AI Prompt Prepared (truncated for display) ---")
-    print(full_prompt[:500] + "...")
-    print("--------------------------------------------------")
-
-    API_KEY = settings.get('ai_api_key')
-    if not API_KEY:
-        print("Error: AI API key not found in config.yaml.")
-        sys.exit(1)
-
-    try:
-        # --- MODIFIED: Load new settings for enterprise proxies ---
-        AI_ENDPOINT = settings.get('ai_endpoint')
-        AI_MODEL = settings.get('ai_model')
-        AI_TEMPERATURE = settings.get('ai_temperature', 0.7)
-        AI_MAX_OUTPUT_TOKENS = settings.get('ai_max_output_tokens', 2048)
-        
-        # Load settings for user identification and SSL
-        AI_USER = settings.get('ai_user', 'anonymous')
-        AI_USER_HEADER = settings.get('ai_user_header', '') # e.g., 'X-User-ID'
-        SSL_CERT_PATH = settings.get('ssl_cert_path', '')
-        AI_SSL_VERIFY = settings.get('ai_ssl_verify', True)
-
-        headers = {'Content-Type': 'application/json'}
-        
-        # --- MODIFIED: Add user header if specified ---
-        if AI_USER_HEADER:
-            headers[AI_USER_HEADER] = AI_USER
-
-        # --- MODIFIED: Determine SSL verification setting ---
-        verify_ssl = AI_SSL_VERIFY
-        if verify_ssl and SSL_CERT_PATH:
-            verify_ssl = SSL_CERT_PATH # Path to custom cert bundle
-        
-        if "generativelanguage.googleapis.com" in AI_ENDPOINT:
-            API_URL = f"{AI_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}"
-            payload = {
-                "contents": [{"parts": [{"text": full_prompt}]}],
-                "generationConfig": {
-                    "temperature": AI_TEMPERATURE,
-                    "maxOutputTokens": AI_MAX_OUTPUT_TOKENS
-                }
-            }
-        else:
-            API_URL = f"{AI_ENDPOINT}v1/chat/completions"
-            headers['Authorization'] = f'Bearer {API_KEY}'
-            payload = {
-                "model": AI_MODEL,
-                "messages": [{"role": "user", "content": full_prompt}],
-                "temperature": AI_TEMPERATURE,
-                "max_tokens": AI_MAX_OUTPUT_TOKENS
-            }
-
-        # --- MODIFIED: Added the 'verify' parameter to the request ---
-        print(f"--- Sending request to AI Endpoint. SSL Verification: {verify_ssl} ---")
-        response = requests.post(API_URL, headers=headers, data=json.dumps(payload), verify=verify_ssl)
-        response.raise_for_status()
-        result = response.json()
-
-        if "generativelanguage.googleapis.com" in AI_ENDPOINT:
-            ai_recommendations = result['candidates'][0]['content']['parts'][0]['text']
-        else:
-            ai_recommendations = result['choices'][0]['message']['content']
-        
-        print("\n--- AI Recommendations ---\n")
-        print(ai_recommendations)
-
-    except Exception as e:
-        print(f"Error communicating with AI API: {e}")
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run offline AI analysis on PostgreSQL health check findings.")
-    parser.add_argument('--config', default='config/config.yaml', help='Path to the config.yaml file.')
-    parser.add_argument('--findings', required=True, help='Path to the structured_health_check_findings.json file.')
-    parser.add_argument('--template', help='Name of the Jinja2 template file to use (e.g., executive_summary_template.j2). Overrides config.yaml.')
+def main():
+    parser = argparse.ArgumentParser(description='Offline AI Analysis Processor')
+    parser.add_argument('--config', required=True, help='Path to the configuration file (e.g., config/config.yaml)')
+    parser.add_argument('--findings', required=True, help='Path to the structured_health_check_findings.json file')
+    parser.add_argument('--template', help='Path to a specific Jinja2 prompt template to use (overrides config)')
+    parser.add_argument('--output', default='ai_recommendations.adoc', help='Output file for the AI-generated report')
     args = parser.parse_args()
 
-    run_offline_ai_analysis(args.config, args.findings, args.template)
+    # --- Load Settings and Findings ---
+    try:
+        with open(args.config, 'r') as f:
+            settings = yaml.safe_load(f)
+        with open(args.findings, 'r') as f:
+            all_structured_findings = json.load(f)
+    except FileNotFoundError as e:
+        print(f"Error: Could not find a required file. {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error loading files: {e}")
+        sys.exit(1)
+
+    # Override the default template if a specific one is provided
+    if args.template:
+        settings['prompt_template'] = Path(args.template).name
+
+    # --- Discover and Load the Correct Plugin ---
+    available_plugins = discover_plugins()
+    active_tech = settings.get('db_type')
+    active_plugin = available_plugins.get(active_tech)
+
+    if not active_plugin:
+        raise ValueError(f"Unsupported or missing db_type: '{active_tech}'. Available plugins: {list(available_plugins.keys())}")
+
+    print(f"\n--- Starting AI Analysis for '{active_tech}' using offline data ---")
+
+    # --- Generate the Prompt ---
+    analysis_rules = active_plugin.get_rules_config()
+    
+    # We don't have a live connector, so we pull metadata from settings
+    db_version = all_structured_findings.get("version_info", {}).get("data", {}).get("version_string", "N/A")
+    db_name = settings.get('database', 'N/A')
+
+    # Pass the active_plugin object to the prompt generator
+    dynamic_analysis = generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin)
+    full_prompt = dynamic_analysis['prompt']
+
+    # --- Get Recommendations from AI ---
+    ai_adoc, _ = run_recommendation(settings, full_prompt)
+
+    # --- Write the Output ---
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, 'w') as f:
+        f.write(ai_adoc)
+
+    print(f"\n✅ AI analysis complete.")
+    print(f"Report saved to: {output_path}")
+
+if __name__ == '__main__':
+    main()

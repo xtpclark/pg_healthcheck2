@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 class BasePlugin(ABC):
     """The interface that every technology plugin must implement."""
@@ -17,11 +18,6 @@ class BasePlugin(ABC):
     @abstractmethod
     def get_rules_config(self):
         """Return the analysis rules configuration dictionary."""
-        pass
-
-    @abstractmethod
-    def get_report_definition(self):
-        """Return the list of sections for the report blueprint."""
         pass
 
     @abstractmethod
