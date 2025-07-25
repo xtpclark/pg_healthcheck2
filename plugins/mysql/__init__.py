@@ -20,5 +20,5 @@ class MySQLPlugin(BasePlugin):
         return {} # Placeholder
 
     def get_template_path(self):
-        # This can be customized if MySQL needs specific templates
+        # Path to prompt templates
         return Path(__file__).parent.parent / "mysql" / "templates"
