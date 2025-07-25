@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Check Trends</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        .run { border: 1px solid #ccc; padding: 1em; margin-bottom: 1em; border-radius: 5px; }
+        h1, h2, h3 { color: #333; }
+        pre { background-color: #f4f4f4; padding: 1em; border-radius: 3px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>Health Check Trend Dashboard</h1>
+    
+    {% if runs %}
+        <h2>Recent Runs ({{ runs|length }})</h2>
+        {% for run in runs %}
+            <div class="run">
+                <h3>Run at: {{ run.run_timestamp }}</h3>
+                <p><strong>Target:</strong> {{ run.target_host }}:{{ run.target_port }} ({{ run.target_db_name }})</p>
+                <h4>Findings:</h4>
+                <pre>{{ run.findings | tojson(indent=2) }}</pre>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No health check runs found in the database.</p>
+    {% endif %}
+
+</body>
+</html>
