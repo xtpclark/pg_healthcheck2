@@ -81,6 +81,9 @@ def main():
     db_version = all_structured_findings.get("version_info", {}).get("data", {}).get("version_string", "N/A")
     db_name = settings.get('database', 'N/A')
 
+    # Override the setting to ensure the AI call is made
+    settings['ai_run_integrated'] = True
+
     # Pass the active_plugin object to the prompt generator
     dynamic_analysis = generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin)
     full_prompt = dynamic_analysis['prompt']
