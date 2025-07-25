@@ -13,8 +13,14 @@ import pkgutil
 
 from utils.dynamic_prompt_generator import generate_dynamic_prompt
 from utils.run_recommendation import run_recommendation
-from utils.report_builder import ReportBuilder # <-- Import the new builder
+from utils.report_builder import ReportBuilder
 from plugins.base import BasePlugin
+
+# --- NEW: Define the application version by reading the VERSION file ---
+try:
+    APP_VERSION = (Path(__file__).parent / "VERSION").read_text().strip()
+except FileNotFoundError:
+    APP_VERSION = "unknown"
 
 class CustomJsonEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -49,6 +55,7 @@ def discover_plugins():
 class HealthCheck:
     def __init__(self, config_file, report_config_file=None):
         self.settings = self.load_settings(config_file)
+        self.app_version = APP_VERSION # <-- Store the app version
         self.available_plugins = discover_plugins()
         active_tech = self.settings.get('db_type')
         self.active_plugin = self.available_plugins.get(active_tech)
@@ -79,8 +86,8 @@ class HealthCheck:
         """Orchestrates the health check process."""
         self.connector.connect()
 
-        # --- MODIFIED: Delegate report building to the new class ---
-        builder = ReportBuilder(self.connector, self.settings, self.active_plugin, self.report_sections)
+        # Pass the app_version to the ReportBuilder
+        builder = ReportBuilder(self.connector, self.settings, self.active_plugin, self.report_sections, self.app_version)
         self.adoc_content, self.all_structured_findings = builder.build()
 
         if self.settings.get('ai_analyze', False):
@@ -92,20 +99,20 @@ class HealthCheck:
     def run_ai_analysis(self):
         print("\n--- Starting AI Analysis ---")
         analysis_rules = self.active_plugin.get_rules_config()
-        
         db_metadata = self.connector.get_db_metadata()
         db_version = db_metadata.get('version', 'N/A')
         db_name = db_metadata.get('db_name', self.settings.get('database', 'N/A'))
 
-        # MODIFIED: Pass 'self.active_plugin' as the last argument
         dynamic_analysis = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_version, db_name, self.active_plugin)
         full_prompt = dynamic_analysis['prompt']
-
+        
         ai_adoc, _ = run_recommendation(self.settings, full_prompt)
-        # Append AI content to the main report content
         self.adoc_content += f"\n\n{ai_adoc}"
 
     def save_structured_findings(self):
+        # --- NEW: Add the app version to the structured data ---
+        self.all_structured_findings['application_version'] = self.app_version
+        
         output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
@@ -125,6 +132,7 @@ def main():
     parser.add_argument('--output', default='health_check.adoc', help='Output file name')
     args = parser.parse_args()
     
+    print(f"--- Running Health Check Tool v{APP_VERSION} ---") # <-- Added version to startup message
     health_check = HealthCheck(args.config, args.report_config)
     health_check.run_report()
     health_check.write_adoc(args.output)

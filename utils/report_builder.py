@@ -8,11 +8,12 @@ class ReportBuilder:
     Handles the construction of the health check report by processing a
     report definition and executing the necessary actions from the active plugin.
     """
-    def __init__(self, connector, settings, active_plugin, report_sections):
+    def __init__(self, connector, settings, active_plugin, report_sections, app_version):
         self.connector = connector
         self.settings = settings
         self.active_plugin = active_plugin
         self.report_sections = report_sections
+        self.app_version = app_version # <-- Store the app version
         self.adoc_content = []
         self.all_structured_findings = {}
 
@@ -30,7 +31,6 @@ class ReportBuilder:
                     content = self._run_module(action['module'], action['function'])
                     self.adoc_content.append(content)
                 elif action_type in ['header', 'comments']:
-                    # Both 'header' and 'comments' are treated as report parts now
                     content = self._read_report_part(action['file'])
                     self.adoc_content.append(content)
         
@@ -57,19 +57,19 @@ class ReportBuilder:
         'templates/report_parts/' directory.
         """
         try:
-            # Get the base template path from the active plugin
             template_path = self.active_plugin.get_template_path()
             file_path = template_path / "report_parts" / filename
             
             with open(file_path, 'r') as f:
                 content = f.read()
 
-            # Replace placeholders like ${COMPANY_NAME}
+            # Replace standard placeholders
             for key, value in self.settings.items():
                 content = content.replace(f'${{{key.upper()}}}', str(value))
             
-            # Add dynamic values like current date
+            # --- NEW: Replace dynamic and version placeholders ---
             content = content.replace('${CURRENT_DATE}', datetime.utcnow().strftime('%Y-%m-%d'))
+            content = content.replace('${APP_VERSION}', self.app_version)
             
             return content
         except FileNotFoundError:
