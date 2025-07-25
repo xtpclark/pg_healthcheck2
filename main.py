@@ -12,6 +12,7 @@ import logging
 import argparse
 import pkgutil
 
+# These utils are now in a dedicated 'utils' directory
 from utils.dynamic_prompt_generator import generate_dynamic_prompt
 from utils.run_recommendation import run_recommendation
 from plugins.base import BasePlugin
@@ -29,13 +30,23 @@ def discover_plugins():
     discovered_plugins = {}
     for _, name, _ in pkgutil.iter_modules([str(plugins_path)]):
         if name != "base":
-            module = importlib.import_module(f'plugins.{name}')
-            for item_name in dir(module):
-                item = getattr(module, item_name)
-                if isinstance(item, type) and issubclass(item, BasePlugin) and item is not BasePlugin:
-                    plugin_instance = item()
-                    discovered_plugins[plugin_instance.technology_name] = plugin_instance
-                    print(f"✅ Discovered and loaded plugin: {plugin_instance.technology_name}")
+            try:
+                # --- MODIFIED: Wrapped module import in a try...except block ---
+                module = importlib.import_module(f'plugins.{name}')
+                for item_name in dir(module):
+                    item = getattr(module, item_name)
+                    if isinstance(item, type) and issubclass(item, BasePlugin) and item is not BasePlugin:
+                        try:
+                            # --- MODIFIED: Wrapped plugin instantiation in a try...except block ---
+                            plugin_instance = item()
+                            discovered_plugins[plugin_instance.technology_name] = plugin_instance
+                            print(f"✅ Discovered and loaded plugin: {plugin_instance.technology_name}")
+                        except Exception as e:
+                            print(f"⚠️  Warning: Could not instantiate plugin '{name}'. Error: {e}. Skipping.")
+            except ImportError as e:
+                print(f"⚠️  Warning: Could not import plugin '{name}'. Missing dependency: {e}. Skipping.")
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to load plugin '{name}' due to an unexpected error: {e}. Skipping.")
     return discovered_plugins
 
 class HealthCheck:
@@ -53,7 +64,7 @@ class HealthCheck:
 
         self.report_sections = self.active_plugin.get_report_definition(report_config_file)
         self.connector = self.active_plugin.get_connector(self.settings)
-
+        
         self.paths = self.get_paths()
         self.adoc_content = []
         self.all_structured_findings = {}
@@ -73,6 +84,7 @@ class HealthCheck:
 
     def read_comments_file(self, comments_file):
         try:
+            # Assumes comments are within the active plugin's directory
             plugin_dir = Path(inspect.getfile(self.active_plugin.__class__)).parent
             file_path = plugin_dir / "comments" / comments_file
             with open(file_path, 'r') as f:
@@ -87,15 +99,9 @@ class HealthCheck:
         try:
             module = importlib.import_module(module_name)
             func = getattr(module, function_name)
-            module_output = func(self.connector, self.settings)
-
-            if isinstance(module_output, tuple) and len(module_output) == 2:
-                adoc_content, structured_data = module_output
-                self.all_structured_findings[module_name.split('.')[-1]] = {"status": "success", "data": structured_data}
-                return adoc_content
-            else:
-                self.all_structured_findings[module_name.split('.')[-1]] = {"status": "warning", "note": "Module did not return structured data."}
-                return module_output
+            adoc_content, structured_data = func(self.connector, self.settings)
+            self.all_structured_findings[module_name.split('.')[-1]] = structured_data
+            return adoc_content
         except Exception as e:
             error_msg = f"[ERROR]\n====\nModule {module_name}.{function_name} failed: {e}\n====\n"
             self.all_structured_findings[module_name.split('.')[-1]] = {"status": "error", "error": str(e)}
@@ -161,5 +167,6 @@ def main():
     print(f"Report generated: {health_check.paths['adoc_out'] / args.output}")
 
 if __name__ == '__main__':
+    # Add the project's root directory to the Python path
     sys.path.insert(0, str(Path(__file__).parent))
     main()
