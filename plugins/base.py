@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 class BasePlugin(ABC):
     """The interface that every technology plugin must implement."""
@@ -20,19 +21,14 @@ class BasePlugin(ABC):
         pass
 
     @abstractmethod
-    def get_report_definition(self):
-        """Return the list of sections for the report blueprint."""
-        pass
-
-    @abstractmethod
-    def get_template_path(self, template_name):
-        """Return the path to a specific report template."""
-        pass
-
-    @abstractmethod
     def get_report_definition(self, report_config_file=None):
         """
         Return the list of sections for the report.
         Can optionally load from a specific file path.
         """
+        pass
+
+    @abstractmethod
+    def get_template_path(self) -> Path:
+        """Returns the path to the plugin's templates directory."""
         pass

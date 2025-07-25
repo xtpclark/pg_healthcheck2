@@ -24,6 +24,10 @@ class PostgresPlugin(BasePlugin):
         """Returns the PostgreSQL-specific analysis rules."""
         return METRIC_ANALYSIS_CONFIG
 
+    def get_template_path(self) -> Path:
+        """Returns the path to this plugin's templates directory."""
+        return Path(__file__).parent / "templates"
+
     def get_report_definition(self, report_config_file=None):
         """
         Dynamically loads a report definition from a file.
@@ -45,6 +49,3 @@ class PostgresPlugin(BasePlugin):
         
         return getattr(report_module, 'REPORT_SECTIONS')
 
-    def get_template_path(self, template_name):
-        """Returns the path to a specific report template."""
-        return Path(__file__).parent / "templates" / template_name

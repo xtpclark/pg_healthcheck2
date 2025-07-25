@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 import jinja2
 from pathlib import Path
 
-# This file is now completely generic and has no database-specific logic.
 
 def convert_to_json_serializable(obj):
     """Convert non-JSON-serializable objects to JSON-compatible types."""
@@ -47,7 +46,7 @@ def analyze_metric_severity(metric_name, data_row, settings, all_findings, analy
     return {'level': 'info', 'score': 0, 'reasoning': '', 'recommendations': []}
 
 
-def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name):
+def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin):
     """
     Generates a dynamic prompt by passing in technology-specific details.
     """
@@ -57,6 +56,11 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
 
     # Severity analysis loop
     for module_name, module_findings in findings_for_analysis.items():
+
+        # Skip top-level items that aren't dictionaries (like 'application_version')
+        if not isinstance(module_findings, dict):
+            continue
+
         # --- START OF CORRECTED INDENTATION ---
         module_issue_map[module_name] = {'critical': 0, 'high': 0, 'medium': 0}
         if module_findings.get("status") == "success" and isinstance(module_findings.get("data"), dict):
@@ -111,9 +115,9 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
                 }
     
     # --- Template Rendering ---
-    template_dir = Path(__file__).parent.parent / 'templates'
+    template_dir = active_plugin.get_template_path() / "prompts"
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(template_dir)), trim_blocks=True, lstrip_blocks=True)
-    template_name = settings.get('prompt_template', 'prompt_template.j2')
+    template_name = settings.get('prompt_template', 'default_prompt.j2')
     template = env.get_template(template_name)
     
     analysis_timestamp = datetime.utcnow().isoformat() + "Z"

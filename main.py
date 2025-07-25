@@ -2,7 +2,6 @@
 import yaml
 import sys
 import importlib
-import inspect
 from pathlib import Path
 from datetime import datetime, timedelta
 import json
@@ -12,10 +11,16 @@ import logging
 import argparse
 import pkgutil
 
-# These utils are now in a dedicated 'utils' directory
 from utils.dynamic_prompt_generator import generate_dynamic_prompt
 from utils.run_recommendation import run_recommendation
+from utils.report_builder import ReportBuilder
 from plugins.base import BasePlugin
+
+# --- NEW: Define the application version by reading the VERSION file ---
+try:
+    APP_VERSION = (Path(__file__).parent / "VERSION").read_text().strip()
+except FileNotFoundError:
+    APP_VERSION = "unknown"
 
 class CustomJsonEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -31,13 +36,11 @@ def discover_plugins():
     for _, name, _ in pkgutil.iter_modules([str(plugins_path)]):
         if name != "base":
             try:
-                # --- MODIFIED: Wrapped module import in a try...except block ---
                 module = importlib.import_module(f'plugins.{name}')
                 for item_name in dir(module):
                     item = getattr(module, item_name)
                     if isinstance(item, type) and issubclass(item, BasePlugin) and item is not BasePlugin:
                         try:
-                            # --- MODIFIED: Wrapped plugin instantiation in a try...except block ---
                             plugin_instance = item()
                             discovered_plugins[plugin_instance.technology_name] = plugin_instance
                             print(f"✅ Discovered and loaded plugin: {plugin_instance.technology_name}")
@@ -51,10 +54,8 @@ def discover_plugins():
 
 class HealthCheck:
     def __init__(self, config_file, report_config_file=None):
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('health_check.log'), logging.StreamHandler()])
-        self.logger = logging.getLogger(__name__)
         self.settings = self.load_settings(config_file)
-
+        self.app_version = APP_VERSION # <-- Store the app version
         self.available_plugins = discover_plugins()
         active_tech = self.settings.get('db_type')
         self.active_plugin = self.available_plugins.get(active_tech)
@@ -64,9 +65,8 @@ class HealthCheck:
 
         self.report_sections = self.active_plugin.get_report_definition(report_config_file)
         self.connector = self.active_plugin.get_connector(self.settings)
-        
         self.paths = self.get_paths()
-        self.adoc_content = []
+        self.adoc_content = ""
         self.all_structured_findings = {}
 
     def load_settings(self, config_file):
@@ -82,75 +82,48 @@ class HealthCheck:
         sanitized_company_name = re.sub(r'\W+', '_', self.settings['company_name'].lower()).strip('_')
         return { 'adoc_out': workdir / 'adoc_out' / sanitized_company_name }
 
-    def read_comments_file(self, comments_file):
-        try:
-            # Assumes comments are within the active plugin's directory
-            plugin_dir = Path(inspect.getfile(self.active_plugin.__class__)).parent
-            file_path = plugin_dir / "comments" / comments_file
-            with open(file_path, 'r') as f:
-                content = f.read()
-            for key, value in self.settings.items():
-                content = content.replace(f'${key.upper()}', str(value))
-            return content
-        except FileNotFoundError:
-            return f"[ERROR]\n====\nComments file {comments_file} not found in plugin.\n====\n"
-
-    def run_module(self, module_name, function_name):
-        try:
-            module = importlib.import_module(module_name)
-            func = getattr(module, function_name)
-            adoc_content, structured_data = func(self.connector, self.settings)
-            self.all_structured_findings[module_name.split('.')[-1]] = structured_data
-            return adoc_content
-        except Exception as e:
-            error_msg = f"[ERROR]\n====\nModule {module_name}.{function_name} failed: {e}\n====\n"
-            self.all_structured_findings[module_name.split('.')[-1]] = {"status": "error", "error": str(e)}
-            return error_msg
-
     def run_report(self):
+        """Orchestrates the health check process."""
         self.connector.connect()
 
-        for section in self.report_sections:
-            if section.get('title'):
-                 self.adoc_content.append(f"== {section['title']}")
-            for action in section['actions']:
-                 if action['type'] == 'module':
-                     content = self.run_module(action['module'], action['function'])
-                     self.adoc_content.append(content)
-                 elif action['type'] == 'comments':
-                     content = self.read_comments_file(action['file'])
-                     self.adoc_content.append(content)
+        # Pass the app_version to the ReportBuilder
+        builder = ReportBuilder(self.connector, self.settings, self.active_plugin, self.report_sections, self.app_version)
+        self.adoc_content, self.all_structured_findings = builder.build()
 
         if self.settings.get('ai_analyze', False):
             self.run_ai_analysis()
 
+        self.save_structured_findings()
+        self.connector.disconnect()
+
+    def run_ai_analysis(self):
+        print("\n--- Starting AI Analysis ---")
+        analysis_rules = self.active_plugin.get_rules_config()
+        db_metadata = self.connector.get_db_metadata()
+        db_version = db_metadata.get('version', 'N/A')
+        db_name = db_metadata.get('db_name', self.settings.get('database', 'N/A'))
+
+        dynamic_analysis = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_version, db_name, self.active_plugin)
+        full_prompt = dynamic_analysis['prompt']
+        
+        ai_adoc, _ = run_recommendation(self.settings, full_prompt)
+        self.adoc_content += f"\n\n{ai_adoc}"
+
+    def save_structured_findings(self):
+        # --- NEW: Add the app version to the structured data ---
+        self.all_structured_findings['application_version'] = self.app_version
+        
         output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
             json.dump(self.all_structured_findings, f, indent=2, cls=CustomJsonEncoder)
         print(f"\nStructured health check findings saved to: {output_path}")
 
-        self.connector.disconnect()
-
-    def run_ai_analysis(self):
-        print("\n--- Starting AI Analysis ---")
-        analysis_rules = self.active_plugin.get_rules_config()
-        
-        db_metadata = self.connector.get_db_metadata()
-        db_version = db_metadata.get('version', 'N/A')
-        db_name = db_metadata.get('db_name', self.settings.get('database', 'N/A'))
-
-        dynamic_analysis = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_version, db_name)
-        full_prompt = dynamic_analysis['prompt']
-
-        ai_adoc, _ = run_recommendation(self.settings, full_prompt)
-        self.adoc_content.append(ai_adoc)
-
     def write_adoc(self, output_file):
         output_path = self.paths['adoc_out'] / output_file
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
-            f.write('\n\n'.join(self.adoc_content))
+            f.write(self.adoc_content)
 
 def main():
     parser = argparse.ArgumentParser(description='Database Health Check Tool')
@@ -159,6 +132,7 @@ def main():
     parser.add_argument('--output', default='health_check.adoc', help='Output file name')
     args = parser.parse_args()
     
+    print(f"--- Running Health Check Tool v{APP_VERSION} ---") # <-- Added version to startup message
     health_check = HealthCheck(args.config, args.report_config)
     health_check.run_report()
     health_check.write_adoc(args.output)
@@ -167,6 +141,5 @@ def main():
     print(f"Report generated: {health_check.paths['adoc_out'] / args.output}")
 
 if __name__ == '__main__':
-    # Add the project's root directory to the Python path
     sys.path.insert(0, str(Path(__file__).parent))
     main()
