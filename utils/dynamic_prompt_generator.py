@@ -56,6 +56,11 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
 
     # Severity analysis loop
     for module_name, module_findings in findings_for_analysis.items():
+
+        # Skip top-level items that aren't dictionaries (like 'application_version')
+        if not isinstance(module_findings, dict):
+            continue
+
         # --- START OF CORRECTED INDENTATION ---
         module_issue_map[module_name] = {'critical': 0, 'high': 0, 'medium': 0}
         if module_findings.get("status") == "success" and isinstance(module_findings.get("data"), dict):
