@@ -1,0 +1,18 @@
+=== High Availability (HA) Best Practices
+
+Implementing robust High Availability (HA) is crucial for ensuring continuous operation and minimizing downtime for your PostgreSQL database.
+
+.  **Streaming Replication**: Utilize PostgreSQL's built-in streaming replication for physical standby servers. This provides a continuously updated copy of your primary database.
+.  **Synchronous vs. Asynchronous Replication**: Understand the trade-offs. Asynchronous is common for performance, while synchronous ensures zero data loss on primary failure but can impact write latency.
+.  **Monitor Replication Lag**: Continuously monitor replication lag (e.g., `pg_stat_replication` or CloudWatch `ReplicaLag` for RDS/Aurora) to ensure your standby is up-to-date and ready for failover.
+.  **Automated Failover**: For production environments, implement an automated failover solution (e.g., Patroni, repmgr for self-hosted; AWS Aurora's built-in failover, RDS Multi-AZ for managed services). Manual failover is slower and more prone to human error.
+.  **Quorum and Split-Brain**: Ensure your HA solution correctly handles network partitions to prevent "split-brain" scenarios where both primary and standby believe they are the primary.
+.  **WAL Archiving**: Maintain a robust WAL archiving strategy (e.g., to S3 for cloud, or a separate storage for self-hosted) to enable Point-In-Time Recovery (PITR) and rebuild replicas.
+.  **Regular Failover Testing**: Periodically test your failover procedures in a non-production environment. This validates your HA setup and familiarizes your team with the process.
+.  **Network Configuration**: Ensure robust and low-latency network connectivity between primary and standby servers.
+.  **Read Replicas**: Use read replicas (physical standbys) to offload read traffic from the primary, improving scalability and providing a warm standby.
+
+[TIP]
+====
+HA is not just about having a standby; it's about having a tested, automated, and monitored process to ensure rapid recovery from failures.
+====
