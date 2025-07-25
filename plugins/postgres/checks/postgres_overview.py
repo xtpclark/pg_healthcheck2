@@ -10,14 +10,14 @@ def run_postgres_overview(connector, settings):
         adoc_content.append("[,sql]\n----")
         adoc_content.append("SELECT version();")
         adoc_content.append("SELECT current_database() AS database, pg_size_pretty(pg_database_size(current_database())) AS size;")
-        adoc_content.append("SELECT setting AS uptime FROM pg_settings WHERE name = 'pg_uptime';")
+        adoc_content.append("SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) as uptime;")
         adoc_content.append("SELECT name, setting, unit FROM pg_settings WHERE name IN ('max_connections', 'work_mem', 'shared_buffers', 'effective_cache_size') ORDER BY name;")
         adoc_content.append("----")
 
     queries = [
         ("Database Version", "SELECT version();", True, "version_info"),
         ("Database Size", "SELECT current_database() AS database, pg_size_pretty(pg_database_size(current_database())) AS size;", True, "database_size"),
-        ("Uptime", "SELECT setting AS uptime FROM pg_settings WHERE name = 'pg_uptime';", settings.get('is_aurora', 'false') == 'false', "uptime"), # Aurora-specific condition
+        ("Uptime", "SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) as uptime;", True, "uptime"),
         ("Key Configuration Settings", "SELECT name, setting, unit FROM pg_settings WHERE name IN ('max_connections', 'work_mem', 'shared_buffers', 'effective_cache_size') ORDER BY name;", True, "key_config")
     ]
 
