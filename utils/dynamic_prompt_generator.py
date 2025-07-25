@@ -111,9 +111,9 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
                 }
     
     # --- Template Rendering ---
-    template_dir = Path(__file__).parent.parent / 'templates'
+    template_dir = active_plugin.get_template_path() / "prompts"
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(template_dir)), trim_blocks=True, lstrip_blocks=True)
-    template_name = settings.get('prompt_template', 'prompt_template.j2')
+    template_name = settings.get('prompt_template', 'default_prompt.j2')
     template = env.get_template(template_name)
     
     analysis_timestamp = datetime.utcnow().isoformat() + "Z"
