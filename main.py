@@ -15,10 +15,9 @@ from utils.dynamic_prompt_generator import generate_dynamic_prompt
 from utils.run_recommendation import run_recommendation
 from utils.report_builder import ReportBuilder
 from plugins.base import BasePlugin
-# New: Import the trend shipper module
+# Import the trend shipper module
 from output_handlers import trend_shipper
 
-# --- NEW: Define the application version by reading the VERSION file ---
 try:
     APP_VERSION = (Path(__file__).parent / "VERSION").read_text().strip()
 except FileNotFoundError:
@@ -57,7 +56,7 @@ def discover_plugins():
 class HealthCheck:
     def __init__(self, config_file, report_config_file=None):
         self.settings = self.load_settings(config_file)
-        self.app_version = APP_VERSION # <-- Store the app version
+        self.app_version = APP_VERSION
         self.available_plugins = discover_plugins()
         active_tech = self.settings.get('db_type')
         self.active_plugin = self.available_plugins.get(active_tech)
@@ -88,24 +87,23 @@ class HealthCheck:
         """Orchestrates the health check process."""
         self.connector.connect()
 
-        # Pass the app_version to the ReportBuilder
         builder = ReportBuilder(self.connector, self.settings, self.active_plugin, self.report_sections, self.app_version)
         self.adoc_content, self.all_structured_findings = builder.build()
 
         if self.settings.get('ai_analyze', False):
             self.run_ai_analysis()
 
-        # --- New: Call the Trend Shipper Module ---
-        # After all checks are complete, pass the aggregated findings to the shipper.
-        # This is wrapped in a try/except to ensure shipper failures don't stop the main tool.
+        # --- REAL FLOW: Pass connection details to the Trend Shipper ---
         try:
-            # We can add a check here for a setting in config.yaml if we want to disable this feature
-            # For now, it will run if the module is present.
             print("\n--- Handing off findings to Trend Shipper ---")
-            trend_shipper.run(self.all_structured_findings)
+            
+            # The 'self.settings' dictionary contains the connection details
+            # that the health check is currently using.
+            trend_shipper.run(self.all_structured_findings, self.settings)
+
         except Exception as e:
             print(f"CRITICAL: The trend shipper module failed with an unexpected error: {e}")
-        # ---------------------------------------------
+        # ----------------------------------------------------------------
 
         self.save_structured_findings()
         self.connector.disconnect()
@@ -124,7 +122,6 @@ class HealthCheck:
         self.adoc_content += f"\n\n{ai_adoc}"
 
     def save_structured_findings(self):
-        # --- NEW: Add the app version to the structured data ---
         self.all_structured_findings['application_version'] = self.app_version
         
         output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
@@ -146,11 +143,9 @@ def main():
     parser.add_argument('--output', default='health_check.adoc', help='Output file name')
     args = parser.parse_args()
     
-    print(f"--- Running Health Check Tool v{APP_VERSION} ---") # <-- Added version to startup message
+    print(f"--- Running Health Check Tool v{APP_VERSION} ---")
     health_check = HealthCheck(args.config, args.report_config)
     
-    # --- New: Check generate_report flag from config ---
-    # Load settings to check the flag before running the full report builder
     settings = health_check.load_settings(args.config)
     generate_report_flag = settings.get('generate_report', True)
     
@@ -162,7 +157,6 @@ def main():
         print(f"Report generated: {health_check.paths['adoc_out'] / args.output}")
     else:
         print("\nHealth check data collection completed. AsciiDoc report generation was skipped as per 'generate_report: false' in config.")
-
 
 if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).parent))
