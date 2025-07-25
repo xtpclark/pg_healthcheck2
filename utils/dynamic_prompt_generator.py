@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 import jinja2
 from pathlib import Path
 
-# This file is now completely generic and has no database-specific logic.
 
 def convert_to_json_serializable(obj):
     """Convert non-JSON-serializable objects to JSON-compatible types."""
@@ -47,7 +46,7 @@ def analyze_metric_severity(metric_name, data_row, settings, all_findings, analy
     return {'level': 'info', 'score': 0, 'reasoning': '', 'recommendations': []}
 
 
-def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name):
+def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin):
     """
     Generates a dynamic prompt by passing in technology-specific details.
     """
