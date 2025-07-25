@@ -41,3 +41,16 @@ GRANT INSERT ON health_check_runs TO app_user;
 GRANT SELECT, INSERT ON companies TO app_user;
 GRANT USAGE, SELECT ON SEQUENCE health_check_runs_id_seq TO app_user;
 GRANT USAGE, SELECT ON SEQUENCE companies_id_seq TO app_user;
+
+-- Create the 'users' table for web application authentication
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    company_id INT NOT NULL REFERENCES companies(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Grant privileges to the application's runtime user
+GRANT SELECT, INSERT, UPDATE, DELETE ON users TO app_user;
+GRANT USAGE, SELECT ON SEQUENCE users_id_seq TO app_user;
