@@ -54,3 +54,31 @@ CREATE TABLE IF NOT EXISTS users (
 -- Grant privileges to the application's runtime user
 GRANT SELECT, INSERT, UPDATE, DELETE ON users TO app_user;
 GRANT USAGE, SELECT ON SEQUENCE users_id_seq TO app_user;
+
+
+-- =================================================================
+-- Function for Seamless Company ID Management
+-- =================================================================
+
+CREATE OR REPLACE FUNCTION get_or_create_company(p_company_name TEXT)
+RETURNS INT AS $$
+DECLARE
+    v_company_id INT;
+BEGIN
+    -- First, try to find the existing company ID
+    SELECT id INTO v_company_id
+    FROM companies
+    WHERE company_name = p_company_name;
+
+    -- If no ID was found, the company does not exist
+    IF v_company_id IS NULL THEN
+        -- Insert the new company and return its new ID
+        INSERT INTO companies (company_name)
+        VALUES (p_company_name)
+        RETURNING id INTO v_company_id;
+    END IF;
+
+    -- Return either the existing or the new ID
+    RETURN v_company_id;
+END;
+$$ LANGUAGE plpgsql;
