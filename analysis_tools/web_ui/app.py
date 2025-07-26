@@ -360,6 +360,88 @@ def admin_create_user():
         
     return render_template('admin/user_form.html', all_companies=all_companies, all_privileges=all_privileges, user=None)
 
+@app.route('/admin/users/edit/<int:user_id>', methods=['GET', 'POST'])
+@login_required
+def admin_edit_user(user_id):
+    """Admin page to edit an existing user."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    
+    # Use our existing loader to get the full user object to edit
+    user_to_edit = load_user(user_id)
+    if not user_to_edit:
+        flash("User not found.", "danger")
+        return redirect(url_for('admin_list_users'))
+
+    if request.method == 'POST':
+        # --- Logic to process the form submission ---
+        username = request.form.get('username')
+        password = request.form.get('password') # Will be blank if not changed
+        is_admin = 'is_admin' in request.form
+        company_ids = request.form.getlist('companies', type=int)
+        privilege_ids = request.form.getlist('privileges', type=int)
+
+        try:
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
+
+            # Update basic user info
+            cursor.execute("UPDATE users SET username = %s, is_admin = %s WHERE id = %s;", (username, is_admin, user_id))
+
+            # Update password only if a new one was provided
+            if password:
+                password_hash = generate_password_hash(password)
+                cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s;", (password_hash, user_id))
+
+            # Update company access (delete all then re-insert)
+            cursor.execute("DELETE FROM user_company_access WHERE user_id = %s;", (user_id,))
+            for company_id in company_ids:
+                cursor.execute("INSERT INTO user_company_access (user_id, company_id) VALUES (%s, %s);", (user_id, company_id))
+            
+            # Update privileges
+            cursor.execute("DELETE FROM usrpriv WHERE usrpriv_username = %s;", (user_to_edit.username,))
+            for priv_id in privilege_ids:
+                cursor.execute("INSERT INTO usrpriv (usrpriv_username, usrpriv_priv_id) VALUES (%s, %s);", (username, priv_id))
+
+
+            conn.commit()
+            flash(f"User '{username}' updated successfully.", "success")
+            return redirect(url_for('admin_list_users'))
+
+        except psycopg2.Error as e:
+            flash(f"Database error: {e}", "danger")
+            if conn: conn.rollback()
+        finally:
+            if conn: conn.close()
+
+    # --- Logic to display the form for editing ---
+    all_companies = []
+    all_privileges = []
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, company_name FROM companies ORDER BY company_name;")
+        all_companies = [{"id": row[0], "company_name": row[1]} for row in cursor.fetchall()]
+        cursor.execute("SELECT priv_id, priv_name FROM priv ORDER BY priv_name;")
+        all_privileges = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
+    except psycopg2.Error as e:
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+
+    # Get IDs for pre-selecting in the form
+    user_company_ids = [c['id'] for c in user_to_edit.accessible_companies]
+    
+    return render_template('admin/user_form.html', 
+                           user=user_to_edit, 
+                           all_companies=all_companies, 
+                           all_privileges=all_privileges,
+                           user_company_ids=user_company_ids)
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)

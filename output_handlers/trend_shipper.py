@@ -25,24 +25,35 @@ def load_config(config_path='config/trends.yaml'):
         return None
 
 def ship_to_database(db_config, target_info, findings_json):
-    """Connects to PostgreSQL and inserts the raw health check data."""
+    """
+    Connects to PostgreSQL, gets or creates the company ID using the
+    database function, and inserts the raw health check data.
+    """
     conn = None
     try:
         conn = psycopg2.connect(**db_config)
         cursor = conn.cursor()
         print("Log: Successfully connected to PostgreSQL for trend shipping.")
 
+        # Get the company name from the main config dictionary
         company_name = target_info.get('company_name', 'Default Company')
+        
+        # --- FIX: Call the database function to get the company_id ---
+        cursor.execute("SELECT get_or_create_company(%s);", (company_name,))
+        company_id = cursor.fetchone()[0]
+        print(f"Log: Using company_id '{company_id}' for company '{company_name}'.")
+
         db_technology = target_info.get('db_type', 'unknown')
         host = target_info.get('host', 'unknown')
         port = target_info.get('port', 0)
         database = target_info.get('database', 'unknown')
 
+        # --- FIX: The INSERT statement now uses company_id ---
         insert_query = """
-        INSERT INTO health_check_runs (company_name, db_technology, target_host, target_port, target_db_name, findings)
+        INSERT INTO health_check_runs (company_id, db_technology, target_host, target_port, target_db_name, findings)
         VALUES (%s, %s, %s, %s, %s, %s::jsonb);
         """
-        cursor.execute(insert_query, (company_name, db_technology, host, port, database, findings_json))
+        cursor.execute(insert_query, (company_id, db_technology, host, port, database, findings_json))
 
         conn.commit()
         print("Log: Successfully shipped raw findings to the database.")
