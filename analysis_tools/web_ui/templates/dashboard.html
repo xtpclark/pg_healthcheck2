@@ -4,29 +4,83 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Health Check Trends</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { font-family: sans-serif; margin: 2em; }
-        .run { border: 1px solid #ccc; padding: 1em; margin-bottom: 1em; border-radius: 5px; }
-        h1, h2, h3 { color: #333; }
-        pre { background-color: #f4f4f4; padding: 1em; border-radius: 3px; white-space: pre-wrap; }
+        body { padding-top: 2rem; padding-bottom: 2rem; background-color: #f8f9fa; }
+        .accordion-button:not(.collapsed) { background-color: #e7f1ff; }
+        code { font-size: 0.875em; color: #d63384; }
     </style>
 </head>
 <body>
-    <h1>Health Check Trend Dashboard</h1>
-    
-    {% if runs %}
-        <h2>Recent Runs ({{ runs|length }})</h2>
-        {% for run in runs %}
-            <div class="run">
-                <h3>Run at: {{ run.run_timestamp }}</h3>
-                <p><strong>Target:</strong> {{ run.target_host }}:{{ run.target_port }} ({{ run.target_db_name }})</p>
-                <h4>Findings:</h4>
-                <pre>{{ run.findings | tojson(indent=2) }}</pre>
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="mb-0">Health Check Dashboard</h1>
+        <span class="badge bg-secondary">v2.1.0</span>
+    </div>
+
+    {% if changes_by_check %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">🔍 Comparison Summary</h5>
             </div>
-        {% endfor %}
+            <div class="card-body">
+                <ul class="list-group list-group-flush mb-3">
+                    <li class="list-group-item"><strong>Latest Run:</strong> {{ runs[0].run_timestamp }}</li>
+                    <li class="list-group-item"><strong>Previous Run:</strong> {{ runs[1].run_timestamp }}</li>
+                </ul>
+
+                <h5 class="card-title mt-2">Detected Changes by Check</h5>
+                
+                <div class="accordion" id="changesAccordion">
+                    {% for check, changes in changes_by_check|dictsort %}
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="heading-{{ loop.index }}">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-{{ loop.index }}">
+                                    <strong>{{ check }}</strong>&nbsp;<span class="badge bg-primary ms-2">{{ changes|length }} changes</span>
+                                </button>
+                            </h2>
+                            <div id="collapse-{{ loop.index }}" class="accordion-collapse collapse" data-bs-parent="#changesAccordion">
+                                <div class="accordion-body">
+                                    <ul class="list-group">
+                                        {% for change_summary in changes %}
+                                            <li class="list-group-item">{{ change_summary | safe }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    {% elif runs and runs|length < 2 %}
+         <div class="alert alert-info">
+            Found only one run. Run the health check again to enable comparison.
+        </div>
     {% else %}
-        <p>No health check runs found in the database.</p>
+        <div class="alert alert-warning">
+            No health check runs found in the database.
+        </div>
     {% endif %}
 
+    <div class="accordion" id="rawDataAccordion">
+        <div class="accordion-item">
+            <h2 class="accordion-header">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseRawData">
+                    Raw Data from Latest Run
+                </button>
+            </h2>
+            <div id="collapseRawData" class="accordion-collapse collapse" data-bs-parent="#rawDataAccordion">
+                <div class="accordion-body">
+                    {% if runs %}
+                        <pre>{{ runs[0].findings | tojson(indent=2) }}</pre>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

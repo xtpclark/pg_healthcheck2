@@ -1,9 +1,11 @@
 from flask import Flask, render_template, abort
 import sys
 from pathlib import Path
+from deepdiff import DeepDiff
+import re
+import json
 
-# Add the root directory to the Python path to allow for imports
-# from other project directories.
+# Add the root directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from analysis_tools.cli.monitor_trends import (
@@ -15,13 +17,18 @@ from cryptography.fernet import Fernet
 
 app = Flask(__name__)
 
+def format_path(path):
+    """Cleans up the deepdiff path for readability."""
+    return re.sub(r"root\['(.*?)'\]", r'\1', path).replace("'", "")
+
+@app.template_filter('format_path')
+def jinja_format_path(path):
+    """Makes the format_path function available in Jinja templates."""
+    return format_path(path)
+
 @app.route('/')
 def dashboard():
-    """
-    Main dashboard route. In a real app, this would be protected by a login,
-    and the company_id would be determined from the user's session.
-    """
-    # --- This logic is reused directly from the CLI tool ---
+    """Main dashboard route."""
     config = load_trends_config()
     if not config:
         abort(500, description="Could not load trends.yaml configuration.")
@@ -29,24 +36,37 @@ def dashboard():
     key_string = config.get('encryption_key')
     if not key_string:
         abort(500, description="Encryption key not found in trends.yaml.")
-        
+
     fernet = Fernet(get_encryption_key(key_string))
     db_settings = config.get('database')
     
-    # For now, we'll hardcode the company_id and limit
-    # In the future, this will be dynamic.
     company_id = 1
-    limit = 10
+    runs = fetch_and_decrypt_runs(db_settings, fernet, company_id, limit=2)
     
-    runs = fetch_and_decrypt_runs(db_settings, fernet, company_id, limit)
-    # --- End of reused logic ---
+    changes_by_check = {}
+    if len(runs) >= 2:
+        diff = DeepDiff(runs[1]['findings'], runs[0]['findings'], ignore_order=True, view='tree')
+        
+        # --- FIX: Group the changes by check name here in the backend ---
+        if diff:
+            for change_type, items in diff.items():
+                for item in items:
+                    top_level_check = item.path(output_format='list')[0]
+                    if top_level_check not in changes_by_check:
+                        changes_by_check[top_level_check] = []
+                    
+                    summary = ""
+                    if change_type == 'values_changed':
+                        summary = f"🔄 Value at `{format_path(item.path())}` changed from **'{item.t1}'** to **'{item.t2}'**"
+                    elif change_type == 'iterable_item_added':
+                        summary = f"➕ Item added to `{format_path(item.path())}`: `{json.dumps(item.t2)}`"
+                    elif change_type == 'iterable_item_removed':
+                        summary = f"➖ Item removed from `{format_path(item.path())}`: `{json.dumps(item.t1)}`"
+                    
+                    if summary:
+                        changes_by_check[top_level_check].append(summary)
 
-    if not runs:
-        runs = []
-
-    # Pass the decrypted data to the HTML template
-    return render_template('dashboard.html', runs=runs)
+    return render_template('dashboard.html', runs=runs, changes_by_check=changes_by_check)
 
 if __name__ == '__main__':
-    # Runs the Flask development server
     app.run(debug=True, port=5001)
