@@ -68,4 +68,63 @@ python3 main.py --config config/config.yaml
 . It will connect directly to your self-hosted PostgreSQL database.
 . The raw, structured JSON findings from the health check run will be inserted into the `health_check_runs` table.
 
-You can then use the `monitor_trends.py` CLI tool to connect to the same database and analyze the collected data.
+== 5. Analyzing the Data
+You can use the `monitor_trends.py` CLI tool to connect to the same database and analyze the collected data.
+
+=== 5.1. Command-Line Arguments
+`--company-name <NAME>` (Required)::
+The name of the company to analyze.
+
+`--host <HOST>` (Optional)::
+Filter by a specific database host.
+
+`--port <PORT>` (Optional)::
+Filter by a specific database port.
+
+`--dbname <DBNAME>` (Optional)::
+Filter by a specific database name.
+
+`--start-date <YYYY-MM-DD>` (Optional)::
+The start of the date range to compare. If used, the tool will compare the first and last run within this range.
+
+`--end-date <YYYY-MM-DD>` (Optional)::
+The end of the date range to compare.
+
+=== 5.2. Output Interpretation
+The tool's header provides context for the comparison, including the timestamps of the two runs and the **elapsed time** between them, making it easy to understand the time frame of the analysis.
+
+[source,text]
+----
+================================================================================
+🔍 Comparison Summary for db1.myclient.com:5432/prod_db
+  - Latest Run:   2025-07-26T03:11:24.029738+00:00
+  - Previous Run: 2025-07-25T22:15:13.372739+00:00
+  - Elapsed Time: 4 hour(s), 56 minute(s), 10 second(s)
+================================================================================
+----
+
+=== 5.3. Example Usage
+
+.To compare the two most recent runs for a company's most recently checked database:
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-name "My Client Inc"
+----
+
+.To narrow the comparison to a specific database instance:
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-name "My Client Inc" --host "db1.myclient.com" --port 5432 --dbname "prod_db"
+----
+
+.To compare the very first and very last health check run in the history for a specific database:
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-name "My Client Inc" --host "db1.myclient.com" --start-date "1970-01-01"
+----
+
+.To compare the first and last health check from August 2025:
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-name "My Client Inc" --host "db1.myclient.com" --start-date "2025-08-01" --end-date "2025-08-31"
+----
