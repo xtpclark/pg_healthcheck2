@@ -296,5 +296,70 @@ def admin_list_users():
     
     return render_template('admin/users.html', users=all_users)
 
+@app.route('/admin/users/create', methods=['GET', 'POST'])
+@login_required
+def admin_create_user():
+    """Admin page to create a new user."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+        
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+
+    if request.method == 'POST':
+        # --- Logic to process the new user form ---
+        username = request.form.get('username')
+        password = request.form.get('password')
+        is_admin = 'is_admin' in request.form
+        company_ids = request.form.getlist('companies', type=int)
+        privilege_ids = request.form.getlist('privileges', type=int)
+
+        password_hash = generate_password_hash(password)
+        
+        try:
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
+
+            # Insert new user
+            cursor.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (%s, %s, %s) RETURNING id;", (username, password_hash, is_admin))
+            new_user_id = cursor.fetchone()[0]
+
+            # Assign company access
+            for company_id in company_ids:
+                cursor.execute("INSERT INTO user_company_access (user_id, company_id) VALUES (%s, %s);", (new_user_id, company_id))
+
+            # Assign privileges
+            for priv_id in privilege_ids:
+                 cursor.execute("INSERT INTO usrpriv (usrpriv_username, usrpriv_priv_id) VALUES (%s, %s);", (username, priv_id))
+
+            conn.commit()
+            flash(f"User '{username}' created successfully.", "success")
+            return redirect(url_for('admin_list_users'))
+        except psycopg2.Error as e:
+            flash(f"Database error: {e}", "danger")
+            if conn: conn.rollback()
+        finally:
+            if conn: conn.close()
+
+    # --- Logic to display the form ---
+    all_companies = []
+    all_privileges = []
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, company_name FROM companies ORDER BY company_name;")
+        all_companies = [{"id": row[0], "company_name": row[1]} for row in cursor.fetchall()]
+
+        cursor.execute("SELECT priv_id, priv_name FROM priv ORDER BY priv_name;")
+        all_privileges = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
+    except psycopg2.Error as e:
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+        
+    return render_template('admin/user_form.html', all_companies=all_companies, all_privileges=all_privileges, user=None)
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
