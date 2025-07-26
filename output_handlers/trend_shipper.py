@@ -1,12 +1,11 @@
 import yaml
 import psycopg2
-import requests 
-from cryptography.fernet import Fernet
+import requests
 import json
 from decimal import Decimal
 from datetime import datetime, timedelta
 
-# This encoder is needed to handle data types in the findings dict before encryption.
+# This encoder is still needed to handle special data types for JSON serialization.
 class CustomJsonEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Decimal): return float(obj)
@@ -26,37 +25,9 @@ def load_config(config_path='config/trends.yaml'):
         print(f"Error loading trends.yaml: {e}")
         return None
 
-def get_encryption_key(key_string):
-    """Generates a valid Fernet key from the string in the config."""
-    import base64
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-    
-    salt = b'some-static-salt'
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=100000,
-    )
-    return base64.urlsafe_b64encode(kdf.derive(key_string.encode()))
-
-def encrypt_data(data, fernet):
-    """Encrypts data using the provided Fernet instance."""
-    if isinstance(data, dict) or isinstance(data, list):
-        data_bytes = json.dumps(data, cls=CustomJsonEncoder).encode('utf-8')
-    elif isinstance(data, (int, float)):
-        data_bytes = str(data).encode('utf-8')
-    elif isinstance(data, str):
-        data_bytes = data.encode('utf-8')
-    else:
-        data_bytes = data
-
-    return fernet.encrypt(data_bytes)
-
-def ship_to_database(db_config, target_info, encrypted_payload):
-    """
-    Connects to PostgreSQL, gets or creates the company ID, and inserts the data.
+def ship_to_database(db_config, target_info, findings_json):
+    """Connects to PostgreSQL and inserts the raw health check data.
+    It assumes a database trigger will handle the encryption.
     """
     conn = None
     try:
@@ -66,103 +37,73 @@ def ship_to_database(db_config, target_info, encrypted_payload):
             password=db_config['password'], sslmode=db_config.get('sslmode', 'prefer')
         )
         cursor = conn.cursor()
-        print("Log: Successfully connected to PostgreSQL.")
+        print("Log: Successfully connected to PostgreSQL for trend shipping.")
 
-        # Get or create the company ID using the database function
         company_name = target_info.get('company_name', 'Default Company')
-        cursor.execute("SELECT get_or_create_company(%s);", (company_name,))
-        company_id = cursor.fetchone()[0]
-        print(f"Log: Using company_id '{company_id}' for company '{company_name}'.")
+        db_technology = target_info.get('db_type', 'unknown')
+        host = target_info.get('host', 'unknown')
+        port = target_info.get('port', 0)
+        database = target_info.get('database', 'unknown')
 
+        # The 'raw_findings' column will be used by a server-side trigger to encrypt the data.
+        # This insert sends unencrypted metadata and the raw JSON findings.
         insert_query = """
-        INSERT INTO health_check_runs 
-        (company_id, db_technology, target_host, target_port, target_db_name, findings)
+        INSERT INTO health_check_runs (company_name, db_technology, target_host, target_port, target_db_name, raw_findings)
         VALUES (%s, %s, %s, %s, %s, %s);
         """
-        
-        cursor.execute(insert_query, (
-            company_id,
-            encrypted_payload['db_technology'],
-            encrypted_payload['target_host'],
-            encrypted_payload['target_port'],
-            encrypted_payload['target_db_name'],
-            encrypted_payload['findings']
-        ))
+        cursor.execute(insert_query, (company_name, db_technology, host, port, database, findings_json))
 
         conn.commit()
-        print("Log: Successfully inserted encrypted health check run into the database.")
-        
+        print("Log: Successfully shipped raw findings to the database.")
+
     except psycopg2.Error as e:
         print(f"Error: Failed to ship data to PostgreSQL. {e}")
         if conn: conn.rollback()
     finally:
         if conn: conn.close()
 
-def ship_to_api(api_config, target_info, encrypted_data):
-    """
-    Sends encrypted health check data and company info to the specified API endpoint.
-    """
+def ship_to_api(api_config, target_info, findings):
+    """Sends raw, unencrypted health check data to the specified API endpoint."""
     try:
-        headers = {
-            'Authorization': f"Bearer {api_config['api_key']}",
-            'Content-Type': 'application/json'
-        }
-
-        import base64
-        # Add company_name to the payload for the API
-        full_payload = {
-            'company_name': target_info.get('company_name'),
-            **encrypted_data
-        }
-
-        json_payload = {k: base64.b64encode(v).decode('utf-8') if isinstance(v, bytes) else v for k, v in full_payload.items()}
-
-        response = requests.post(api_config['endpoint_url'], headers=headers, json=json_payload, timeout=15)
-        response.raise_for_status()
+        headers = {'Content-Type': 'application/json'}
         
-        print(f"Log: Successfully sent health check data to API. Status: {response.status_code}")
+        # The payload now contains the unencrypted target info and findings.
+        full_payload = {
+            'target_info': target_info,
+            'findings': findings
+        }
+        
+        response = requests.post(
+            api_config['endpoint_url'],
+            headers=headers,
+            data=json.dumps(full_payload, cls=CustomJsonEncoder),
+            timeout=15
+        )
+        response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
+        print(f"Log: Successfully sent raw findings to API. Status: {response.status_code}")
 
     except requests.exceptions.RequestException as e:
         print(f"Error: Failed to ship data to API. {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred during API shipping: {e}")
 
 def run(structured_findings, target_info):
     """
-    Main entry point for the trend shipper.
-    Accepts findings and the target database connection info.
+    Main entry point for the trend shipper. Sends unencrypted data.
     """
     print("--- Trend Shipper Module Started ---")
     config = load_config()
-    
     if not config:
         print("--- Trend Shipper Module Finished (No Config) ---")
         return
 
-    key_string = config.get('encryption_key')
-    if not key_string:
-        print("Error: 'encryption_key' not found in trends.yaml.")
-        return
-        
-    fernet = Fernet(get_encryption_key(key_string))
-    
-    # Create the encrypted payload
-    encrypted_payload = {
-        'db_technology': target_info.get('db_type', 'unknown'),
-        'target_host': encrypt_data(target_info.get('host', 'unknown'), fernet),
-        'target_port': encrypt_data(target_info.get('port', 0), fernet),
-        'target_db_name': encrypt_data(target_info.get('database', 'unknown'), fernet),
-        'findings': encrypt_data(structured_findings, fernet)
-    }
-
     destination = config.get('destination')
 
     if destination == "postgresql":
-        # Pass the full target_info for company name lookup
-        ship_to_database(config.get('database'), target_info, encrypted_payload)
+        # Convert findings to a JSON string for the database call
+        findings_as_json = json.dumps(structured_findings, cls=CustomJsonEncoder)
+        ship_to_database(config.get('database'), target_info, findings_as_json)
     elif destination == "api":
-        # Pass the full target_info to the API as well
-        ship_to_api(config.get('api'), target_info, encrypted_payload)
+        # The API can handle the raw dictionary
+        ship_to_api(config.get('api'), target_info, structured_findings)
     else:
         print(f"Error: Unknown trend storage destination '{destination}'.")
         

@@ -57,7 +57,7 @@ GRANT USAGE, SELECT ON SEQUENCE users_id_seq TO app_user;
 
 
 -- =================================================================
--- Function for Seamless Company ID Management
+-- CORRECTED Function for Seamless Company ID Management
 -- =================================================================
 
 CREATE OR REPLACE FUNCTION get_or_create_company(p_company_name TEXT)
@@ -65,20 +65,19 @@ RETURNS INT AS $$
 DECLARE
     v_company_id INT;
 BEGIN
-    -- First, try to find the existing company ID
+    -- First, try to insert the company name.
+    -- If the name already exists, the ON CONFLICT clause will prevent
+    -- an error and do nothing. This is safe for concurrent use.
+    INSERT INTO companies (company_name)
+    VALUES (p_company_name)
+    ON CONFLICT (company_name) DO NOTHING;
+
+    -- Now, whether the row was just inserted or already existed,
+    -- we can safely select its ID.
     SELECT id INTO v_company_id
     FROM companies
     WHERE company_name = p_company_name;
 
-    -- If no ID was found, the company does not exist
-    IF v_company_id IS NULL THEN
-        -- Insert the new company and return its new ID
-        INSERT INTO companies (company_name)
-        VALUES (p_company_name)
-        RETURNING id INTO v_company_id;
-    END IF;
-
-    -- Return either the existing or the new ID
     RETURN v_company_id;
 END;
 $$ LANGUAGE plpgsql;
