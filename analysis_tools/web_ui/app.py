@@ -14,10 +14,12 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 app = Flask(__name__)
+# IMPORTANT: Change this secret key in a production environment!
 app.config['SECRET_KEY'] = 'a-super-secret-key-that-should-be-changed'
 
 # --- Self-contained config loader ---
 def load_trends_config(config_path='config/trends.yaml'):
+    """Loads the trend shipper configuration for the web app."""
     try:
         project_root = Path(__file__).parent.parent.parent
         with open(project_root / config_path, 'r') as f:
@@ -26,10 +28,30 @@ def load_trends_config(config_path='config/trends.yaml'):
         app.logger.error(f"Error loading trends.yaml: {e}")
         return None
 
-# --- Flask-Login & User Model ---
+# --- New: Function to check database connectivity ---
+def check_db_connection():
+    """Checks if a connection can be made to the database."""
+    config = load_trends_config()
+    if not config or 'database' not in config:
+        return False, "trends.yaml not found or is missing 'database' section."
+    
+    db_config = config['database']
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        return True, "Successfully connected to the database."
+    except psycopg2.Error as e:
+        # Return a user-friendly part of the error message
+        return False, f"Database connection failed: {str(e).splitlines()[0]}"
+    finally:
+        if conn:
+            conn.close()
+
+# --- Flask-Login Setup & User Model ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+login_manager.login_message_category = 'info'
 
 class User(UserMixin):
     def __init__(self, user_id, username, company_id, password_change_required):
@@ -41,6 +63,7 @@ class User(UserMixin):
 @login_manager.user_loader
 def load_user(user_id):
     config = load_trends_config()
+    if not config: return None
     db_config = config.get('database')
     conn = None
     try:
@@ -60,6 +83,7 @@ def load_user(user_id):
 def before_request_callback():
     if current_user.is_authenticated and current_user.password_change_required:
         if request.endpoint and request.endpoint not in ('change_password', 'logout', 'static'):
+            flash("Please update your password before continuing.", "warning")
             return redirect(url_for('change_password'))
 
 # --- Helper Functions ---
@@ -91,8 +115,39 @@ def fetch_runs_by_ids(db_config, run_ids):
 # --- Routes ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    # ... (login logic remains the same)
-    return render_template('login.html')
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        config = load_trends_config()
+        if not config:
+            flash("Server configuration error.", "danger")
+            db_connected, db_message = check_db_connection()
+            return render_template('login.html', db_connected=db_connected, db_message=db_message)
+
+        db_config = config.get('database')
+        conn = None
+        try:
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, password_hash FROM users WHERE username = %s;", (username,))
+            user_data = cursor.fetchone()
+
+            if user_data and check_password_hash(user_data[1], password):
+                user = load_user(user_data[0])
+                if user:
+                    login_user(user)
+                    return redirect(url_for('dashboard'))
+            
+            flash('Invalid username or password.', 'danger')
+
+        except psycopg2.Error as e:
+            flash(f"Database error during login.", "danger")
+            app.logger.error(e)
+        finally:
+            if conn: conn.close()
+
+    db_connected, db_message = check_db_connection()
+    return render_template('login.html', db_connected=db_connected, db_message=db_message)
 
 @app.route('/logout')
 @login_required
@@ -103,13 +158,37 @@ def logout():
 @app.route('/change-password', methods=['GET', 'POST'])
 @login_required
 def change_password():
-    # ... (change_password logic remains the same)
+    if request.method == 'POST':
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+
+        if not new_password or new_password != confirm_password:
+            flash("Passwords do not match.", "danger")
+            return redirect(url_for('change_password'))
+        
+        new_password_hash = generate_password_hash(new_password)
+        config = load_trends_config()
+        db_config = config.get('database')
+        conn = None
+        try:
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET password_hash = %s, password_change_required = FALSE WHERE id = %s;", (new_password_hash, current_user.id))
+            conn.commit()
+            
+            flash("Password updated successfully. Please log in again.", "success")
+            return redirect(url_for('logout'))
+        except psycopg2.Error as e:
+            flash("Database error while updating password.", "danger")
+            app.logger.error(e)
+        finally:
+            if conn: conn.close()
+    
     return render_template('change_password.html')
 
 @app.route('/api/runs')
 @login_required
 def get_all_runs():
-    """Corrected: Returns a JSON list of ALL runs for the user's company."""
     config = load_trends_config()
     db_settings = config.get('database')
     company_id = current_user.company_id
@@ -130,7 +209,6 @@ def get_all_runs():
         app.logger.error(f"Database error fetching all runs: {e}")
     finally:
         if conn: conn.close()
-    # Corrected: Use Flask's jsonify for proper content type
     from flask import jsonify
     return jsonify(all_runs)
 
