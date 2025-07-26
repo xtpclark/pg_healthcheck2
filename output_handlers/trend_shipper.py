@@ -54,8 +54,10 @@ def encrypt_data(data, fernet):
 
     return fernet.encrypt(data_bytes)
 
-def ship_to_database(db_config, encrypted_data):
-    """Connects to PostgreSQL and inserts the encrypted health check data."""
+def ship_to_database(db_config, target_info, encrypted_payload):
+    """
+    Connects to PostgreSQL, gets or creates the company ID, and inserts the data.
+    """
     conn = None
     try:
         conn = psycopg2.connect(
@@ -66,6 +68,12 @@ def ship_to_database(db_config, encrypted_data):
         cursor = conn.cursor()
         print("Log: Successfully connected to PostgreSQL.")
 
+        # Get or create the company ID using the database function
+        company_name = target_info.get('company_name', 'Default Company')
+        cursor.execute("SELECT get_or_create_company(%s);", (company_name,))
+        company_id = cursor.fetchone()[0]
+        print(f"Log: Using company_id '{company_id}' for company '{company_name}'.")
+
         insert_query = """
         INSERT INTO health_check_runs 
         (company_id, db_technology, target_host, target_port, target_db_name, findings)
@@ -73,9 +81,12 @@ def ship_to_database(db_config, encrypted_data):
         """
         
         cursor.execute(insert_query, (
-            encrypted_data['company_id'], encrypted_data['db_technology'],
-            encrypted_data['target_host'], encrypted_data['target_port'],
-            encrypted_data['target_db_name'], encrypted_data['findings']
+            company_id,
+            encrypted_payload['db_technology'],
+            encrypted_payload['target_host'],
+            encrypted_payload['target_port'],
+            encrypted_payload['target_db_name'],
+            encrypted_payload['findings']
         ))
 
         conn.commit()
@@ -87,8 +98,10 @@ def ship_to_database(db_config, encrypted_data):
     finally:
         if conn: conn.close()
 
-def ship_to_api(api_config, encrypted_data):
-    """Sends encrypted health check data to the specified API endpoint."""
+def ship_to_api(api_config, target_info, encrypted_data):
+    """
+    Sends encrypted health check data and company info to the specified API endpoint.
+    """
     try:
         headers = {
             'Authorization': f"Bearer {api_config['api_key']}",
@@ -96,7 +109,13 @@ def ship_to_api(api_config, encrypted_data):
         }
 
         import base64
-        json_payload = {k: base64.b64encode(v).decode('utf-8') if isinstance(v, bytes) else v for k, v in encrypted_data.items()}
+        # Add company_name to the payload for the API
+        full_payload = {
+            'company_name': target_info.get('company_name'),
+            **encrypted_data
+        }
+
+        json_payload = {k: base64.b64encode(v).decode('utf-8') if isinstance(v, bytes) else v for k, v in full_payload.items()}
 
         response = requests.post(api_config['endpoint_url'], headers=headers, json=json_payload, timeout=15)
         response.raise_for_status()
@@ -127,23 +146,23 @@ def run(structured_findings, target_info):
         
     fernet = Fernet(get_encryption_key(key_string))
     
-    # --- REAL FLOW: Use the provided target_info dictionary ---
+    # Create the encrypted payload
     encrypted_payload = {
-        'company_id': config.get('company_id'),
         'db_technology': target_info.get('db_type', 'unknown'),
         'target_host': encrypt_data(target_info.get('host', 'unknown'), fernet),
         'target_port': encrypt_data(target_info.get('port', 0), fernet),
         'target_db_name': encrypt_data(target_info.get('database', 'unknown'), fernet),
         'findings': encrypt_data(structured_findings, fernet)
     }
-    # --- The placeholder logic is now removed. ---
 
     destination = config.get('destination')
 
     if destination == "postgresql":
-        ship_to_database(config.get('database'), encrypted_payload)
+        # Pass the full target_info for company name lookup
+        ship_to_database(config.get('database'), target_info, encrypted_payload)
     elif destination == "api":
-        ship_to_api(config.get('api'), encrypted_payload)
+        # Pass the full target_info to the API as well
+        ship_to_api(config.get('api'), target_info, encrypted_payload)
     else:
         print(f"Error: Unknown trend storage destination '{destination}'.")
         
