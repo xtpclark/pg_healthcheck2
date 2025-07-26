@@ -428,7 +428,6 @@ ALTER SEQUENCE public.companies_id_seq OWNED BY public.companies.id;
 --
 -- Name: health_check_runs; Type: TABLE; Schema: public; Owner: postgres
 --
-
 CREATE TABLE public.health_check_runs (
     id integer NOT NULL,
     company_id integer NOT NULL,
@@ -437,7 +436,7 @@ CREATE TABLE public.health_check_runs (
     target_host text NOT NULL,
     target_port integer NOT NULL,
     target_db_name text NOT NULL,
-    findings jsonb
+    findings bytea
 );
 
 

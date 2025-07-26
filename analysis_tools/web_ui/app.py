@@ -8,6 +8,8 @@ import yaml
 import json
 from deepdiff import DeepDiff
 import re
+import boto3
+from cryptography.fernet import Fernet
 
 # Add the root directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -104,7 +106,97 @@ def format_path(path):
 def jinja_format_path(path):
     return format_path(path)
 
+# Cache for keys to avoid repeated file/API calls
+_DECRYPTION_KEYS = {}
+
+def get_filesystem_key(config):
+    """Reads the symmetric key from the filesystem."""
+    if 'filesystem' in _DECRYPTION_KEYS:
+        return _DECRYPTION_KEYS['filesystem']
+
+    key_path = config.get('encryption', {}).get('filesystem_key_path')
+    if not key_path:
+        raise ValueError("Filesystem key path not configured.")
+    
+    with open(key_path, 'r') as f:
+        key = f.read().strip()
+        _DECRYPTION_KEYS['filesystem'] = key
+        return key
+
+def decrypt_kms_data_key(encrypted_key_blob, config):
+    """Uses AWS KMS to decrypt a data key."""
+    kms_client = boto3.client('kms')
+    kms_key_arn = config.get('encryption', {}).get('aws_kms_key_arn')
+    
+    response = kms_client.decrypt(
+        CiphertextBlob=encrypted_key_blob,
+        KeyId=kms_key_arn
+    )
+    return response['Plaintext']
+
 def fetch_runs_by_ids(db_config, run_ids, accessible_company_ids):
+    """
+    Fetches and decrypts runs, handling both pgcrypto and KMS encryption modes.
+    """
+    conn = None
+    runs = []
+    config = load_trends_config() # Load the main config
+
+    if not accessible_company_ids or not run_ids:
+        return runs
+        
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        
+        # Fetch all necessary columns, including the new encryption ones
+        query = """
+        SELECT run_timestamp, findings, encryption_mode, encrypted_data_key,
+               target_host, target_port, target_db_name 
+        FROM health_check_runs 
+        WHERE id IN %s AND company_id = ANY(%s);
+        """
+        cursor.execute(query, (tuple(run_ids), accessible_company_ids))
+        rows = cursor.fetchall()
+        
+        for row in rows:
+            run_timestamp, encrypted_findings, mode, encrypted_key, host, port, dbname = row
+            
+            decrypted_json = None
+            
+            if mode == 'pgcrypto':
+                # Decrypt using the filesystem key via a SQL function call
+                key = get_filesystem_key(config)
+                cursor.execute("SELECT pgp_sym_decrypt(%s, %s);", (encrypted_findings, key))
+                decrypted_json = cursor.fetchone()[0]
+
+            elif mode == 'kms':
+                # Decrypt using the KMS-provided data key
+                plaintext_key = decrypt_kms_data_key(encrypted_key, config)
+                cipher_suite = Fernet(plaintext_key)
+                decrypted_json = cipher_suite.decrypt(encrypted_findings).decode('utf-8')
+            
+            else: # Fallback for unencrypted or unknown data
+                decrypted_json = encrypted_findings.decode('utf-8')
+
+            findings_data = json.loads(decrypted_json)
+            runs.append({
+                "run_timestamp": run_timestamp.isoformat(),
+                "findings": findings_data,
+                "target_host": host,
+                "target_port": port,
+                "target_db_name": dbname
+            })
+
+    except Exception as e:
+        app.logger.error(f"Error fetching or decrypting runs: {e}")
+    finally:
+        if conn: conn.close()
+    
+    return sorted(runs, key=lambda x: x['run_timestamp'], reverse=True)
+
+
+def fetch_runs_by_ids_oldversion(db_config, run_ids, accessible_company_ids):
     """Fetches specific runs, ensuring they belong to the user's accessible companies."""
     conn = None
     runs = []
