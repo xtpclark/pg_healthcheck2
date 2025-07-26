@@ -44,7 +44,7 @@ def check_db_connection():
         if conn:
             conn.close()
 
-# --- Flask-Login Setup & User Model ---
+# --- Flask-Login Setup & User Model (Updated for Advanced Auth) ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -108,7 +108,7 @@ def fetch_runs_by_ids(db_config, run_ids, accessible_company_ids):
     """Fetches specific runs, ensuring they belong to the user's accessible companies."""
     conn = None
     runs = []
-    if not accessible_company_ids:
+    if not accessible_company_ids or not run_ids:
         return runs
     try:
         conn = psycopg2.connect(**db_config)
@@ -137,6 +137,17 @@ def login():
         try:
             conn = psycopg2.connect(**db_config)
             cursor = conn.cursor()
+
+            # Use the new usercanlogin function
+            cursor.execute("SELECT usercanlogin(%s);", (username,))
+            can_login_result = cursor.fetchone()
+            can_login = can_login_result[0] if can_login_result else False
+
+            if not can_login:
+                flash('User is not active or not authorized to log in.', 'danger')
+                db_connected, db_message = check_db_connection()
+                return render_template('login.html', db_connected=db_connected, db_message=db_message)
+
             cursor.execute("SELECT id, password_hash FROM users WHERE username = %s;", (username,))
             user_data = cursor.fetchone()
             if user_data and check_password_hash(user_data[1], password):
@@ -144,6 +155,7 @@ def login():
                 if user:
                     login_user(user)
                     return redirect(url_for('dashboard'))
+            
             flash('Invalid username or password.', 'danger')
         except psycopg2.Error as e:
             flash(f"Database error during login.", "danger")
@@ -154,7 +166,6 @@ def login():
     # Call the connection check for GET requests and failed POSTs
     db_connected, db_message = check_db_connection()
     return render_template('login.html', db_connected=db_connected, db_message=db_message)
-
 
 @app.route('/logout')
 @login_required
@@ -189,7 +200,6 @@ def change_password():
             if conn: conn.close()
     return render_template('change_password.html')
 
-
 @app.route('/api/runs')
 @login_required
 def get_all_runs():
@@ -223,7 +233,7 @@ def get_all_runs():
 @app.route('/')
 @login_required
 def dashboard():
-    """Main dashboard route. Updated for multi-company access."""
+    """Main dashboard route."""
     config = load_trends_config()
     db_settings = config.get('database')
     
@@ -266,7 +276,7 @@ def dashboard():
 def admin_list_users():
     """Admin page to list all users."""
     if not current_user.has_privilege('AdministerUsers'):
-        abort(403) # Forbidden
+        abort(403)
     
     config = load_trends_config()
     db_config = config.get('database')
@@ -275,13 +285,9 @@ def admin_list_users():
     try:
         conn = psycopg2.connect(**db_config)
         cursor = conn.cursor()
-        # Fetch all users. A more complex query could join to get company names directly.
         cursor.execute("SELECT id FROM users ORDER BY username;")
         user_ids = [row[0] for row in cursor.fetchall()]
-        
-        # Use our existing user_loader to get fully populated user objects
         all_users = [load_user(user_id) for user_id in user_ids]
-
     except psycopg2.Error as e:
         flash("Database error while fetching users.", "danger")
         app.logger.error(e)
