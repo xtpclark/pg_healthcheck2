@@ -11,6 +11,20 @@
         .accordion-button:not(.collapsed) { background-color: #e7f1ff; }
         code { font-size: 0.875em; color: #d63384; }
         #timeline { border: 1px solid #ddd; border-radius: 5px; background-color: #fff; }
+        .vis-item { border-color: #0d6efd; background-color: #cfe2ff; }
+        .vis-item.vis-selected { border-color: #fd7e14; background-color: #ffe5d0; }
+        
+        /* Styles for the favorite star */
+        .favorite-star {
+            cursor: pointer;
+            font-size: 1.2em;
+            color: #ccc; /* Default color for non-favorite */
+            margin-right: 8px;
+            float: left; /* Position star to the left of the text */
+        }
+        .favorite-star.is-favorite {
+            color: #ffc107; /* Yellow color for favorite */
+        }
     </style>
 </head>
 <body>
@@ -20,15 +34,45 @@
         <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
     </div>
 
+    <!-- Filters Card with Refresh Button -->
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Filters</h5></div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md">
+                    <label for="target-filter" class="form-label">Target System</label>
+                    <select id="target-filter" class="form-select">
+                        <option value="all" selected>All Targets</option>
+                        {% for target in unique_targets %}
+                            <option value="{{ target }}">{{ target }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md">
+                    <label for="start-time-filter" class="form-label">Start Date</label>
+                    <input type="date" id="start-time-filter" class="form-control">
+                </div>
+                <div class="col-md">
+                    <label for="end-time-filter" class="form-label">End Date</label>
+                    <input type="date" id="end-time-filter" class="form-control">
+                </div>
+                <div class="col-md-auto">
+                    <button id="refresh-timeline-btn" class="btn btn-primary w-100">Refresh</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="card mb-4">
         <div class="card-header"><h5 class="mb-0">Timeline Comparison</h5></div>
         <div class="card-body">
             <p>Select two points on the timeline below to compare them. (Use Ctrl+Click or Cmd+Click)</p>
+            <div id="timeline-message"></div>
             <div id="timeline" class="mt-3"></div>
             
             <form id="run-selector-form" method="GET" action="{{ url_for('main.dashboard') }}" class="mt-3">
-                <input type="hidden" id="run1" name="run1">
-                <input type="hidden" id="run2" name="run2">
+                <input type="hidden" id="run1" name="run1" value="{{ request.args.get('run1', '') }}">
+                <input type="hidden" id="run2" name="run2" value="{{ request.args.get('run2', '') }}">
                 <button type="submit" id="compareBtn" class="btn btn-success" disabled>Compare Selected Runs</button>
             </form>
         </div>
@@ -79,49 +123,138 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Corrected: Fetch from the simple /api/runs endpoint
-        fetch("{{ url_for('main.get_all_runs') }}")
-            .then(response => response.json())
-            .then(data => {
-                if (!data || data.length === 0) {
-                    document.getElementById('timeline').innerHTML = '<div class="alert alert-info">No run history found.</div>';
-                    return;
-                }
+        const userPreferences = JSON.parse('{{ user_preferences | safe }}');
+        
+        const timelineContainer = document.getElementById('timeline');
+        const timelineMessage = document.getElementById('timeline-message');
+        const items = new vis.DataSet([]);
+        
+        // --- Timeline Item Template ---
+        function itemTemplate(item, element, data) {
+            const starClass = item.is_favorite ? 'is-favorite' : '';
+            return `
+                <span class="favorite-star ${starClass}" data-run-id="${item.id}">&#9733;</span>
+                <span>${item.content}</span>
+            `;
+        }
 
-                const items = new vis.DataSet(data.map(run => {
-                    return {
+        const options = { 
+            multiselect: true, 
+            maxHeight: '300px', 
+            zoomable: true,
+            template: itemTemplate // Use the template for rendering items
+        };
+        const timeline = new vis.Timeline(timelineContainer, items, options);
+
+        const targetFilter = document.getElementById('target-filter');
+        const startTimeFilter = document.getElementById('start-time-filter');
+        const endTimeFilter = document.getElementById('end-time-filter');
+        const refreshBtn = document.getElementById('refresh-timeline-btn');
+        
+        const run1Input = document.getElementById('run1');
+        const run2Input = document.getElementById('run2');
+        const compareBtn = document.getElementById('compareBtn');
+
+        // --- Functions ---
+
+        function savePreference(name, value) {
+            fetch("{{ url_for('main.save_preference') }}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, value: value })
+            }).catch(err => console.error("Failed to save preference:", err));
+        }
+
+        function applyPreferences() {
+            targetFilter.value = userPreferences.dashboard_target_filter || 'all';
+            startTimeFilter.value = userPreferences.dashboard_start_time || '';
+            endTimeFilter.value = userPreferences.dashboard_end_time || '';
+        }
+
+        function fetchAndRenderTimeline() {
+            const params = new URLSearchParams();
+            if (targetFilter.value && targetFilter.value !== 'all') params.append('target', targetFilter.value);
+            if (startTimeFilter.value) params.append('start_time', startTimeFilter.value);
+            if (endTimeFilter.value) params.append('end_time', endTimeFilter.value);
+
+            const apiUrl = `{{ url_for('main.get_all_runs') }}?${params.toString()}`;
+
+            fetch(apiUrl)
+                .then(response => response.json())
+                .then(data => {
+                    timelineMessage.innerHTML = '';
+                    if (!data || data.length === 0) {
+                        timelineMessage.innerHTML = '<div class="alert alert-info">No run history found for the selected filters.</div>';
+                        items.clear();
+                        return;
+                    }
+                    
+                    const runItems = data.map(run => ({
                         id: run.id,
                         content: run.target,
-                        start: new Date(run.timestamp)
-                    };
-                }));
-
-                const container = document.getElementById('timeline');
-                const options = {
-                    multiselect: true,
-                    maxHeight: '300px',
-                    zoomable: true
-                };
-
-                const timeline = new vis.Timeline(container, items, options);
-                
-                const run1Input = document.getElementById('run1');
-                const run2Input = document.getElementById('run2');
-                const compareBtn = document.getElementById('compareBtn');
-
-                timeline.on('select', function(properties) {
-                    const selectedIds = properties.items;
-                    if (selectedIds.length === 2) {
-                        run1Input.value = selectedIds[0];
-                        run2Input.value = selectedIds[1];
-                        compareBtn.disabled = false;
-                        compareBtn.textContent = `Compare Runs #${selectedIds[0]} and #${selectedIds[1]}`;
-                    } else {
-                        compareBtn.disabled = true;
-                        compareBtn.textContent = 'Compare Selected Runs';
-                    }
+                        start: new Date(run.timestamp),
+                        is_favorite: run.is_favorite // Pass favorite status to the item
+                    }));
+                    items.clear();
+                    items.add(runItems);
+                    timeline.fit();
+                })
+                .catch(err => {
+                    console.error("Failed to fetch timeline data:", err);
+                    timelineMessage.innerHTML = '<div class="alert alert-danger">Error loading timeline data.</div>';
                 });
-            });
+        }
+
+        function toggleFavorite(runId) {
+            fetch("{{ url_for('main.toggle_favorite') }}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ run_id: runId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Update the item in the local dataset to instantly reflect the change
+                    items.update({ id: runId, is_favorite: data.is_favorite });
+                } else {
+                    console.error("Failed to toggle favorite:", data.message);
+                }
+            })
+            .catch(err => console.error("API error toggling favorite:", err));
+        }
+
+        // --- Event Listeners ---
+
+        timelineContainer.addEventListener('click', function(event) {
+            if (event.target.classList.contains('favorite-star')) {
+                const runId = event.target.getAttribute('data-run-id');
+                toggleFavorite(parseInt(runId, 10));
+            }
+        });
+
+        timeline.on('select', function(properties) {
+            const selectedIds = properties.items;
+            if (selectedIds.length === 2) {
+                run1Input.value = selectedIds[0];
+                run2Input.value = selectedIds[1];
+                compareBtn.disabled = false;
+                compareBtn.textContent = `Compare Runs #${selectedIds[0]} and #${selectedIds[1]}`;
+            } else {
+                run1Input.value = '';
+                run2Input.value = '';
+                compareBtn.disabled = true;
+                compareBtn.textContent = 'Compare Selected Runs';
+            }
+        });
+
+        targetFilter.addEventListener('change', () => savePreference('dashboard_target_filter', targetFilter.value));
+        startTimeFilter.addEventListener('change', () => savePreference('dashboard_start_time', startTimeFilter.value));
+        endTimeFilter.addEventListener('change', () => savePreference('dashboard_end_time', endTimeFilter.value));
+        refreshBtn.addEventListener('click', fetchAndRenderTimeline);
+
+        // --- Initial Load ---
+        applyPreferences();
+        fetchAndRenderTimeline();
     });
 </script>
 </body>

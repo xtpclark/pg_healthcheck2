@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, current_app
+from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for
 from flask_login import login_required, current_user
 import psycopg2
 from .database import get_unique_targets, load_user_preferences, fetch_runs_by_ids, save_user_preference
@@ -108,25 +108,18 @@ def get_all_runs():
             except (ValueError, IndexError) as e:
                 current_app.logger.warning(f"Invalid target filter format: {target_filter}. Error: {e}")
 
+        # --- UPDATED DATE FILTER LOGIC ---
         if start_time_str:
-            try:
-                if 'T' not in start_time_str and ' ' not in start_time_str:
-                    start_time_str += 'T00:00:00'
-                start_time = datetime.fromisoformat(start_time_str)
-                query_parts.append("AND hcr.run_timestamp >= %(start_time)s")
-                params['start_time'] = start_time
-            except ValueError:
-                current_app.logger.warning(f"Invalid start_time format: {start_time_str}")
+            # Pass the date string directly to the query and let PostgreSQL handle casting.
+            # This is robust and avoids timezone issues.
+            query_parts.append("AND hcr.run_timestamp >= %(start_time)s::date")
+            params['start_time'] = start_time_str
 
         if end_time_str:
-            try:
-                if 'T' not in end_time_str and ' ' not in end_time_str:
-                    end_time_str += 'T23:59:59'
-                end_time = datetime.fromisoformat(end_time_str)
-                query_parts.append("AND hcr.run_timestamp <= %(end_time)s")
-                params['end_time'] = end_time
-            except ValueError:
-                current_app.logger.warning(f"Invalid end_time format: {end_time_str}")
+            # To make the end date inclusive, we cast to date, add 1 day, and use '<'.
+            # This correctly includes all timestamps on the selected end date.
+            query_parts.append("AND hcr.run_timestamp < (%(end_time)s::date + interval '1 day')")
+            params['end_time'] = end_time_str
 
         query_parts.append("ORDER BY hcr.run_timestamp DESC;")
         
