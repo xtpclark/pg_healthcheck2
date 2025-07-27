@@ -1,8 +1,11 @@
-from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for
+from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for, abort, send_file
 from flask_login import login_required, current_user
 import psycopg2
+import io
 from .database import get_unique_targets, load_user_preferences, fetch_runs_by_ids, save_user_preference
 from .utils import load_trends_config, format_path
+from .ai_connector import get_ai_recommendation
+from .prompt_generator import generate_web_prompt
 import json
 from deepdiff import DeepDiff
 from datetime import datetime
@@ -70,6 +73,8 @@ def dashboard():
                            changes_by_check=changes_by_check,
                            unique_targets=unique_targets,
                            user_preferences=json.dumps(user_preferences))
+
+# --- Existing API Routes ---
 
 @bp.route('/api/runs')
 @login_required
@@ -193,3 +198,168 @@ def save_preference():
     save_user_preference(db_settings, current_user.username, pref_name, pref_value)
     
     return jsonify({'status': 'success', 'message': f'Preference {pref_name} saved.'})
+
+# --- NEW API ROUTES FOR AI REPORTING ---
+
+@bp.route('/api/user-ai-profiles')
+@login_required
+def get_user_ai_profiles():
+    """Fetches the current user's saved AI profiles."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    profiles = []
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, profile_name FROM user_ai_profiles WHERE user_id = %s ORDER BY profile_name;",
+            (current_user.id,)
+        )
+        for row in cursor.fetchall():
+            profiles.append({'id': row[0], 'name': row[1]})
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error fetching AI profiles: {e}")
+        return jsonify({"error": "Could not fetch AI profiles."}), 500
+    finally:
+        if conn: conn.close()
+    return jsonify(profiles)
+
+@bp.route('/api/analysis-rules')
+@login_required
+def get_analysis_rules():
+    """Fetches available analysis rule sets."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    rules = []
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, rule_set_name FROM analysis_rules ORDER BY rule_set_name;")
+        for row in cursor.fetchall():
+            rules.append({'id': row[0], 'name': row[1]})
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error fetching analysis rules: {e}")
+        return jsonify({"error": "Could not fetch analysis rules."}), 500
+    finally:
+        if conn: conn.close()
+    return jsonify(rules)
+
+@bp.route('/api/prompt-templates')
+@login_required
+def get_prompt_templates():
+    """Fetches available prompt templates."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    templates = []
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, template_name FROM prompt_templates ORDER BY template_name;")
+        for row in cursor.fetchall():
+            templates.append({'id': row[0], 'name': row[1]})
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error fetching prompt templates: {e}")
+        return jsonify({"error": "Could not fetch prompt templates."}), 500
+    finally:
+        if conn: conn.close()
+    return jsonify(templates)
+
+@bp.route('/api/generate-ai-report', methods=['POST'])
+@login_required
+def generate_ai_report():
+    """Generates an AI report, stores it, and returns it for download."""
+    if not current_user.has_privilege('GenerateReports'):
+        abort(403)
+
+    data = request.get_json()
+    run_id = data.get('run_id')
+    profile_id = data.get('profile_id')
+    template_id = data.get('template_id')
+    rule_set_id = data.get('rule_set_id')
+    report_name = data.get('report_name')
+    report_description = data.get('report_description')
+
+    if not all([run_id, profile_id, template_id, rule_set_id]):
+        return jsonify({"error": "Missing required parameters."}), 400
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        # 1. Fetch the findings JSON for the selected run
+        cursor.execute("SELECT findings FROM health_check_runs WHERE id = %s;", (run_id,))
+        findings_row = cursor.fetchone()
+        if not findings_row:
+            return jsonify({"error": "Run not found."}), 404
+        findings_json = findings_row[0]
+
+        # 2. Generate the prompt
+        prompt = generate_web_prompt(findings_json, rule_set_id, template_id)
+        if prompt.startswith("Error:"):
+            return jsonify({"error": prompt}), 500
+
+        # 3. Get the AI recommendation
+        ai_response = get_ai_recommendation(prompt, profile_id)
+        if ai_response.startswith("Error:"):
+            return jsonify({"error": ai_response}), 500
+
+        # 4. Encrypt and store the report
+        cursor.execute(
+            """
+            INSERT INTO generated_ai_reports (
+                run_id, rule_set_id, ai_profile_id, generated_by_user_id,
+                report_name, report_description, report_content
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s,
+                pgp_sym_encrypt(%s, get_encryption_key())
+            );
+            """,
+            (run_id, rule_set_id, profile_id, current_user.id, report_name, report_description, ai_response)
+        )
+        conn.commit()
+
+        # 5. Return the report for download
+        return send_file(
+            io.BytesIO(ai_response.encode('utf-8')),
+            mimetype='text/plain',
+            as_attachment=True,
+            download_name=f"ai_report_run_{run_id}.adoc"
+        )
+
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        current_app.logger.error(f"Database error during AI report generation: {e}")
+        return jsonify({"error": "A database error occurred."}), 500
+    finally:
+        if conn: conn.close()
+
+# --- Placeholder Routes for Report History ---
+@bp.route('/report-history')
+@login_required
+def report_history():
+    # This will render the new report history page
+    return "Report History Page (to be implemented)"
+
+@bp.route('/api/generated-reports')
+@login_required
+def get_generated_reports():
+    # This will fetch the list of reports for the history page
+    return jsonify([])
+
+@bp.route('/api/download-report/<int:report_id>')
+@login_required
+def download_report(report_id):
+    # This will decrypt and send a stored report
+    return "Download report endpoint (to be implemented)"
+
+@bp.route('/api/generated-reports/<int:report_id>', methods=['PUT'])
+@login_required
+def update_report_metadata(report_id):
+    # This will update the name, description, etc. of a report
+    return jsonify({"status": "success"})
