@@ -159,3 +159,106 @@ def edit_user(user_id):
                            all_companies=all_companies, 
                            all_privileges=all_privileges,
                            user_company_ids=user_company_ids)
+
+# --- NEW: AI PROVIDER MANAGEMENT ROUTES ---
+
+@bp.route('/ai-providers')
+@login_required
+def list_ai_providers():
+    """Admin page to list all configured AI providers."""
+    if not current_user.is_admin: # Assuming only global admins can manage this
+        abort(403)
+    
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    providers = []
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, provider_name, api_model, is_active, allow_user_keys FROM ai_providers ORDER BY provider_name;")
+        for row in cursor.fetchall():
+            providers.append({
+                "id": row[0], "name": row[1], "model": row[2],
+                "is_active": row[3], "allow_user_keys": row[4]
+            })
+    except psycopg2.Error as e:
+        flash("Database error while fetching AI providers.", "danger")
+    finally:
+        if conn: conn.close()
+    
+    return render_template('admin/ai_providers.html', providers=providers) # New template needed
+
+@bp.route('/ai-providers/create', methods=['POST'])
+@login_required
+def create_ai_provider():
+    """Handles creation of a new AI provider configuration."""
+    if not current_user.is_admin:
+        abort(403)
+        
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        provider_name = request.form.get('provider_name')
+        api_endpoint = request.form.get('api_endpoint')
+        api_model = request.form.get('api_model')
+        api_key = request.form.get('api_key', '')
+        is_active = 'is_active' in request.form
+        allow_user_keys = 'allow_user_keys' in request.form
+
+        if not all([provider_name, api_endpoint, api_model]):
+            flash("Provider Name, API Endpoint, and Model are required.", "danger")
+            return redirect(url_for('admin.list_ai_providers'))
+
+        encrypted_key = None
+        if api_key:
+            cursor.execute("SELECT pgp_sym_encrypt(%s, get_encryption_key());", (api_key,))
+            encrypted_key = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            INSERT INTO ai_providers (
+                provider_name, api_endpoint, api_model, encrypted_api_key,
+                is_active, allow_user_keys
+            ) VALUES (%s, %s, %s, %s, %s, %s);
+            """,
+            (provider_name, api_endpoint, api_model, encrypted_key, is_active, allow_user_keys)
+        )
+        conn.commit()
+        flash(f"AI Provider '{provider_name}' created successfully.", "success")
+
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+        
+    return redirect(url_for('admin.list_ai_providers'))
+
+@bp.route('/ai-providers/delete/<int:provider_id>', methods=['POST'])
+@login_required
+def delete_ai_provider(provider_id):
+    """Deletes an AI provider."""
+    if not current_user.is_admin:
+        abort(403)
+        
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM ai_providers WHERE id = %s;", (provider_id,))
+        conn.commit()
+        flash("AI Provider deleted successfully.", "success")
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash("Database error while deleting provider.", "danger")
+    finally:
+        if conn: conn.close()
+        
+    return redirect(url_for('admin.list_ai_providers'))
