@@ -1,12 +1,9 @@
-# trends_app/__init__.py
 from flask import Flask
 from flask_login import LoginManager
 from .utils import load_trends_config
 from .database import load_user as db_load_user
 
 login_manager = LoginManager()
-# When a user needs to log in, it will redirect to the 'login' function
-# within the 'auth' blueprint.
 login_manager.login_view = 'auth.login'
 
 def create_app():
@@ -14,18 +11,17 @@ def create_app():
     app = Flask(__name__)
     app.config['SECRET_KEY'] = 'a-super-secret-key-that-should-be-changed'
 
-    # Initialize extensions
     login_manager.init_app(app)
 
-    # Register blueprints to organize routes
-    from . import main, auth, admin
+    # Register blueprints
+    from . import main, auth, admin, profile # Import the new profile blueprint
     app.register_blueprint(main.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(admin.bp)
+    app.register_blueprint(profile.bp) # Register the new blueprint
 
     @login_manager.user_loader
     def load_user(user_id):
-        # This function is called by Flask-Login to get the current user object
         config = load_trends_config()
         db_config = config.get('database')
         return db_load_user(db_config, user_id)
