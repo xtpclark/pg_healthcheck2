@@ -11,19 +11,20 @@
         .accordion-button:not(.collapsed) { background-color: #e7f1ff; }
         code { font-size: 0.875em; color: #d63384; }
         #timeline { border: 1px solid #ddd; border-radius: 5px; background-color: #fff; }
-        .vis-item { border-color: #0d6efd; background-color: #cfe2ff; }
+        .vis-item { border-color: #0d6efd; background-color: #cfe2ff; transition: opacity 0.3s ease-in-out; }
         .vis-item.vis-selected { border-color: #fd7e14; background-color: #ffe5d0; }
         
-        /* Styles for the favorite star */
-        .favorite-star {
-            cursor: pointer;
-            font-size: 1.2em;
-            color: #ccc; /* Default color for non-favorite */
-            margin-right: 8px;
-            float: left; /* Position star to the left of the text */
+        /* Style for the glowing favorite border */
+        .vis-item.favorite-item {
+            border-color: #ffc107;
+            background-color: #fff3cd; /* A light yellow background */
+            box-shadow: 0 0 8px rgba(255, 193, 7, 0.8); /* The glow effect */
+            border-width: 2px;
         }
-        .favorite-star.is-favorite {
-            color: #ffc107; /* Yellow color for favorite */
+
+        /* New style to dim non-favorite items */
+        .vis-item.dimmed-item {
+            opacity: 0.3;
         }
     </style>
 </head>
@@ -34,7 +35,6 @@
         <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
     </div>
 
-    <!-- Filters Card with Refresh Button -->
     <div class="card mb-4">
         <div class="card-header"><h5 class="mb-0">Filters</h5></div>
         <div class="card-body">
@@ -60,13 +60,18 @@
                     <button id="refresh-timeline-btn" class="btn btn-primary w-100">Refresh</button>
                 </div>
             </div>
+            <hr>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="show-favorites-only-filter">
+                <label class="form-check-label" for="show-favorites-only-filter">Highlight Favorites</label>
+            </div>
         </div>
     </div>
 
     <div class="card mb-4">
         <div class="card-header"><h5 class="mb-0">Timeline Comparison</h5></div>
         <div class="card-body">
-            <p>Select two points on the timeline below to compare them. (Use Ctrl+Click or Cmd+Click)</p>
+            <p>Select two points to compare (Ctrl+Click). Right-click on any run to toggle it as a favorite.</p>
             <div id="timeline-message"></div>
             <div id="timeline" class="mt-3"></div>
             
@@ -129,20 +134,10 @@
         const timelineMessage = document.getElementById('timeline-message');
         const items = new vis.DataSet([]);
         
-        // --- Timeline Item Template ---
-        function itemTemplate(item, element, data) {
-            const starClass = item.is_favorite ? 'is-favorite' : '';
-            return `
-                <span class="favorite-star ${starClass}" data-run-id="${item.id}">&#9733;</span>
-                <span>${item.content}</span>
-            `;
-        }
-
         const options = { 
             multiselect: true, 
             maxHeight: '300px', 
-            zoomable: true,
-            template: itemTemplate // Use the template for rendering items
+            zoomable: true
         };
         const timeline = new vis.Timeline(timelineContainer, items, options);
 
@@ -150,6 +145,7 @@
         const startTimeFilter = document.getElementById('start-time-filter');
         const endTimeFilter = document.getElementById('end-time-filter');
         const refreshBtn = document.getElementById('refresh-timeline-btn');
+        const showFavoritesOnlyFilter = document.getElementById('show-favorites-only-filter');
         
         const run1Input = document.getElementById('run1');
         const run2Input = document.getElementById('run2');
@@ -169,6 +165,24 @@
             targetFilter.value = userPreferences.dashboard_target_filter || 'all';
             startTimeFilter.value = userPreferences.dashboard_start_time || '';
             endTimeFilter.value = userPreferences.dashboard_end_time || '';
+            showFavoritesOnlyFilter.checked = userPreferences.dashboard_show_favorites === 'true';
+        }
+
+        function applyFavoriteVisibility() {
+            const showOnlyFavorites = showFavoritesOnlyFilter.checked;
+            const updatedItems = [];
+
+            items.forEach(item => {
+                let newClassName = item.is_favorite ? 'favorite-item' : '';
+                if (showOnlyFavorites && !item.is_favorite) {
+                    newClassName += ' dimmed-item';
+                }
+                updatedItems.push({ id: item.id, className: newClassName });
+            });
+
+            if (updatedItems.length > 0) {
+                items.update(updatedItems);
+            }
         }
 
         function fetchAndRenderTimeline() {
@@ -193,11 +207,13 @@
                         id: run.id,
                         content: run.target,
                         start: new Date(run.timestamp),
-                        is_favorite: run.is_favorite // Pass favorite status to the item
+                        is_favorite: run.is_favorite, // Keep track of favorite status
+                        className: run.is_favorite ? 'favorite-item' : ''
                     }));
                     items.clear();
                     items.add(runItems);
                     timeline.fit();
+                    applyFavoriteVisibility(); // Apply dimming after items are loaded
                 })
                 .catch(err => {
                     console.error("Failed to fetch timeline data:", err);
@@ -214,8 +230,11 @@
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    // Update the item in the local dataset to instantly reflect the change
-                    items.update({ id: runId, is_favorite: data.is_favorite });
+                    // Update the item's data and then re-apply the visibility filter
+                    const itemToUpdate = items.get(runId);
+                    itemToUpdate.is_favorite = data.is_favorite;
+                    items.update(itemToUpdate);
+                    applyFavoriteVisibility();
                 } else {
                     console.error("Failed to toggle favorite:", data.message);
                 }
@@ -225,9 +244,10 @@
 
         // --- Event Listeners ---
 
-        timelineContainer.addEventListener('click', function(event) {
-            if (event.target.classList.contains('favorite-star')) {
-                const runId = event.target.getAttribute('data-run-id');
+        timeline.on('contextmenu', function(properties) {
+            properties.event.preventDefault();
+            if (properties.item !== null) {
+                const runId = properties.item;
                 toggleFavorite(parseInt(runId, 10));
             }
         });
@@ -245,6 +265,11 @@
                 compareBtn.disabled = true;
                 compareBtn.textContent = 'Compare Selected Runs';
             }
+        });
+
+        showFavoritesOnlyFilter.addEventListener('change', () => {
+            savePreference('dashboard_show_favorites', showFavoritesOnlyFilter.checked);
+            applyFavoriteVisibility();
         });
 
         targetFilter.addEventListener('change', () => savePreference('dashboard_target_filter', targetFilter.value));
