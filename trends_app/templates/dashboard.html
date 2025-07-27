@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Check Trends</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://unpkg.com/vis-timeline@latest/styles/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
+    <style>
+        body { padding-top: 2rem; padding-bottom: 2rem; background-color: #f8f9fa; }
+        .accordion-button:not(.collapsed) { background-color: #e7f1ff; }
+        code { font-size: 0.875em; color: #d63384; }
+        #timeline { border: 1px solid #ddd; border-radius: 5px; background-color: #fff; }
+        .vis-item { border-color: #0d6efd; background-color: #cfe2ff; }
+        .vis-item.vis-selected { border-color: #fd7e14; background-color: #ffe5d0; }
+        
+        /* Styles for the favorite star */
+        .favorite-star {
+            cursor: pointer;
+            font-size: 1.2em;
+            color: #ccc; /* Default color for non-favorite */
+            margin-right: 8px;
+            float: left; /* Position star to the left of the text */
+        }
+        .favorite-star.is-favorite {
+            color: #ffc107; /* Yellow color for favorite */
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="mb-0">Health Check Dashboard</h1>
+        <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
+    </div>
+
+    <!-- Filters Card with Refresh Button -->
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Filters</h5></div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md">
+                    <label for="target-filter" class="form-label">Target System</label>
+                    <select id="target-filter" class="form-select">
+                        <option value="all" selected>All Targets</option>
+                        {% for target in unique_targets %}
+                            <option value="{{ target }}">{{ target }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md">
+                    <label for="start-time-filter" class="form-label">Start Date</label>
+                    <input type="date" id="start-time-filter" class="form-control">
+                </div>
+                <div class="col-md">
+                    <label for="end-time-filter" class="form-label">End Date</label>
+                    <input type="date" id="end-time-filter" class="form-control">
+                </div>
+                <div class="col-md-auto">
+                    <button id="refresh-timeline-btn" class="btn btn-primary w-100">Refresh</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Timeline Comparison</h5></div>
+        <div class="card-body">
+            <p>Select two points on the timeline below to compare them. (Use Ctrl+Click or Cmd+Click)</p>
+            <div id="timeline-message"></div>
+            <div id="timeline" class="mt-3"></div>
+            
+            <form id="run-selector-form" method="GET" action="{{ url_for('main.dashboard') }}" class="mt-3">
+                <input type="hidden" id="run1" name="run1" value="{{ request.args.get('run1', '') }}">
+                <input type="hidden" id="run2" name="run2" value="{{ request.args.get('run2', '') }}">
+                <button type="submit" id="compareBtn" class="btn btn-success" disabled>Compare Selected Runs</button>
+            </form>
+        </div>
+    </div>
+
+    {% if runs and runs|length >= 2 %}
+        <div class="card mb-4">
+            <div class="card-header"><h5 class="mb-0">🔍 Comparison Summary</h5></div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush mb-3">
+                    <li class="list-group-item"><strong>Comparing Run:</strong> {{ runs[0].run_timestamp }}</li>
+                    <li class="list-group-item"><strong>Against Run:</strong> {{ runs[1].run_timestamp }}</li>
+                </ul>
+                {% if changes_by_check %}
+                    <h5 class="card-title mt-2">Detected Changes by Check</h5>
+                    <div class="accordion" id="changesAccordion">
+                        {% for check, changes in changes_by_check|dictsort %}
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-{{ loop.index }}">
+                                        <strong>{{ check }}</strong>&nbsp;<span class="badge bg-primary ms-2">{{ changes|length }} changes</span>
+                                    </button>
+                                </h2>
+                                <div id="collapse-{{ loop.index }}" class="accordion-collapse collapse" data-bs-parent="#changesAccordion">
+                                    <div class="accordion-body">
+                                        <ul class="list-group">
+                                            {% for change_summary in changes %}
+                                                <li class="list-group-item">{{ change_summary | safe }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="alert alert-success mt-3">No changes detected between the selected runs.</div>
+                {% endif %}
+            </div>
+        </div>
+    {% elif request.args.get('run1') %}
+        <div class="alert alert-warning">Could not find two valid runs for the selected IDs. Please select two different runs.</div>
+    {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script type="text/javascript" src="https://unpkg.com/vis-timeline@latest/standalone/umd/vis-timeline-graph2d.min.js"></script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const userPreferences = JSON.parse('{{ user_preferences | safe }}');
+        
+        const timelineContainer = document.getElementById('timeline');
+        const timelineMessage = document.getElementById('timeline-message');
+        const items = new vis.DataSet([]);
+        
+        // --- Timeline Item Template ---
+        function itemTemplate(item, element, data) {
+            const starClass = item.is_favorite ? 'is-favorite' : '';
+            return `
+                <span class="favorite-star ${starClass}" data-run-id="${item.id}">&#9733;</span>
+                <span>${item.content}</span>
+            `;
+        }
+
+        const options = { 
+            multiselect: true, 
+            maxHeight: '300px', 
+            zoomable: true,
+            template: itemTemplate // Use the template for rendering items
+        };
+        const timeline = new vis.Timeline(timelineContainer, items, options);
+
+        const targetFilter = document.getElementById('target-filter');
+        const startTimeFilter = document.getElementById('start-time-filter');
+        const endTimeFilter = document.getElementById('end-time-filter');
+        const refreshBtn = document.getElementById('refresh-timeline-btn');
+        
+        const run1Input = document.getElementById('run1');
+        const run2Input = document.getElementById('run2');
+        const compareBtn = document.getElementById('compareBtn');
+
+        // --- Functions ---
+
+        function savePreference(name, value) {
+            fetch("{{ url_for('main.save_preference') }}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, value: value })
+            }).catch(err => console.error("Failed to save preference:", err));
+        }
+
+        function applyPreferences() {
+            targetFilter.value = userPreferences.dashboard_target_filter || 'all';
+            startTimeFilter.value = userPreferences.dashboard_start_time || '';
+            endTimeFilter.value = userPreferences.dashboard_end_time || '';
+        }
+
+        function fetchAndRenderTimeline() {
+            const params = new URLSearchParams();
+            if (targetFilter.value && targetFilter.value !== 'all') params.append('target', targetFilter.value);
+            if (startTimeFilter.value) params.append('start_time', startTimeFilter.value);
+            if (endTimeFilter.value) params.append('end_time', endTimeFilter.value);
+
+            const apiUrl = `{{ url_for('main.get_all_runs') }}?${params.toString()}`;
+
+            fetch(apiUrl)
+                .then(response => response.json())
+                .then(data => {
+                    timelineMessage.innerHTML = '';
+                    if (!data || data.length === 0) {
+                        timelineMessage.innerHTML = '<div class="alert alert-info">No run history found for the selected filters.</div>';
+                        items.clear();
+                        return;
+                    }
+                    
+                    const runItems = data.map(run => ({
+                        id: run.id,
+                        content: run.target,
+                        start: new Date(run.timestamp),
+                        is_favorite: run.is_favorite // Pass favorite status to the item
+                    }));
+                    items.clear();
+                    items.add(runItems);
+                    timeline.fit();
+                })
+                .catch(err => {
+                    console.error("Failed to fetch timeline data:", err);
+                    timelineMessage.innerHTML = '<div class="alert alert-danger">Error loading timeline data.</div>';
+                });
+        }
+
+        function toggleFavorite(runId) {
+            fetch("{{ url_for('main.toggle_favorite') }}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ run_id: runId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Update the item in the local dataset to instantly reflect the change
+                    items.update({ id: runId, is_favorite: data.is_favorite });
+                } else {
+                    console.error("Failed to toggle favorite:", data.message);
+                }
+            })
+            .catch(err => console.error("API error toggling favorite:", err));
+        }
+
+        // --- Event Listeners ---
+
+        timelineContainer.addEventListener('click', function(event) {
+            if (event.target.classList.contains('favorite-star')) {
+                const runId = event.target.getAttribute('data-run-id');
+                toggleFavorite(parseInt(runId, 10));
+            }
+        });
+
+        timeline.on('select', function(properties) {
+            const selectedIds = properties.items;
+            if (selectedIds.length === 2) {
+                run1Input.value = selectedIds[0];
+                run2Input.value = selectedIds[1];
+                compareBtn.disabled = false;
+                compareBtn.textContent = `Compare Runs #${selectedIds[0]} and #${selectedIds[1]}`;
+            } else {
+                run1Input.value = '';
+                run2Input.value = '';
+                compareBtn.disabled = true;
+                compareBtn.textContent = 'Compare Selected Runs';
+            }
+        });
+
+        targetFilter.addEventListener('change', () => savePreference('dashboard_target_filter', targetFilter.value));
+        startTimeFilter.addEventListener('change', () => savePreference('dashboard_start_time', startTimeFilter.value));
+        endTimeFilter.addEventListener('change', () => savePreference('dashboard_end_time', endTimeFilter.value));
+        refreshBtn.addEventListener('click', fetchAndRenderTimeline);
+
+        // --- Initial Load ---
+        applyPreferences();
+        fetchAndRenderTimeline();
+    });
+</script>
+</body>
+</html>
