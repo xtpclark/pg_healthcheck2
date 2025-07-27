@@ -74,7 +74,7 @@ def dashboard():
 @bp.route('/api/runs')
 @login_required
 def get_all_runs():
-    """API endpoint to fetch runs, with support for filtering."""
+    """API endpoint to fetch runs, with support for filtering and favorites."""
     config = load_trends_config()
     db_settings = config.get('database')
     
@@ -92,11 +92,17 @@ def get_all_runs():
         conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
         
-        params = {'company_ids': accessible_company_ids}
+        params = {
+            'company_ids': accessible_company_ids,
+            'user_id': current_user.id
+        }
+        
         query_parts = [
-            "SELECT hcr.id, hcr.run_timestamp, hcr.target_host, hcr.target_port, hcr.target_db_name",
+            "SELECT hcr.id, hcr.run_timestamp, hcr.target_host, hcr.target_port, hcr.target_db_name,",
+            "CASE WHEN ufr.user_id IS NOT NULL THEN true ELSE false END AS is_favorite",
             "FROM health_check_runs hcr",
             "JOIN companies c ON hcr.company_id = c.id",
+            "LEFT JOIN user_favorite_runs ufr ON hcr.id = ufr.run_id AND ufr.user_id = %(user_id)s",
             "WHERE hcr.company_id = ANY(%(company_ids)s)"
         ]
 
@@ -108,16 +114,11 @@ def get_all_runs():
             except (ValueError, IndexError) as e:
                 current_app.logger.warning(f"Invalid target filter format: {target_filter}. Error: {e}")
 
-        # --- UPDATED DATE FILTER LOGIC ---
         if start_time_str:
-            # Pass the date string directly to the query and let PostgreSQL handle casting.
-            # This is robust and avoids timezone issues.
             query_parts.append("AND hcr.run_timestamp >= %(start_time)s::date")
             params['start_time'] = start_time_str
 
         if end_time_str:
-            # To make the end date inclusive, we cast to date, add 1 day, and use '<'.
-            # This correctly includes all timestamps on the selected end date.
             query_parts.append("AND hcr.run_timestamp < (%(end_time)s::date + interval '1 day')")
             params['end_time'] = end_time_str
 
@@ -130,13 +131,51 @@ def get_all_runs():
             all_runs.append({
                 "id": row[0],
                 "timestamp": row[1].isoformat(),
-                "target": f"{row[2]}:{row[3]} ({row[4]})"
+                "target": f"{row[2]}:{row[3]} ({row[4]})",
+                "is_favorite": row[5]
             })
     except psycopg2.Error as e:
         current_app.logger.error(f"Database error fetching all runs with filters: {e}")
     finally:
         if conn: conn.close()
     return jsonify(all_runs)
+
+@bp.route('/api/runs/toggle-favorite', methods=['POST'])
+@login_required
+def toggle_favorite():
+    """Toggles the favorite status of a given run for the current user."""
+    data = request.get_json()
+    run_id = data.get('run_id')
+
+    if not run_id:
+        return jsonify({'status': 'error', 'message': 'run_id is required.'}), 400
+    
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT 1 FROM user_favorite_runs WHERE user_id = %s AND run_id = %s;", (current_user.id, run_id))
+        exists = cursor.fetchone()
+
+        if exists:
+            cursor.execute("DELETE FROM user_favorite_runs WHERE user_id = %s AND run_id = %s;", (current_user.id, run_id))
+            new_status = False
+        else:
+            cursor.execute("INSERT INTO user_favorite_runs (user_id, run_id) VALUES (%s, %s);", (current_user.id, run_id))
+            new_status = True
+        
+        conn.commit()
+        return jsonify({'status': 'success', 'is_favorite': new_status})
+
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        current_app.logger.error(f"Database error toggling favorite: {e}")
+        return jsonify({'status': 'error', 'message': 'Database error.'}), 500
+    finally:
+        if conn: conn.close()
 
 @bp.route('/api/save-preference', methods=['POST'])
 @login_required
