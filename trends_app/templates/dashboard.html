@@ -30,11 +30,29 @@
 <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1 class="mb-0">Health Check Dashboard</h1>
-        <div>
+        <!-- MODIFIED NAVIGATION AREA -->
+        <div class="btn-group">
             <a href="{{ url_for('profile.report_history') }}" class="btn btn-outline-info">Report History</a>
             <a href="{{ url_for('profile.ai_settings') }}" class="btn btn-info">AI Settings</a>
+            
+            {% if current_user.has_privilege('AdministerUsers') %}
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Admin
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_users') }}">Manage Users</a></li>
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_roles') }}">Manage Roles</a></li>
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_privileges') }}">Manage Privileges</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_ai_providers') }}">Manage AI Providers</a></li>
+                </ul>
+            </div>
+            {% endif %}
+
             <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
         </div>
+        <!-- END MODIFIED NAVIGATION AREA -->
     </div>
 
     <!-- Filters Card -->
