@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for, flash
+from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for, flash, abort
 from flask_login import login_required, current_user
 import psycopg2
 from .utils import load_trends_config
@@ -9,6 +9,9 @@ bp = Blueprint('profile', __name__, url_prefix='/profile')
 @login_required
 def ai_settings():
     """Displays the user's AI profiles and the form to create new ones."""
+    if not current_user.has_privilege('ManageAIProfiles'):
+        abort(403)
+        
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -51,6 +54,9 @@ def ai_settings():
 @login_required
 def create_ai_profile():
     """Handles the creation of a new AI profile."""
+    if not current_user.has_privilege('ManageAIProfiles'):
+        abort(403)
+
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -99,6 +105,9 @@ def create_ai_profile():
 @login_required
 def get_ai_profile(profile_id):
     """Fetches data for a single AI profile to populate the edit modal."""
+    if not current_user.has_privilege('ManageAIProfiles'):
+        abort(403)
+
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -130,6 +139,9 @@ def get_ai_profile(profile_id):
 @login_required
 def edit_ai_profile(profile_id):
     """Handles updates to an existing AI profile."""
+    if not current_user.has_privilege('ManageAIProfiles'):
+        abort(403)
+
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -177,6 +189,9 @@ def edit_ai_profile(profile_id):
 @login_required
 def delete_ai_profile(profile_id):
     """Deletes an AI profile owned by the current user."""
+    if not current_user.has_privilege('ManageAIProfiles'):
+        abort(403)
+
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -205,3 +220,74 @@ def delete_ai_profile(profile_id):
 def report_history():
     """Renders the page that displays the user's generated report history."""
     return render_template('profile/report_history.html')
+
+@bp.route('/view-report/<int:report_id>')
+@login_required
+def view_report(report_id):
+    """Displays a single generated report in an online viewer."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        # Ensure user can only view their own reports
+        cursor.execute(
+            """
+            SELECT report_name, pgp_sym_decrypt(report_content::bytea, get_encryption_key())
+            FROM generated_ai_reports
+            WHERE id = %s AND generated_by_user_id = %s;
+            """,
+            (report_id, current_user.id)
+        )
+        report_data = cursor.fetchone()
+        if not report_data:
+            abort(404, "Report not found or you do not have permission to access it.")
+        
+        report_name, report_content = report_data
+        return render_template('profile/view_report.html', report_id=report_id, report_name=report_name, report_content=report_content)
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error viewing report: {e}")
+        abort(500, "Database error occurred.")
+    finally:
+        if conn: conn.close()
+
+@bp.route('/save-report/<int:report_id>', methods=['POST'])
+@login_required
+def save_report(report_id):
+    """Saves an edited report back to the database."""
+    if not current_user.has_privilege('EditReports'):
+        return jsonify({"status": "error", "message": "Permission denied."}), 403
+
+    data = request.get_json()
+    new_content = data.get('content')
+    if new_content is None:
+        return jsonify({"status": "error", "message": "No content provided."}), 400
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        # Encrypt the new content and update the record, ensuring the user owns it
+        cursor.execute(
+            """
+            UPDATE generated_ai_reports
+            SET report_content = pgp_sym_encrypt(%s, get_encryption_key())
+            WHERE id = %s AND generated_by_user_id = %s;
+            """,
+            (new_content, report_id, current_user.id)
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            return jsonify({"status": "error", "message": "Report not found or permission denied."}), 404
+        
+        return jsonify({"status": "success", "message": "Report saved successfully."})
+
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        current_app.logger.error(f"Database error saving report: {e}")
+        return jsonify({"status": "error", "message": "A database error occurred."}), 500
+    finally:
+        if conn: conn.close()

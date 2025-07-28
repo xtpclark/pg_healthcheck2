@@ -124,6 +124,8 @@ document.addEventListener('DOMContentLoaded', function() {
                             <td>${report.rules_name || '<em>(deleted)</em>'}</td>
                             <td>${report.template_name || '<em>(deleted)</em>'}</td>
                             <td>
+                                <!-- ADDED: "View" button to navigate to the editor -->
+                                <a href="/profile/view-report/${report.id}" class="btn btn-info btn-sm mb-1">View</a>
                                 <button class="btn btn-warning btn-sm edit-btn mb-1" data-report-id="${report.id}" data-name="${report.name || ''}" data-description="${report.description || ''}" data-annotations="${report.annotations || ''}">Edit</button>
                                 <a href="/api/download-report/${report.id}" class="btn btn-success btn-sm">Download</a>
                             </td>
