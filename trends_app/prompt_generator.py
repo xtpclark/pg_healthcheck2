@@ -14,8 +14,10 @@ def analyze_metric_severity(metric_name, data_row, all_findings, analysis_rules)
             if all(cond.get('key') in data_row for cond in config.get('data_conditions', []) if cond.get('exists')):
                 for rule in config.get('rules', []):
                     try:
-                        if eval(rule['expression'], {"data": data_row, "all_structured_findings": all_findings}):
-                            evaluated_reasoning = eval(f"f\"{rule['reasoning']}\"", {"data": data_row})
+                        # Pass settings to eval context, loading them if needed
+                        settings = load_trends_config() or {}
+                        if eval(rule['expression'], {"data": data_row, "all_structured_findings": all_findings, "settings": settings}):
+                            evaluated_reasoning = eval(f"f\"{rule['reasoning']}\"", {"data": data_row, "settings": settings})
                             return {
                                 'level': rule.get('level', 'info'),
                                 'score': rule.get('score', 0),
@@ -39,8 +41,8 @@ def generate_web_prompt(findings_json, rule_set_id, template_id):
     Returns:
         str: A formatted prompt string for the AI, or an error message.
     """
-    config = load_trends_config()
-    db_config = config.get('database')
+    settings = load_trends_config()
+    db_config = settings.get('database')
     if not db_config:
         return "Error: Database configuration not found."
 
@@ -89,46 +91,30 @@ def generate_web_prompt(findings_json, rule_set_id, template_id):
         # --- Render the Jinja2 Template ---
         template = jinja2.Template(template_content)
         
-        # --- Generic Context Variable Preparation ---
         def get_generic_metadata(findings):
-            """
-            Dynamically finds common metadata to make the prompt generator
-            agnostic to the underlying database technology. It searches for
-            keys containing common terms.
-            """
-            db_version = "N/A"
-            db_name = "N/A"
-            # Search for version and name in a prioritized order of modules if possible
+            db_version, db_name = "N/A", "N/A"
             search_order = ['overview', 'version_info', 'cluster_info']
-            
-            # First pass with prioritized modules
             for module_key in search_order:
                 for key, module in findings.items():
-                    if module_key in key.lower():
-                         if isinstance(module, dict) and "data" in module:
-                            data = module["data"]
-                            if isinstance(data, dict):
-                                for sub_key, sub_val in data.items():
-                                    if "version" in sub_key and isinstance(sub_val, str):
-                                        db_version = sub_val
-                                    if "database" in sub_key or "db_name" in sub_key and isinstance(sub_val, str):
-                                        db_name = sub_val
-                if db_version != "N/A" and db_name != "N/A":
-                    break # Stop if we found both
-
+                    if module_key in key.lower() and isinstance(module, dict) and "data" in module:
+                        data = module["data"]
+                        if isinstance(data, dict):
+                            for sub_key, sub_val in data.items():
+                                if "version" in sub_key and isinstance(sub_val, str): db_version = sub_val
+                                if "database" in sub_key or "db_name" in sub_key and isinstance(sub_val, str): db_name = sub_val
+                if db_version != "N/A" and db_name != "N/A": break
             return db_version, db_name
 
         db_version, db_name = get_generic_metadata(findings_json)
 
-        # Create a context dictionary for rendering the template
         template_context = {
             "findings_json": json.dumps(findings_json, indent=2),
+            "settings": settings,  # <-- ADDED THIS LINE
             "technology": technology,
             "db_version": db_version,
             "database_name": db_name,
             "critical_issues": critical_issues,
             "high_priority_issues": high_priority_issues,
-            # For backward compatibility with older postgres-specific templates
             "postgres_version": db_version 
         }
 

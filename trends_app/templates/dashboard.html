@@ -14,15 +14,13 @@
         .vis-item { border-color: #0d6efd; background-color: #cfe2ff; transition: opacity 0.3s ease-in-out; }
         .vis-item.vis-selected { border-color: #fd7e14; background-color: #ffe5d0; }
         
-        /* Style for the glowing favorite border */
         .vis-item.favorite-item {
             border-color: #ffc107;
-            background-color: #fff3cd; /* A light yellow background */
-            box-shadow: 0 0 8px rgba(255, 193, 7, 0.8); /* The glow effect */
+            background-color: #fff3cd;
+            box-shadow: 0 0 8px rgba(255, 193, 7, 0.8);
             border-width: 2px;
         }
 
-        /* New style to dim non-favorite items */
         .vis-item.dimmed-item {
             opacity: 0.3;
         }
@@ -33,6 +31,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1 class="mb-0">Health Check Dashboard</h1>
         <div>
+            <a href="{{ url_for('profile.report_history') }}" class="btn btn-outline-info">Report History</a>
             <a href="{{ url_for('profile.ai_settings') }}" class="btn btn-info">AI Settings</a>
             <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
         </div>
@@ -249,18 +248,15 @@
 
         function applyFavoriteVisibility() {
             const showOnlyFavorites = showFavoritesOnlyFilter.checked;
-            const updatedItems = items.get({
-                filter: item => {
-                    let newClassName = item.is_favorite ? 'favorite-item' : '';
-                    if (showOnlyFavorites && !item.is_favorite) {
-                        newClassName += ' dimmed-item';
-                    }
-                    // This is a workaround to force a re-render if the class changes
-                    if (item.className !== newClassName) {
-                        item.className = newClassName;
-                        return true;
-                    }
-                    return false;
+            const updatedItems = [];
+
+            items.forEach(item => {
+                let newClassName = item.is_favorite ? 'favorite-item' : '';
+                if (showOnlyFavorites && !item.is_favorite) {
+                    newClassName += ' dimmed-item';
+                }
+                if (item.className !== newClassName) {
+                    updatedItems.push({ id: item.id, className: newClassName });
                 }
             });
 
@@ -398,7 +394,7 @@
 
                 const blob = await response.blob();
                 const contentDisposition = response.headers.get('Content-Disposition');
-                const filename = contentDisposition ? contentDisposition.split('filename=')[1] : `ai-report-${runId}.adoc`;
+                const filename = contentDisposition ? contentDisposition.split('filename=')[1].replace(/"/g, '') : `ai-report-${runId}.adoc`;
                 
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -408,6 +404,7 @@
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);
+                a.remove();
                 
             } catch (error) {
                 alert(`Failed to generate report: ${error.message}`);

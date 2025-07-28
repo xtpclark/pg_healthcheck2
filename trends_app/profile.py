@@ -200,9 +200,8 @@ def delete_ai_profile(profile_id):
     
     return redirect(url_for('profile.ai_settings'))
 
-# Placeholder for Report History Page
 @bp.route('/report-history')
 @login_required
 def report_history():
-    flash("Report History page is under construction.", "info")
-    return "Report History Page (to be implemented)"
+    """Renders the page that displays the user's generated report history."""
+    return render_template('profile/report_history.html')
