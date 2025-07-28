@@ -13,26 +13,38 @@ bp = Blueprint('admin', __name__, url_prefix='/admin')
 @bp.route('/users')
 @login_required
 def list_users():
-    """Admin page to list all users."""
+    """Admin page to list all users and their active status."""
     if not current_user.has_privilege('AdministerUsers'):
         abort(403)
     
     config = load_trends_config()
     db_config = config.get('database')
     conn = None
-    all_users = []
+    users_with_status = [] # MODIFIED: Create a new list for users and their status
     try:
         conn = psycopg2.connect(**db_config)
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users ORDER BY username;")
-        user_ids = [row[0] for row in cursor.fetchall()]
-        all_users = [load_user(db_config, user_id) for user_id in user_ids]
+        # Fetch all user data
+        cursor.execute("SELECT id, username FROM users ORDER BY username;")
+        users_data = cursor.fetchall()
+        
+        for user_id, username in users_data:
+            user = load_user(db_config, user_id)
+            if user:
+                # Check if the user can log in to determine their active status
+                cursor.execute("SELECT usercanlogin(%s);", (username,))
+                is_active = cursor.fetchone()[0]
+                # MODIFIED: Append a dictionary with user and status instead of modifying the user object
+                users_with_status.append({'user': user, 'is_active': is_active})
+                
     except psycopg2.Error as e:
         flash("Database error while fetching users.", "danger")
     finally:
         if conn: conn.close()
     
-    return render_template('admin/users.html', users=all_users)
+    # MODIFIED: Pass the new list to the template
+    return render_template('admin/users.html', users_with_status=users_with_status)
+
 
 @bp.route('/users/create', methods=['GET', 'POST'])
 @login_required
@@ -65,7 +77,7 @@ def create_user():
             for group_id in group_ids:
                  cursor.execute("INSERT INTO usrgrp (usrgrp_grp_id, usrgrp_username) VALUES (%s, %s);", (group_id, username))
 
-            # --- NEW: Set the 'active' preference so the new user can log in ---
+            # Set the 'active' preference so the new user can log in
             cursor.execute("SELECT setuserpreference(%s, 'active', 't');", (username,))
 
             conn.commit()
@@ -178,6 +190,70 @@ def edit_user(user_id):
                            all_groups=all_groups,
                            user_company_ids=user_company_ids,
                            user_group_ids=user_group_ids)
+
+
+@bp.route('/users/disable/<int:user_id>', methods=['POST'])
+@login_required
+def disable_user(user_id):
+    """Disables a user by setting their 'active' usrpref to 'f'."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    user_to_disable = load_user(db_config, user_id)
+
+    if not user_to_disable:
+        flash("User not found.", "danger")
+        return redirect(url_for('admin.list_users'))
+
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        # Call the database function to set the 'active' preference to 'f'
+        cursor.execute("SELECT setuserpreference(%s, 'active', 'f');", (user_to_disable.username,))
+        conn.commit()
+        flash(f"User '{user_to_disable.username}' has been disabled.", "success")
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+    
+    return redirect(url_for('admin.list_users'))
+
+
+@bp.route('/users/enable/<int:user_id>', methods=['POST'])
+@login_required
+def enable_user(user_id):
+    """Enables a user by setting their 'active' usrpref to 't'."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    user_to_enable = load_user(db_config, user_id)
+
+    if not user_to_enable:
+        flash("User not found.", "danger")
+        return redirect(url_for('admin.list_users'))
+
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        # Call the database function to set the 'active' preference to 't'
+        cursor.execute("SELECT setuserpreference(%s, 'active', 't');", (user_to_enable.username,))
+        conn.commit()
+        flash(f"User '{user_to_enable.username}' has been enabled.", "success")
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+    
+    return redirect(url_for('admin.list_users'))
 
 
 # --- ROLE (GROUP) MANAGEMENT ROUTES ---
