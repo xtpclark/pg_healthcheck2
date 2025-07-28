@@ -2,8 +2,89 @@ from flask import Blueprint, render_template, request, jsonify, current_app, red
 from flask_login import login_required, current_user
 import psycopg2
 from .utils import load_trends_config
+# Import secure_filename to safely handle user-uploaded filenames
+from werkzeug.utils import secure_filename
+import os
 
 bp = Blueprint('profile', __name__, url_prefix='/profile')
+
+# --- REPORT UPLOAD LOGIC ---
+
+ALLOWED_EXTENSIONS = {'adoc', 'asciidoc'}
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@bp.route('/upload-report', methods=['GET', 'POST'])
+@login_required
+def upload_report_form():
+    """Renders the page for uploading a new AsciiDoc report and handles the upload."""
+    if not current_user.has_privilege('UploadReports'):
+        abort(403)
+
+    if request.method == 'POST':
+        # Check if the post request has the file part
+        if 'report_file' not in request.files:
+            flash('No file part in the request.', 'danger')
+            return redirect(request.url)
+        
+        file = request.files['report_file']
+        report_name = request.form.get('report_name')
+        report_description = request.form.get('report_description')
+
+        # If the user does not select a file, the browser submits an empty file without a filename.
+        if file.filename == '':
+            flash('No selected file.', 'danger')
+            return redirect(request.url)
+
+        if not report_name:
+            flash('Report Name is a required field.', 'danger')
+            return redirect(request.url)
+
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            content = file.read().decode('utf-8')
+
+            config = load_trends_config()
+            db_settings = config.get('database')
+            conn = None
+            try:
+                conn = psycopg2.connect(**db_settings)
+                cursor = conn.cursor()
+
+                # Encrypt the content and insert into the new table
+                cursor.execute(
+                    """
+                    INSERT INTO uploaded_reports (
+                        uploaded_by_user_id, report_name, report_description,
+                        encrypted_report_content, original_filename
+                    ) VALUES (
+                        %s, %s, %s,
+                        pgp_sym_encrypt(%s, get_encryption_key()),
+                        %s
+                    );
+                    """,
+                    (current_user.id, report_name, report_description, content, filename)
+                )
+                conn.commit()
+                flash(f"Report '{report_name}' uploaded successfully!", "success")
+                return redirect(url_for('profile.report_history'))
+
+            except psycopg2.Error as e:
+                if conn: conn.rollback()
+                flash(f"Database error: {e}", "danger")
+                current_app.logger.error(f"DB error uploading report: {e}")
+            finally:
+                if conn: conn.close()
+        else:
+            flash('Invalid file type. Please upload a .adoc or .asciidoc file.', 'danger')
+
+    # For GET requests, just render the form
+    return render_template('profile/upload_report.html')
+
+
+# --- AI PROFILE AND OTHER ROUTES ---
 
 @bp.route('/ai-settings', methods=['GET'])
 @login_required
