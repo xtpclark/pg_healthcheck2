@@ -29,20 +29,25 @@
 
     <div class="card">
         <div class="card-body">
-            <table class="table table-striped">
-                <thead>
-                    <tr>
-                        <th>Report Name</th>
-                        <th>Description</th>
-                        <th>Generated On</th>
-                        <th>Original Run ID</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="report-history-table-body">
-                    <!-- Rows will be dynamically inserted here by JavaScript -->
-                </tbody>
-            </table>
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Report Name</th>
+                            <th>Description</th>
+                            <th>Generated On</th>
+                            <th>Target</th>
+                            <th>AI Profile</th>
+                            <th>Rules</th>
+                            <th>Template</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="report-history-table-body">
+                        <!-- Rows will be dynamically inserted here by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
             <div id="loading-spinner" class="text-center d-none">
                 <div class="spinner-border" role="status">
                     <span class="visually-hidden">Loading...</span>
@@ -100,11 +105,11 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 loadingSpinner.classList.add('d-none');
                 if (data.error) {
-                    tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${data.error}</td></tr>`;
+                    tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${data.error}</td></tr>`;
                     return;
                 }
                 if (data.length === 0) {
-                    tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">No reports have been generated yet.</td></tr>`;
+                    tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">No reports have been generated yet.</td></tr>`;
                     return;
                 }
 
@@ -114,9 +119,12 @@ document.addEventListener('DOMContentLoaded', function() {
                             <td>${report.name || ''}</td>
                             <td>${report.description || ''}</td>
                             <td>${new Date(report.timestamp).toLocaleString()}</td>
-                            <td>${report.run_id}</td>
+                            <td><small>${report.target_host || 'N/A'}<br>(${report.db_name || 'N/A'})</small></td>
+                            <td>${report.profile_name || '<em>(deleted)</em>'}</td>
+                            <td>${report.rules_name || '<em>(deleted)</em>'}</td>
+                            <td>${report.template_name || '<em>(deleted)</em>'}</td>
                             <td>
-                                <button class="btn btn-warning btn-sm edit-btn" data-report-id="${report.id}" data-name="${report.name || ''}" data-description="${report.description || ''}" data-annotations="${report.annotations || ''}">Edit</button>
+                                <button class="btn btn-warning btn-sm edit-btn mb-1" data-report-id="${report.id}" data-name="${report.name || ''}" data-description="${report.description || ''}" data-annotations="${report.annotations || ''}">Edit</button>
                                 <a href="/api/download-report/${report.id}" class="btn btn-success btn-sm">Download</a>
                             </td>
                         </tr>
@@ -126,7 +134,7 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .catch(err => {
                 loadingSpinner.classList.add('d-none');
-                tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">Failed to load report history.</td></tr>`;
+                tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">Failed to load report history.</td></tr>`;
                 console.error(err);
             });
     }
