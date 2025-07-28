@@ -5,21 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Report History</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Icon library for the upload button -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 </head>
-<body>
+<body class="bg-light">
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="mb-0">AI Report History</h1>
+        <h1 class="mb-0">Report History</h1>
         <div>
+            <!-- Button to upload a new report, visible only if user has the privilege -->
+            {% if current_user.has_privilege('UploadReports') %}
+            <a href="{{ url_for('profile.upload_report_form') }}" class="btn btn-primary">
+                <i class="bi bi-upload"></i> Upload Report
+            </a>
+            {% endif %}
             <a href="{{ url_for('main.dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
-            <a href="{{ url_for('auth.logout') }}" class="btn btn-danger">Logout</a>
         </div>
     </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
             {% for category, message in messages %}
-                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }} alert-dismissible fade show" role="alert">
                     {{ message }}
                     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
@@ -35,11 +42,9 @@
                         <tr>
                             <th>Report Name</th>
                             <th>Description</th>
-                            <th>Generated On</th>
+                            <th>Date</th>
+                            <th>Source</th>
                             <th>Target</th>
-                            <th>AI Profile</th>
-                            <th>Rules</th>
-                            <th>Template</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -67,6 +72,7 @@
       </div>
       <div class="modal-body">
         <input type="hidden" id="edit-report-id">
+        <input type="hidden" id="edit-report-type">
         <div class="mb-3">
           <label for="edit-report-name" class="form-label">Report Name</label>
           <input type="text" class="form-control" id="edit-report-name">
@@ -100,34 +106,44 @@ document.addEventListener('DOMContentLoaded', function() {
         loadingSpinner.classList.remove('d-none');
         tableBody.innerHTML = ''; // Clear existing rows
 
-        fetch("{{ url_for('main.get_generated_reports') }}")
+        // MODIFIED: Fetch from the new unified endpoint
+        fetch("{{ url_for('main.get_all_reports') }}")
             .then(response => response.json())
             .then(data => {
                 loadingSpinner.classList.add('d-none');
                 if (data.error) {
-                    tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${data.error}</td></tr>`;
+                    tableBody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">${data.error}</td></tr>`;
                     return;
                 }
                 if (data.length === 0) {
-                    tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">No reports have been generated yet.</td></tr>`;
+                    tableBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No reports found.</td></tr>`;
                     return;
                 }
 
                 data.forEach(report => {
+                    // MODIFIED: Handle both 'generated' and 'uploaded' report types
+                    const isGenerated = report.type === 'generated';
+                    
+                    const targetInfo = isGenerated ? `<small>${report.target_host}<br>(${report.db_name})</small>` : 'N/A';
+                    const sourceInfo = isGenerated ? `AI: ${report.profile_name || '<em>(deleted)</em>'}` : 'Manual Upload';
+
+                    // CORRECTED: The view link now points to the new unified endpoint
                     const row = `
                         <tr>
                             <td>${report.name || ''}</td>
                             <td>${report.description || ''}</td>
                             <td>${new Date(report.timestamp).toLocaleString()}</td>
-                            <td><small>${report.target_host || 'N/A'}<br>(${report.db_name || 'N/A'})</small></td>
-                            <td>${report.profile_name || '<em>(deleted)</em>'}</td>
-                            <td>${report.rules_name || '<em>(deleted)</em>'}</td>
-                            <td>${report.template_name || '<em>(deleted)</em>'}</td>
+                            <td>${sourceInfo}</td>
+                            <td>${targetInfo}</td>
                             <td>
-                                <!-- ADDED: "View" button to navigate to the editor -->
-                                <a href="/profile/view-report/${report.id}" class="btn btn-info btn-sm mb-1">View</a>
-                                <button class="btn btn-warning btn-sm edit-btn mb-1" data-report-id="${report.id}" data-name="${report.name || ''}" data-description="${report.description || ''}" data-annotations="${report.annotations || ''}">Edit</button>
-                                <a href="/api/download-report/${report.id}" class="btn btn-success btn-sm">Download</a>
+                                <a href="/profile/view-report/${report.type}/${report.id}" class="btn btn-info btn-sm mb-1">View</a>
+                                <button class="btn btn-warning btn-sm edit-btn mb-1" 
+                                    data-report-id="${report.id}" 
+                                    data-report-type="${report.type}"
+                                    data-name="${report.name || ''}" 
+                                    data-description="${report.description || ''}" 
+                                    data-annotations="${report.annotations || ''}">Edit</button>
+                                ${isGenerated ? `<a href="/api/download-report/${report.id}" class="btn btn-success btn-sm">Download</a>` : ''}
                             </td>
                         </tr>
                     `;
@@ -136,7 +152,7 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .catch(err => {
                 loadingSpinner.classList.add('d-none');
-                tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">Failed to load report history.</td></tr>`;
+                tableBody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">Failed to load report history.</td></tr>`;
                 console.error(err);
             });
     }
@@ -145,22 +161,40 @@ document.addEventListener('DOMContentLoaded', function() {
         if (event.target.classList.contains('edit-btn')) {
             const button = event.target;
             document.getElementById('edit-report-id').value = button.dataset.reportId;
+            document.getElementById('edit-report-type').value = button.dataset.reportType;
             document.getElementById('edit-report-name').value = button.dataset.name;
             document.getElementById('edit-report-description').value = button.dataset.description;
-            document.getElementById('edit-annotations').value = button.dataset.annotations;
+            
+            const annotationsTextarea = document.getElementById('edit-annotations');
+            // Only show annotations for generated reports
+            if (button.dataset.reportType === 'generated') {
+                annotationsTextarea.value = button.dataset.annotations;
+                annotationsTextarea.closest('.mb-3').style.display = 'block';
+            } else {
+                annotationsTextarea.value = '';
+                annotationsTextarea.closest('.mb-3').style.display = 'none';
+            }
+            
             editReportModal.show();
         }
     });
 
     saveChangesBtn.addEventListener('click', function() {
         const reportId = document.getElementById('edit-report-id').value;
+        const reportType = document.getElementById('edit-report-type').value;
+
+        // TODO: The save endpoint needs to be updated to handle both report types.
+        // For now, this will only work for generated reports.
         const payload = {
             report_name: document.getElementById('edit-report-name').value,
             report_description: document.getElementById('edit-report-description').value,
             annotations: document.getElementById('edit-annotations').value
         };
 
-        fetch(`/api/generated-reports/${reportId}`, {
+        const saveUrl = reportType === 'generated' ? `/api/generated-reports/${reportId}` : `/api/uploaded-reports/${reportId}`;
+
+        // This fetch will fail for uploaded reports until we create the endpoint.
+        fetch(saveUrl, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)

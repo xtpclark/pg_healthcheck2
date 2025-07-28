@@ -302,36 +302,58 @@ def report_history():
     """Renders the page that displays the user's generated report history."""
     return render_template('profile/report_history.html')
 
-@bp.route('/view-report/<int:report_id>')
+# --- MODIFIED: Unified route to view any type of report ---
+@bp.route('/view-report/<string:report_type>/<int:report_id>')
 @login_required
-def view_report(report_id):
-    """Displays a single generated report in an online viewer."""
+def view_report(report_type, report_id):
+    """Displays a single report (generated or uploaded) in an online viewer."""
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
+    
     try:
         conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
-        # Ensure user can only view their own reports
-        cursor.execute(
-            """
-            SELECT report_name, pgp_sym_decrypt(report_content::bytea, get_encryption_key())
-            FROM generated_ai_reports
-            WHERE id = %s AND generated_by_user_id = %s;
-            """,
-            (report_id, current_user.id)
-        )
+
+        if report_type == 'generated':
+            # Fetch from generated_ai_reports
+            cursor.execute(
+                """
+                SELECT report_name, pgp_sym_decrypt(report_content::bytea, get_encryption_key())
+                FROM generated_ai_reports
+                WHERE id = %s AND generated_by_user_id = %s;
+                """,
+                (report_id, current_user.id)
+            )
+        elif report_type == 'uploaded':
+            # Fetch from uploaded_reports
+            cursor.execute(
+                """
+                SELECT report_name, pgp_sym_decrypt(encrypted_report_content::bytea, get_encryption_key())
+                FROM uploaded_reports
+                WHERE id = %s AND uploaded_by_user_id = %s;
+                """,
+                (report_id, current_user.id)
+            )
+        else:
+            abort(404, "Invalid report type specified.")
+
         report_data = cursor.fetchone()
         if not report_data:
             abort(404, "Report not found or you do not have permission to access it.")
         
         report_name, report_content = report_data
-        return render_template('profile/view_report.html', report_id=report_id, report_name=report_name, report_content=report_content)
+        return render_template('profile/view_report.html', 
+                               report_id=report_id, 
+                               report_name=report_name, 
+                               report_content=report_content,
+                               report_type=report_type) # Pass type to template for save logic
     except psycopg2.Error as e:
         current_app.logger.error(f"Database error viewing report: {e}")
         abort(500, "Database error occurred.")
     finally:
         if conn: conn.close()
+
 
 @bp.route('/save-report/<int:report_id>', methods=['POST'])
 @login_required
@@ -372,3 +394,153 @@ def save_report(report_id):
         return jsonify({"status": "error", "message": "A database error occurred."}), 500
     finally:
         if conn: conn.close()
+
+# --- REMOVED conflicting /view-slides route. The real logic is in main.py ---
+
+@bp.route('/prompt-templates')
+@login_required
+def prompt_templates():
+    """Renders the page for a user to manage their personal prompt templates."""
+    if not current_user.has_privilege('ManageUserTemplates'):
+        abort(403)
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    user_templates = []
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        # Fetch only templates created by the current user
+        cursor.execute(
+            "SELECT id, template_name, technology FROM prompt_templates WHERE user_id = %s ORDER BY template_name;",
+            (current_user.id,)
+        )
+        for row in cursor.fetchall():
+            user_templates.append({"id": row[0], "name": row[1], "technology": row[2]})
+    except psycopg2.Error as e:
+        flash("Database error while loading your templates.", "danger")
+    finally:
+        if conn: conn.close()
+        
+    return render_template('profile/prompt_templates.html', templates=user_templates)
+
+@bp.route('/prompt-templates/create', methods=['POST'])
+@login_required
+def create_prompt_template():
+    """Handles the creation of a new user-owned prompt template."""
+    if not current_user.has_privilege('ManageUserTemplates'):
+        abort(403)
+
+    template_name = request.form.get('template_name')
+    technology = request.form.get('technology')
+    template_content = request.form.get('template_content')
+
+    if not all([template_name, technology, template_content]):
+        flash("All fields are required.", "danger")
+        return redirect(url_for('profile.prompt_templates'))
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO prompt_templates (template_name, technology, template_content, user_id) VALUES (%s, %s, %s, %s);",
+            (template_name, technology, template_content, current_user.id)
+        )
+        conn.commit()
+        flash(f"Template '{template_name}' created successfully.", "success")
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+
+    return redirect(url_for('profile.prompt_templates'))
+
+@bp.route('/prompt-templates/get/<int:template_id>')
+@login_required
+def get_prompt_template_content(template_id): # Renamed to avoid conflict with main blueprint
+    """API endpoint to fetch the content of a user's template for editing."""
+    if not current_user.has_privilege('ManageUserTemplates'):
+        return jsonify({"error": "Permission denied"}), 403
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT template_name, technology, template_content FROM prompt_templates WHERE id = %s AND user_id = %s;",
+            (template_id, current_user.id)
+        )
+        template = cursor.fetchone()
+        if template:
+            return jsonify({
+                "name": template[0],
+                "technology": template[1],
+                "content": template[2]
+            })
+        return jsonify({"error": "Template not found"}), 404
+    except psycopg2.Error as e:
+        return jsonify({"error": "Database error"}), 500
+    finally:
+        if conn: conn.close()
+
+@bp.route('/prompt-templates/edit/<int:template_id>', methods=['POST'])
+@login_required
+def edit_prompt_template(template_id):
+    """Handles updates to a user's prompt template."""
+    if not current_user.has_privilege('ManageUserTemplates'):
+        abort(403)
+
+    template_name = request.form.get('template_name')
+    technology = request.form.get('technology')
+    template_content = request.form.get('template_content')
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE prompt_templates SET template_name = %s, technology = %s, template_content = %s WHERE id = %s AND user_id = %s;",
+            (template_name, technology, template_content, template_id, current_user.id)
+        )
+        conn.commit()
+        flash("Template updated successfully.", "success")
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+        
+    return redirect(url_for('profile.prompt_templates'))
+
+@bp.route('/prompt-templates/delete/<int:template_id>', methods=['POST'])
+@login_required
+def delete_prompt_template(template_id):
+    """Deletes a user's prompt template."""
+    if not current_user.has_privilege('ManageUserTemplates'):
+        abort(403)
+    
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM prompt_templates WHERE id = %s AND user_id = %s;", (template_id, current_user.id))
+        conn.commit()
+        flash("Template deleted successfully.", "success")
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+
+    return redirect(url_for('profile.prompt_templates'))

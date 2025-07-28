@@ -562,3 +562,114 @@ def upsert_privilege():
         if conn: conn.close()
 
     return redirect(url_for('admin.list_privileges'))
+
+
+# --- NEW: TEMPLATE ASSET MANAGEMENT ROUTES ---
+
+@bp.route('/template-assets')
+@login_required
+def list_template_assets():
+    """Admin page to list and manage template assets."""
+    if not current_user.has_privilege('AdministerUsers'): # Re-use privilege for simplicity
+        abort(403)
+    
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    assets = []
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, asset_name, mime_type, created_at FROM template_assets ORDER BY asset_name;")
+        for row in cursor.fetchall():
+            assets.append({
+                "id": row[0], "name": row[1], "mime_type": row[2], "created_at": row[3]
+            })
+    except psycopg2.Error as e:
+        flash(f"Database error fetching assets: {e}", "danger")
+    finally:
+        if conn: conn.close()
+        
+    return render_template('admin/template_assets.html', assets=assets)
+
+@bp.route('/template-assets/upload', methods=['POST'])
+@login_required
+def upload_template_asset():
+    """Handles the upload of a new template asset."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    asset_name = request.form.get('asset_name')
+    if 'asset_file' not in request.files or not asset_name:
+        flash("Asset Name and a file are required.", "danger")
+        return redirect(url_for('admin.list_template_assets'))
+
+    file = request.files['asset_file']
+    if file.filename == '':
+        flash("No selected file.", "danger")
+        return redirect(url_for('admin.list_template_assets'))
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO template_assets (asset_name, mime_type, asset_data) VALUES (%s, %s, %s);",
+            (asset_name, file.mimetype, file.read())
+        )
+        conn.commit()
+        flash(f"Asset '{asset_name}' uploaded successfully.", "success")
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+        
+    return redirect(url_for('admin.list_template_assets'))
+
+@bp.route('/template-assets/delete/<int:asset_id>', methods=['POST'])
+@login_required
+def delete_template_asset(asset_id):
+    """Deletes a template asset."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+        
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM template_assets WHERE id = %s;", (asset_id,))
+        conn.commit()
+        flash("Asset deleted successfully.", "success")
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn: conn.close()
+        
+    return redirect(url_for('admin.list_template_assets'))
+
+# This route is public so images can be rendered in templates without a login
+@bp.route('/assets/<string:asset_name>')
+def get_template_asset(asset_name):
+    """Serves a template asset's binary data from the database."""
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute("SELECT asset_data, mime_type FROM template_assets WHERE asset_name = %s;", (asset_name,))
+        asset = cursor.fetchone()
+        if asset:
+            return Response(asset[0], mimetype=asset[1])
+        else:
+            abort(404)
+    except psycopg2.Error as e:
+        abort(500)
+    finally:
+        if conn: conn.close()

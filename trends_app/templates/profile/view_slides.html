@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slides for Run {{ run_id }}</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@marp-team/marpit-svg-polyfill/marpit-svg-polyfill.js"></script>
+
+    <style>
+        /*
+         * These styles are crucial for creating an immersive, full-screen
+         * presentation experience.
+         */
+
+        /* Reset default browser margins and ensure full height */
+        html, body {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden; /* Prevents scrollbars on the main page */
+        }
+
+        /*
+         * This class is applied by the Marp script to the container
+         * that holds the slides. It ensures the deck fills the entire viewport.
+        */
+        .marpit {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="marp-container" style="display: none;">{{ slides_content | safe }}</div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@marp-team/marp-core/lib/index.js"></script>
+
+    <script>
+        // Wait for the entire page to be loaded before running the script.
+        document.addEventListener('DOMContentLoaded', function() {
+            // Step 1: Find the hidden container with our markdown content.
+            const markdownContainer = document.getElementById('marp-container');
+            if (!markdownContainer) {
+                console.error('Marp container not found! Cannot render slides.');
+                return;
+            }
+            const markdown = markdownContainer.textContent;
+
+            // Step 2: Initialize the Marp renderer engine.
+            const marp = new marp.Marp();
+
+            // Step 3: Render the markdown. This returns the slide HTML and the necessary CSS.
+            const { html, css } = marp.render(markdown);
+
+            // Step 4: Create a <style> tag and inject the generated CSS into the <head>.
+            // This is required for slide themes, layouts, and colors to work correctly.
+            const style = document.createElement('style');
+            style.textContent = css;
+            document.head.appendChild(style);
+
+            // Step 5: Replace the page's body content with the rendered slides.
+            // The `html` variable is an array of strings; each string is a complete slide.
+            // .join('') concatenates them into a single block of HTML for the browser.
+            document.body.innerHTML = html.join('');
+
+            // Step 6: Activate Marp's presentation controls.
+            // This enables keyboard navigation (left/right arrow keys) between slides.
+            marp.deck();
+        });
+    </script>
+
+</body>
+</html>
