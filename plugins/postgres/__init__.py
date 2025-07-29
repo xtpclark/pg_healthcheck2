@@ -100,3 +100,23 @@ class PostgresPlugin(BasePlugin):
                 print(f"⚠️ Warning: Could not dynamically load weight for module '{module_name}'. Error: {e}")
         
         return weights
+
+
+    def get_db_version_from_findings(self, findings: dict) -> str:
+        """Extracts the PostgreSQL version from the findings."""
+        try:
+            # PostgreSQL-specific path to the version info
+            return findings.get("postgres_overview", {}).get("version_info", {}).get("data", [{}])[0].get("version", "N/A")
+        except (IndexError, AttributeError):
+            return "N/A"
+
+    def get_db_name_from_findings(self, findings: dict) -> str:
+        """
+        Extracts the PostgreSQL database name from the findings.
+        This ensures historical accuracy for the offline processor.
+        """
+        try:
+            # PostgreSQL-specific path to the database name
+            return findings.get("postgres_overview", {}).get("database_size", {}).get("data", [{}])[0].get("database", "N/A")
+        except (IndexError, AttributeError):
+            return "N/A"
