@@ -55,6 +55,7 @@ def run_recommendation(settings, full_prompt):
                 "messages": [{"role": "user", "content": full_prompt}],
                 "temperature": AI_TEMPERATURE,
                 "max_tokens": AI_MAX_OUTPUT_TOKENS
+                "user" : AI_USER
             }
 
         response = requests.post(API_URL, headers=headers, data=json.dumps(payload), verify=verify_ssl)
