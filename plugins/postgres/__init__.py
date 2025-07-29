@@ -1,9 +1,10 @@
 import importlib.util
 from pathlib import Path
+import json
 
 # --- Import the components of this plugin ---
 from .connector import PostgresConnector
-from .rules.analysis_rules import METRIC_ANALYSIS_CONFIG
+# No longer importing the static rules config: from .rules.analysis_rules import METRIC_ANALYSIS_CONFIG
 
 # --- Import the base class it must implement ---
 from plugins.base import BasePlugin
@@ -21,8 +22,33 @@ class PostgresPlugin(BasePlugin):
         return PostgresConnector(settings)
 
     def get_rules_config(self):
-        """Returns the PostgreSQL-specific analysis rules."""
-        return METRIC_ANALYSIS_CONFIG
+        """
+        Dynamically discovers and loads all .json rule files
+        from the 'rules' directory.
+        """
+        all_rules = {}
+        # Assumes this script is in plugins/postgres/
+        rules_dir = Path(__file__).parent / 'rules'
+
+        if not rules_dir.is_dir():
+            print(f"⚠️ Warning: Rules directory not found at {rules_dir}")
+            return {}
+
+        # Iterate over every .json file in the rules directory
+        for rule_file in rules_dir.glob('*.json'):
+            try:
+                with open(rule_file, 'r') as f:
+                    # Use the standard, secure json loader
+                    loaded_rules = json.load(f)
+                    all_rules.update(loaded_rules)
+            except json.JSONDecodeError as e:
+                # Catch specific JSON parsing errors
+                print(f"⚠️ Warning: Could not parse rule file {rule_file.name}. Error: {e}")
+            except IOError as e:
+                # Catch file reading errors
+                print(f"⚠️ Warning: Could not read rule file {rule_file.name}. Error: {e}")
+
+        return all_rules
 
     def get_template_path(self) -> Path:
         """Returns the path to this plugin's templates directory."""
@@ -48,4 +74,3 @@ class PostgresPlugin(BasePlugin):
         spec.loader.exec_module(report_module)
         
         return getattr(report_module, 'REPORT_SECTIONS')
-

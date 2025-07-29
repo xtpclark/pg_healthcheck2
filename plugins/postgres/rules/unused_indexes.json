@@ -1,0 +1,24 @@
+{
+  "unused_indexes": {
+    "metric_keywords": [
+      "index"
+    ],
+    "data_conditions": [
+      {
+        "key": "idx_scan",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data['idx_scan']) == 0",
+        "level": "medium",
+        "score": 3,
+        "reasoning": "Found potentially unused index: {data['index_name']}",
+        "recommendations": [
+          "Review index usage on all replicas before removal"
+        ]
+      }
+    ]
+  }
+}

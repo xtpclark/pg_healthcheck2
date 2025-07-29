@@ -1,0 +1,108 @@
+{
+  "aws_cpu_utilization": {
+    "metric_keywords": [
+      "CPUUtilization"
+    ],
+    "data_conditions": [
+      {
+        "key": "value",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "float(data['value']) > 90",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "CPU Utilization is critically high at {data['value']:.1f}%.",
+        "recommendations": [
+          "Investigate top queries, consider scaling instance class."
+        ]
+      },
+      {
+        "expression": "float(data['value']) > 75",
+        "level": "high",
+        "score": 4,
+        "reasoning": "CPU Utilization is high at {data['value']:.1f}%.",
+        "recommendations": [
+          "Monitor CPU usage and optimize resource-intensive queries."
+        ]
+      }
+    ]
+  },
+  "aws_free_storage": {
+    "metric_keywords": [
+      "FreeStorageSpace"
+    ],
+    "data_conditions": [
+      {
+        "key": "value",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "float(data['value']) < 10 * 1024**3",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "Free storage space is critically low at {data['value'] / 1024**3:.2f} GB.",
+        "recommendations": [
+          "Increase storage volume immediately to prevent outage."
+        ]
+      },
+      {
+        "expression": "float(data['value']) < 25 * 1024**3",
+        "level": "high",
+        "score": 4,
+        "reasoning": "Free storage space is low at {data['value'] / 1024**3:.2f} GB.",
+        "recommendations": [
+          "Plan to increase storage volume soon."
+        ]
+      }
+    ]
+  },
+  "aws_burst_balance": {
+    "metric_keywords": [
+      "BurstBalance"
+    ],
+    "data_conditions": [
+      {
+        "key": "value",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "float(data['value']) < 10",
+        "level": "high",
+        "score": 4,
+        "reasoning": "Storage burst balance is low at {data['value']:.1f}%, performance may be throttled.",
+        "recommendations": [
+          "Consider switching to Provisioned IOPS (io1) or gp3 storage if performance is impacted."
+        ]
+      }
+    ]
+  },
+  "rds_proxy_pinning": {
+    "metric_keywords": [
+      "ConnectionPinning"
+    ],
+    "data_conditions": [
+      {
+        "key": "value",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "float(data['value']) > 5",
+        "level": "high",
+        "score": 4,
+        "reasoning": "RDS Proxy is experiencing connection pinning ({data['value']:.1f}%), reducing pooler efficiency.",
+        "recommendations": [
+          "Investigate application queries for session-level settings that cause pinning."
+        ]
+      }
+    ]
+  }
+}
