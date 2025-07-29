@@ -54,7 +54,7 @@ def run_recommendation(settings, full_prompt):
                 "model": AI_MODEL,
                 "messages": [{"role": "user", "content": full_prompt}],
                 "temperature": AI_TEMPERATURE,
-                "max_tokens": AI_MAX_OUTPUT_TOKENS
+                "max_tokens": AI_MAX_OUTPUT_TOKENS,
                 "user" : AI_USER
             }
 
