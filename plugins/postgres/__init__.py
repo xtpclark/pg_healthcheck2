@@ -74,3 +74,29 @@ class PostgresPlugin(BasePlugin):
         spec.loader.exec_module(report_module)
         
         return getattr(report_module, 'REPORT_SECTIONS')
+
+
+    def get_module_weights(self) -> dict:
+        """
+        Dynamically discovers the importance score for each check module by
+        calling the 'get_weight()' function within the module itself.
+        """
+        weights = {}
+        report_sections = self.get_report_definition()
+
+        for section in report_sections:
+            # Safely get the module name, skipping sections that are not modules
+            module_name = section.get('module')
+            if not module_name:
+                continue
+
+            try:
+                spec = importlib.util.find_spec(f"plugins.postgres.checks.{module_name}")
+                if spec:
+                    check_module = spec.loader.load_module()
+                    if hasattr(check_module, 'get_weight'):
+                        weights[module_name] = check_module.get_weight()
+            except Exception as e:
+                print(f"⚠️ Warning: Could not dynamically load weight for module '{module_name}'. Error: {e}")
+        
+        return weights

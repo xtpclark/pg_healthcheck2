@@ -1,4 +1,9 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_cache_analysis_queries
+from plugins.postgres.utils.qrylib.cache_analysis_queries import get_cache_analysis_queries
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 7 # High importance, as cache hit ratio is a key performance indicator.
+
 
 def run_cache_analysis(connector, settings):
     """

@@ -1,8 +1,8 @@
-from plugins.postgres.utils.postgresql_version_compatibility import (
+from plugins.postgres.utils.qrylib.pg_stat_statements import get_pg_stat_statements_query
+from plugins.postgres.utils.qrylib.function_audit import (
     get_security_definer_functions_query,
     get_superuser_owned_functions_query,
-    get_function_volatility_query,
-    get_pg_stat_statements_query
+    get_function_volatility_query
 )
 
 def run_function_audit(connector, settings):

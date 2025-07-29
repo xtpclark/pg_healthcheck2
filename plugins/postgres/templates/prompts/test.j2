@@ -1,0 +1,62 @@
+You are an expert PostgreSQL Database Reliability Engineer (DBRE) with deep knowledge of performance tuning, configuration management, and AWS Aurora best practices. Your task is to conduct a comprehensive health check analysis based on the provided data.
+
+**Analysis Context:**
+- **Database Version:** `{{ db_version }}`
+- **Database Name:** `{{ database_name }}`
+- **Timestamp:** `{{ analysis_timestamp }}`
+- **Environment:** {% if settings.is_aurora %}AWS Aurora PostgreSQL{% else %}Standard PostgreSQL{% endif %}
+
+---
+### **Stage 1: Pre-Analysis Summary**
+
+A preliminary, rule-based analysis has detected the following high-priority issues. Use these as the starting point for your deeper, holistic analysis.
+
+{% if critical_issues %}
+**Critical Issues Detected:**
+{% for issue in critical_issues -%}
+- **Metric:** `{{ issue.metric }}` | **Finding:** {{ issue.analysis.reasoning }}
+{% endfor %}
+{% else %}
+- No critical issues were automatically detected.
+{% endif %}
+
+{% if high_priority_issues %}
+**High-Priority Issues Detected:**
+{% for issue in high_priority_issues -%}
+- **Metric:** `{{ issue.metric }}` | **Finding:** {{ issue.analysis.reasoning }}
+{% endfor %}
+{% else %}
+- No high-priority issues were automatically detected.
+{% endif %}
+
+---
+### **Stage 2: Full Health Check Data**
+
+The following is the complete, structured JSON data collected from the database.
+
+{{ findings_json }}
+
+Your Task: Generate an AsciiDoc Health Report
+
+Analyze all the information above and generate a professional health check report in AsciiDoc format. The report MUST follow this structure exactly:
+
+=== PostgreSQL Health Check Report: {{ database_name }} ===
+
+==== Executive Summary ====
+A brief, high-level overview of the database's health. Mention the most critical risks and the overall theme of the findings (e.g., "The database is generally healthy but suffers from I/O contention due to inefficient indexing.").
+
+==== Critical Recommendations ====
+List any issues that pose an immediate risk to stability, data integrity, or performance. If none, state "No critical issues detected."
+
+==== High-Priority Recommendations ====
+List issues that significantly impact performance or pose a near-term risk. If none, state "No high-priority issues detected."
+
+==== Medium-Priority Recommendations ====
+List opportunities for optimization and best-practice alignment. If none, state "No medium-priority issues detected."
+
+**For each recommendation, you must:**
+1.  Provide a clear, actionable title.
+2.  Explain the finding and its business impact.
+3.  **Correlate data from multiple modules where applicable (e.g., link memory settings to temp file usage).**
+4.  Provide clear, step-by-step instructions for remediation.
+5.  Provide an overall TODO list for logging remediation steps completed.

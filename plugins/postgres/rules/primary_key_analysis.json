@@ -1,24 +1,15 @@
 {
   "primary_key_exhaustion_risk": {
-    "metric_keywords": [
-      "primary_key_summary"
-    ],
-    "data_conditions": [
-      {
-        "key": "integer_pks_nearing_exhaustion",
-        "exists": true
-      }
-    ],
+    "metric_keywords": ["primary_key_analysis_high_risk_pks"],
+    "data_conditions": [{"key": "percentage_used", "exists": true}],
     "rules": [
-      {
-        "expression": "int(data.get('integer_pks_nearing_exhaustion', 0)) > 0",
-        "level": "critical",
-        "score": 5,
-        "reasoning": "{data.get('integer_pks_nearing_exhaustion')} integer-based primary key(s) are over 80% full and risk exhaustion.",
-        "recommendations": [
-          "Once an integer primary key reaches its maximum value, all INSERTs on that table will fail, causing an outage. Plan an immediate migration of the identified key(s) from 'integer' to 'bigint'."
-        ]
-      }
+        {
+            "expression": "float(data.get('percentage_used', 0)) > 80",
+            "level": "critical",
+            "score": 5,
+            "reasoning": "Primary key for table '{data.get('table_schema')}.{data.get('table_name')}' is {data.get('percentage_used')}% exhausted.",
+            "recommendations": ["Once an integer primary key is exhausted, INSERTs will fail. Plan an immediate migration of this key from 'integer' to 'bigint'."]
+        }
     ]
   }
 }

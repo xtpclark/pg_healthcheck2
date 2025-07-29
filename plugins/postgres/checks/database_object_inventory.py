@@ -1,6 +1,4 @@
-# plugins/postgres/checks/database_object_inventory.py
-
-from plugins.postgres.utils.postgresql_version_compatibility import get_object_inventory_query
+from plugins.postgres.utils.qrylib.object_inventory import get_object_inventory_query
 
 def run_object_inventory(connector, settings=None):
     """

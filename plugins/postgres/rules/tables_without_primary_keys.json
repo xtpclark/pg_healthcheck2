@@ -1,0 +1,22 @@
+{
+  "tables_without_primary_key": {
+    "metric_keywords": ["table_constraint_analysis_no_pk_tables"],
+    "data_conditions": [{"key": "table_size", "exists": true}],
+    "rules": [
+      {
+        "expression": "not data.get('is_partition', False) and 'GB' in data.get('table_size', '0 MB') and float(data.get('table_size', '0 MB').split(' ')[0]) > 1",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "A large table '{data.get('schema_name')}.{data.get('table_name')}' ({data.get('table_size')}) was found without a primary key.",
+        "recommendations": ["Tables without primary keys can suffer from poor performance and are incompatible with some replication methods. It is critical to define a primary key for this table to ensure data integrity and performance."]
+      },
+      {
+        "expression": "not data.get('is_partition', False)",
+        "level": "medium",
+        "score": 3,
+        "reasoning": "Table '{data.get('schema_name')}.{data.get('table_name')}' does not have a primary key.",
+        "recommendations": ["All tables should have a primary key to uniquely identify rows. Add a primary key to this table to improve data integrity and query performance."]
+      }
+    ]
+  }
+}

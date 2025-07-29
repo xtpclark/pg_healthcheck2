@@ -1,23 +1,21 @@
 {
-  "unused_indexes": {
-    "metric_keywords": [
-      "index"
-    ],
-    "data_conditions": [
-      {
-        "key": "idx_scan",
-        "exists": true
-      }
-    ],
+  "large_unused_indexes": {
+    "metric_keywords": ["index_health_analysis_unused_indexes"],
+    "data_conditions": [{"key": "index_scans", "exists": true}, {"key": "index_size", "exists": true}],
     "rules": [
       {
-        "expression": "int(data['idx_scan']) == 0",
+        "expression": "int(data.get('index_scans', 1)) == 0 and 'GB' in data.get('index_size', '0 MB') and float(data.get('index_size', '0 MB').split(' ')[0]) > 10",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "A large, unused index '{data.get('index_name')}' of size {data.get('index_size')} was found. Unused indexes add overhead to write operations and consume significant disk space without any query performance benefit.",
+        "recommendations": ["CRITICAL: Verify this index is not used on any read replicas. If it is confirmed to be unused everywhere, drop the index immediately to reclaim space and improve write performance."]
+      },
+      {
+        "expression": "int(data.get('index_scans', 1)) == 0",
         "level": "medium",
         "score": 3,
-        "reasoning": "Found potentially unused index: {data['index_name']}",
-        "recommendations": [
-          "Review index usage on all replicas before removal"
-        ]
+        "reasoning": "Potentially unused index '{data.get('index_name')}' was found with zero scans.",
+        "recommendations": ["Verify index usage on all read replicas before considering removal. Indexes that appear unused on the primary may be critical for replica query performance."]
       }
     ]
   }

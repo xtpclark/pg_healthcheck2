@@ -1,3 +1,7 @@
+def get_weight():
+    """Returns the importance score for this module."""
+    return 10 # Core configuration, highest importance
+
 def run_postgres_overview(connector, settings):
     """
     Provides an overview of the PostgreSQL database, including version, uptime, size, and key configuration settings.

@@ -9,6 +9,7 @@ to provide specific metadata and analysis rules.
 """
 
 import json
+import copy
 from decimal import Decimal
 from datetime import datetime, timedelta
 import jinja2
@@ -24,96 +25,161 @@ def convert_to_json_serializable(obj):
     if isinstance(obj, list): return [convert_to_json_serializable(item) for item in obj]
     return obj
 
-def analyze_metric_severity(metric_name, data_row, settings, all_findings, analysis_rules):
+def analyze_metric_severity(metric_name, data_row, settings, all_findings, analysis_rules, rule_stats, verbose=False):
     """
-    Analyzes the severity of a single row of metric data based on the provided rules.
+    Analyzes the severity of a single row of metric data and provides verbose output if enabled.
     """
+    highest_severity_finding = {'level': 'info', 'score': 0, 'reasoning': '', 'recommendations': []}
+
     for config_name, config in analysis_rules.items():
-        if any(keyword in metric_name.lower() for keyword in config.get('metric_keywords', [])):
-            if all(cond.get('key') in data_row for cond in config.get('data_conditions', []) if cond.get('exists')):
+        keyword_match = any(keyword in metric_name.lower() for keyword in config.get('metric_keywords', []))
+        
+        if verbose and keyword_match:
+            print(f"\n[DEBUG] METRIC: '{metric_name}' | RULE_CONFIG: '{config_name}'")
+            print(f"  - Keywords: {config.get('metric_keywords', [])} -> MATCH")
+
+        if keyword_match:
+            conditions_met = all(cond.get('key') in data_row for cond in config.get('data_conditions', []) if cond.get('exists'))
+            if verbose:
+                 print(f"  - Conditions: {config.get('data_conditions', [])} -> {'MET' if conditions_met else 'NOT MET'}")
+
+            if conditions_met:
                 for rule in config.get('rules', []):
+                    if config_name not in rule_stats:
+                        rule_stats[config_name] = {'checked': 0, 'triggered': 0, 'errors': 0}
+                    
                     try:
-                        if eval(rule['expression'], {"data": data_row, "settings": settings, "all_structured_findings": all_findings}):
+                        rule_stats[config_name]['checked'] += 1
+                        expression_result = eval(rule['expression'], {"data": data_row, "settings": settings, "all_structured_findings": all_findings})
+                        
+                        if verbose:
+                            print(f"    - Evaluating Rule: level='{rule.get('level')}'")
+                            print(f"      - Expression: {rule['expression']}")
+                            print(f"      - DATA_ROW: {json.dumps(data_row, indent=2, default=str)}")
+                            print(f"      - RESULT: {'TRIGGERED' if expression_result else 'NOT TRIGGERED'}")
+
+                        if expression_result:
+                            rule_stats[config_name]['triggered'] += 1
                             evaluated_reasoning = eval(f"f\"{rule['reasoning']}\"", {"data": data_row, "settings": settings})
-                            return {
+                            current_finding = {
                                 'level': rule.get('level', 'info'),
                                 'score': rule.get('score', 0),
                                 'reasoning': evaluated_reasoning,
                                 'recommendations': rule.get('recommendations', [])
                             }
+                            if current_finding['score'] > highest_severity_finding['score']:
+                                highest_severity_finding = current_finding
+                                
                     except Exception as e:
-                        print(f"Warning: Error evaluating rule for metric '{metric_name}': {e}")
-    return {'level': 'info', 'score': 0, 'reasoning': '', 'recommendations': []}
+                        rule_stats[config_name]['errors'] += 1
+                        print(f"Warning: Error evaluating rule '{config_name}' for metric '{metric_name}': {e}")
+
+    return highest_severity_finding
 
 
-def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin):
+def _process_findings_recursively(current_findings, settings, analysis_rules, all_findings, rule_stats, issue_lists, module_issue_map, parent_key='', verbose=False):
     """
-    Generates a dynamic prompt by passing in technology-specific details.
+    A recursive helper to process potentially nested finding structures.
     """
-    findings_for_analysis = convert_to_json_serializable(all_structured_findings)
-    critical_issues, high_priority_issues, medium_priority_issues = [], [], []
-    module_issue_map = {}
+    critical_issues, high_priority_issues, medium_priority_issues = issue_lists
 
-    # Severity analysis loop
-    for module_name, module_findings in findings_for_analysis.items():
-
-        # Skip top-level items that aren't dictionaries (like 'application_version')
-        if not isinstance(module_findings, dict):
+    for key, value in current_findings.items():
+        if not isinstance(value, dict):
             continue
 
-        # --- START OF CORRECTED INDENTATION ---
-        module_issue_map[module_name] = {'critical': 0, 'high': 0, 'medium': 0}
-        if module_findings.get("status") == "success" and isinstance(module_findings.get("data"), dict):
-            for data_key, data_value in module_findings["data"].items():
-                data_list = []
-                if 'cloud_metrics' in data_key and isinstance(data_value, dict):
-                    for metric_name, metric_data in data_value.items():
-                        if isinstance(metric_data, dict) and 'value' in metric_data and isinstance(metric_data['value'], (int, float)):
-                            analysis = analyze_metric_severity(f"{module_name}_{data_key}_{metric_name}", metric_data, settings, findings_for_analysis, analysis_rules)
-                            if analysis['level'] in ['critical', 'high', 'medium']:
-                                issue_details = {'metric': f"AWS.{metric_name}", 'analysis': analysis, 'data': metric_data}
-                                module_issue_map[module_name][analysis['level']] += 1
-                                if analysis['level'] == 'critical': critical_issues.append(issue_details)
-                                elif analysis['level'] == 'high': high_priority_issues.append(issue_details)
-                                elif analysis['level'] == 'medium': medium_priority_issues.append(issue_details)
+        metric_name = f"{parent_key}_{key}" if parent_key else key
+
+        if 'status' in value and value.get('status') == 'success':
+            data = value.get('data', {})
+            data_list = []
+
+            if isinstance(data, list):
+                data_list = data
+            elif isinstance(data, dict):
+                is_list_like = any(isinstance(v, list) for v in data.values())
+                if not is_list_like:
+                    data_list = [data]
+                else:
+                    _process_findings_recursively(data, settings, analysis_rules, all_findings, rule_stats, issue_lists, module_issue_map, parent_key=metric_name, verbose=verbose)
                     continue
 
-                if isinstance(data_value, dict) and isinstance(data_value.get('data'), list): data_list = data_value['data']
-                elif isinstance(data_value, list): data_list = data_value
-                
-                for row in data_list:
-                    if isinstance(row, dict):
-                        analysis = analyze_metric_severity(f"{module_name}_{data_key}", row, settings, findings_for_analysis, analysis_rules)
-                        if analysis['level'] in ['critical', 'high', 'medium']:
-                            issue_details = {'metric': f"{module_name}_{data_key}", 'analysis': analysis, 'data': row}
-                            module_issue_map[module_name][analysis['level']] += 1
-                            if analysis['level'] == 'critical': critical_issues.append(issue_details)
-                            elif analysis['level'] == 'high': high_priority_issues.append(issue_details)
-                            elif analysis['level'] == 'medium': medium_priority_issues.append(issue_details)
-    # --- END OF CORRECTED INDENTATION ---
+            for row in data_list:
+                if isinstance(row, dict):
+                    analysis = analyze_metric_severity(metric_name, row, settings, all_findings, analysis_rules, rule_stats, verbose=verbose)
+                    if analysis['level'] in ['critical', 'high', 'medium']:
+                        module_name = parent_key or key
+                        if module_name not in module_issue_map:
+                             module_issue_map[module_name] = {'critical': 0, 'high': 0, 'medium': 0}
+                        
+                        issue_details = {'metric': metric_name, 'analysis': analysis, 'data': row}
+                        module_issue_map[module_name][analysis['level']] += 1
+                        
+                        if analysis['level'] == 'critical': critical_issues.append(issue_details)
+                        elif analysis['level'] == 'high': high_priority_issues.append(issue_details)
+                        elif analysis['level'] == 'medium': medium_priority_issues.append(issue_details)
 
-    # Smart summarization logic
+        elif 'status' not in value:
+            _process_findings_recursively(value, settings, analysis_rules, all_findings, rule_stats, issue_lists, module_issue_map, parent_key=metric_name, verbose=verbose)
+
+
+def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin, verbose=False):
+    """
+    Generates a dynamic prompt using a weighted budgeting strategy.
+    """
+    findings_for_analysis = convert_to_json_serializable(all_structured_findings)
+    rule_stats = {}
+    critical_issues, high_priority_issues, medium_priority_issues = [], [], []
+    issue_lists = (critical_issues, high_priority_issues, medium_priority_issues)
+    module_issue_map = {}
+
+    _process_findings_recursively(findings_for_analysis, settings, analysis_rules, findings_for_analysis, rule_stats, issue_lists, module_issue_map, verbose=verbose)
+
+    # --- Weighted Token Budgeting Logic ---
     TOKEN_CHARACTER_RATIO = 4
     max_prompt_tokens = settings.get('ai_max_prompt_tokens', 8000)
     token_budget = max_prompt_tokens * TOKEN_CHARACTER_RATIO
     findings_for_prompt = {}
     estimated_size = 0
+
+    # Stage 1: Add all modules with critical or high-priority issues in full
     for module_name, issues in module_issue_map.items():
         if issues['critical'] > 0 or issues['high'] > 0:
-            findings_for_prompt[module_name] = findings_for_analysis[module_name]
-            estimated_size += len(json.dumps(findings_for_analysis[module_name]))
-    for module_name, module_data in findings_for_analysis.items():
-        if module_name not in findings_for_prompt:
-            module_size = len(json.dumps(module_data))
-            if estimated_size + module_size < token_budget:
-                findings_for_prompt[module_name] = module_data
-                estimated_size += module_size
-            else:
-                findings_for_prompt[module_name] = {
-                    "status": "success",
-                    "note": "Data for this module was summarized due to prompt size limits. No critical or high-priority issues were detected."
-                }
-    
+            if module_name in findings_for_analysis:
+                findings_for_prompt[module_name] = findings_for_analysis[module_name]
+                estimated_size += len(json.dumps(findings_for_analysis[module_name]))
+
+    # Stage 2: Perform weighted, proportional sampling for remaining modules
+    remaining_findings = copy.deepcopy(findings_for_analysis)
+    module_weights = active_plugin.get_module_weights()
+
+    for module_name in findings_for_prompt:
+        if module_name in remaining_findings:
+            del remaining_findings[module_name]
+
+    total_weight = sum(module_weights.get(name, 1) for name in remaining_findings)
+    remaining_budget = token_budget - estimated_size
+
+    if total_weight > 0:
+        for module_name, module_data in remaining_findings.items():
+            weight = module_weights.get(module_name, 1)
+            proportional_budget = (weight / total_weight) * remaining_budget
+            
+            # Iteratively trim lists until the module fits its budget
+            while len(json.dumps(module_data)) > proportional_budget:
+                trimmed = False
+                if 'data' in module_data and isinstance(module_data.get('data'), list) and len(module_data['data']) > 1:
+                    module_data['data'].pop()
+                    trimmed = True
+                elif 'data' in module_data and isinstance(module_data.get('data'), dict):
+                    for data_key, data_value in module_data['data'].items():
+                        if isinstance(data_value, dict) and isinstance(data_value.get('data'), list) and len(data_value['data']) > 1:
+                            data_value['data'].pop()
+                            trimmed = True
+                if not trimmed:
+                    break # Cannot trim further
+
+            findings_for_prompt[module_name] = module_data
+
     # --- Template Rendering ---
     template_dir = active_plugin.get_template_path() / "prompts"
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(template_dir)), trim_blocks=True, lstrip_blocks=True)
@@ -129,7 +195,8 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
         database_name=db_name,
         analysis_timestamp=analysis_timestamp,
         critical_issues=critical_issues,
-        high_priority_issues=high_priority_issues
+        high_priority_issues=high_priority_issues,
+        medium_priority_issues=medium_priority_issues
     )
 
     return {
@@ -137,5 +204,6 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
         'critical_issues': critical_issues,
         'high_priority_issues': high_priority_issues,
         'medium_priority_issues': medium_priority_issues,
-        'total_issues': len(critical_issues) + len(high_priority_issues) + len(medium_priority_issues)
+        'total_issues': len(critical_issues) + len(high_priority_issues) + len(medium_priority_issues),
+        'rule_application_stats': rule_stats
     }
