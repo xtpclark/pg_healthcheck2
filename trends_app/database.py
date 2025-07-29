@@ -113,6 +113,45 @@ def save_user_preference(db_config, username, pref_name, pref_value):
     finally:
         if conn: conn.close()
 
+
+def fetch_template_asset(db_settings, asset_name):
+    """Fetches a single template asset's raw data from the database."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT asset_data FROM template_assets WHERE asset_name = %s;",
+            (asset_name,)
+        )
+        result = cursor.fetchone()
+        # Returns the binary data (bytea) if found, otherwise None
+        return result[0] if result else None
+    except psycopg2.Error as e:
+        print(f"Database error fetching template asset: {e}") # Or use current_app.logger
+        return None
+    finally:
+        if conn: conn.close()
+
+def fetch_prompt_template_content(db_settings, template_id):
+    """Fetches the content of a specific prompt template from the database."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT template_content FROM prompt_templates WHERE id = %s;",
+            (template_id,)
+        )
+        result = cursor.fetchone()
+        # Returns the template string if found, otherwise None
+        return result[0] if result else None
+    except psycopg2.Error as e:
+        print(f"Database error fetching prompt template: {e}") # Or use current_app.logger
+        return None
+    finally:
+        if conn: conn.close()
+
 def load_user_preferences(db_config, username):
     """Loads all preferences for a given user."""
     conn = None

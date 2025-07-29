@@ -1,14 +1,25 @@
-from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for, abort, send_file
-from flask_login import login_required, current_user
-import psycopg2
 import io
-from .database import get_unique_targets, load_user_preferences, fetch_runs_by_ids, save_user_preference
+import json
+import os
+import subprocess
+import tempfile
+import psycopg2
+
+from datetime import datetime
+
+from deepdiff import DeepDiff
+from flask import (Blueprint, render_template, request, jsonify, current_app,
+                   redirect, url_for, abort, send_file, Response)
+from flask_login import login_required, current_user
+
+
+from .database import (get_unique_targets, load_user_preferences,
+                       fetch_runs_by_ids, save_user_preference,
+                       fetch_template_asset)
+
 from .utils import load_trends_config, format_path
 from .ai_connector import get_ai_recommendation
 from .prompt_generator import generate_web_prompt, generate_slides_prompt
-import json
-from deepdiff import DeepDiff
-from datetime import datetime
 
 bp = Blueprint('main', __name__)
 
@@ -309,10 +320,14 @@ def generate_ai_report():
 
     return send_file(io.BytesIO(ai_response.encode('utf-8')), mimetype='text/plain', as_attachment=True, download_name=f"ai_report_run_{run_id}.adoc")
 
-# --- MODIFIED: New server-side route for slides with proper error handling ---
+# --- FINAL CORRECTED ROUTE ---
 @bp.route('/generate-slides')
 @login_required
 def generate_slides():
+    """
+    Generates slides from a health check run and renders them server-side.
+    This version uses post-processing to inject directives.
+    """
     if not current_user.has_privilege('GenerateReports'):
         abort(403)
 
@@ -321,9 +336,8 @@ def generate_slides():
     rule_set_id = request.args.get('rule_set_id', type=int)
     template_id = request.args.get('template_id', type=int)
 
-    # --- UPDATED ERROR HANDLING ---
     if not all([run_id, profile_id, rule_set_id, template_id]):
-        return render_template('error.html', error_message="Missing one or more required parameters (run, profile, rules, or template)."), 400
+        return render_template('error.html', error_message="Missing required parameters."), 400
 
     config = load_trends_config()
     db_settings = config.get('database')
@@ -331,32 +345,103 @@ def generate_slides():
     accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
     runs_data = fetch_runs_by_ids(db_settings, [run_id], accessible_company_ids)
     
-    # --- UPDATED ERROR HANDLING ---
     if not runs_data:
-        return render_template('error.html', error_message="The requested run was not found or you do not have permission to access it."), 404
+        return render_template('error.html', error_message="Run not found or permission denied."), 404
     
     findings_json = runs_data[0].get('findings')
-
-    # --- UPDATED ERROR HANDLING ---
     if not isinstance(findings_json, dict):
-        return render_template('error.html', error_message="The findings data for this run is invalid or corrupted."), 500
+        return render_template('error.html', error_message="Invalid findings data."), 500
 
-    prompt = generate_slides_prompt(findings_json, rule_set_id, template_id)
-    
-    # --- UPDATED ERROR HANDLING ---
-    if prompt.startswith("Error:"):
-        return render_template('error.html', error_message=prompt), 500
+    temp_files = {}
+    md_file_path = None
+    html_output_path = None
+    try:
+        # Step 1: Get AI content
+        prompt = generate_slides_prompt(findings_json, rule_set_id, template_id, assets={})
+        if prompt.startswith("Error:"):
+            return render_template('error.html', error_message=prompt), 500
 
-    slides_content = get_ai_recommendation(prompt, profile_id)
-    
-    # --- UPDATED ERROR HANDLING ---
-    if slides_content.startswith("Error:"):
-        return render_template('error.html', error_message=slides_content), 500
+        ai_content_md = get_ai_recommendation(prompt, profile_id)
+        if ai_content_md.startswith("Error:"):
+            return render_template('error.html', error_message=ai_content_md), 500
 
-    # Success Case: Render the slides as intended
-    return render_template('profile/view_slides.html', 
-                           slides_content=slides_content, 
-                           run_id=run_id)
+        # Step 2: Prepare temporary image files
+        bg_path = None
+        logo_path = None
+
+        background_data = fetch_template_asset(db_settings, 'slide_background')
+        if background_data:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_bg:
+                temp_bg.write(background_data)
+                bg_path = temp_bg.name
+                temp_files['slide_background'] = bg_path
+        
+        logo_data = fetch_template_asset(db_settings, 'company_logo')
+        if logo_data:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_logo:
+                temp_logo.write(logo_data)
+                logo_path = temp_logo.name
+                temp_files['company_logo'] = logo_path
+
+        # Step 3: Post-process the AI's markdown to inject directives
+        slides = [s for s in ai_content_md.split('---') if s.strip()]
+        processed_slides = []
+
+        for i, slide_content in enumerate(slides):
+            content = slide_content.strip()
+            
+            if i == 0:
+                title_slide = "---"
+                if bg_path:
+                    # Correctly add the Marp directive for the background image
+                    title_slide += f"\n"
+                title_slide += "\nclass: center, middle"
+                title_slide += f"\n{content}"
+                if logo_path:
+                    # Add the standard Markdown for the logo
+                    title_slide += f'\n![Logo]({logo_path})'
+                processed_slides.append(title_slide)
+            else:
+                other_slide = "---"
+                if bg_path:
+                    # Correctly add the Marp directive for all other slides
+                    other_slide += f"\n"
+                other_slide += f"\n{content}"
+                processed_slides.append(other_slide)
+
+        final_markdown = '\n'.join(processed_slides)
+
+        # Step 4: Convert the final markdown to HTML
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.md') as md_file:
+            md_file.write(final_markdown)
+            md_file_path = md_file.name
+        
+        html_output_path = md_file_path.replace('.md', '.html')
+        
+        subprocess.run(['marp', md_file_path, '-o', html_output_path], check=True)
+
+        with open(html_output_path, 'r') as html_file:
+            slides_html = html_file.read()
+        
+        return render_template('profile/view_slides.html', slides_html=slides_html)
+
+    except FileNotFoundError:
+        return render_template('error.html', error_message="`marp-cli` not found. Please ensure it is installed and in your system's PATH."), 500
+    except subprocess.CalledProcessError as e:
+        return render_template('error.html', error_message=f"Error running marp-cli: {e.stderr}"), 500
+    except Exception as e:
+        current_app.logger.error(f"An unexpected error occurred during slide generation: {e}")
+        return render_template('error.html', error_message="An unexpected error occurred during slide generation."), 500
+    finally:
+        # Step 5: Re-enabled cleanup logic
+        for f in temp_files.values():
+            if os.path.exists(f):
+                os.remove(f)
+        if md_file_path and os.path.exists(md_file_path):
+            os.remove(md_file_path)
+        if html_output_path and os.path.exists(html_output_path):
+            os.remove(html_output_path)
+
 
 @bp.route('/api/all-reports')
 @login_required

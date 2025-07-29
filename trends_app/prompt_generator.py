@@ -1,7 +1,7 @@
 import json
 import psycopg2
 import jinja2
-from flask import current_app, url_for
+from flask import current_app
 from .utils import load_trends_config
 
 def analyze_metric_severity(metric_name, data_row, all_findings, analysis_rules):
@@ -115,10 +115,14 @@ def generate_web_prompt(findings_json, rule_set_id, template_id):
         if conn:
             conn.close()
 
-def generate_slides_prompt(findings_json, rule_set_id, template_id):
+def generate_slides_prompt(findings_json, rule_set_id, template_id, assets=None):
     """
     Generates a prompt for creating presentation slides by rendering a Jinja2 template.
+    This version accepts an 'assets' dictionary containing local file paths.
     """
+    if assets is None:
+        assets = {}
+
     settings = load_trends_config()
     db_config = settings.get('database')
     conn = None
@@ -137,14 +141,11 @@ def generate_slides_prompt(findings_json, rule_set_id, template_id):
         if not template_data:
             return f"Error: Slide Template with ID {template_id} not found."
         template_content = template_data[0]
+        
+        # CORRECTED: The block that generated URLs has been completely removed.
+        # This function now relies entirely on the 'assets' dictionary passed in from main.py.
 
-        assets = {}
-        with current_app.app_context():
-            cursor.execute("SELECT asset_name FROM template_assets;")
-            for row in cursor.fetchall():
-                asset_name = row[0]
-                assets[asset_name] = url_for('admin.get_template_asset', asset_name=asset_name, _external=True)
-
+        # Use the same rich data processing as generate_web_prompt for high-quality AI output
         critical_issues, high_priority_issues = [], []
         for module_name, module_findings in findings_json.items():
             if not isinstance(module_findings, dict) or module_findings.get("status") != "success": continue
@@ -156,17 +157,16 @@ def generate_slides_prompt(findings_json, rule_set_id, template_id):
                         if isinstance(row, dict):
                             analysis = analyze_metric_severity(f"{module_name}_{data_key}", row, findings_json, analysis_rules)
                             if analysis and analysis['level'] in ['critical', 'high']:
-                                recommendations = analysis.get('recommendations', [])
-                                issue = {
+                                # Create a rich issue dictionary, including the raw data
+                                issue_details = {
                                     'metric': f"{module_name}_{data_key}",
-                                    'reasoning': analysis['reasoning'],
-                                    'recommendations': recommendations,
-                                    'primary_recommendation': recommendations[0] if recommendations else "Review metric details and consult documentation."
+                                    'analysis': analysis,
+                                    'data': row
                                 }
                                 if analysis['level'] == 'critical':
-                                    critical_issues.append(issue)
+                                    critical_issues.append(issue_details)
                                 else:
-                                    high_priority_issues.append(issue)
+                                    high_priority_issues.append(issue_details)
 
         template = jinja2.Template(template_content)
         template_context = {
