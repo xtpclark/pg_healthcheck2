@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+nano # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -213,10 +213,8 @@ adoc_out/*
 pg_healthcheck2/trend_collector.py
 test_enhanced_ai.py
 setup_cron.sh
-monitor_trends.py
 module_template_generator.py
 trend_collector.py
 test_enhanced_ai.py
 setup_cron.sh
-monitor_trends.py
 module_template_generator.py

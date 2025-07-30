@@ -1,4 +1,4 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_bgwriter_query
+from plugins.postgres.utils.qrylib.bgwriter import get_bgwriter_query
 
 def run_bgwriter_analysis(connector, settings):
     """

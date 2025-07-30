@@ -1,4 +1,9 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_blocking_query
+from plugins.postgres.utils.qrylib.blocking_query import get_blocking_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 6 # High importance for core metrics
+
 
 def run_current_lock_waits(connector, settings):
     """

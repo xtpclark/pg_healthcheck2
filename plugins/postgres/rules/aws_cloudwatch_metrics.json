@@ -1,0 +1,107 @@
+{
+  "aws_cpu_utilization": {
+    "metric_keywords": ["cloud_metrics"],
+    "data_conditions": [{"key": "metric_name", "exists": true}, {"key": "value", "exists": true}],
+    "rules": [
+      {
+        "expression": "data['metric_name'] == 'CPUUtilization' and isinstance(data['value'], (int, float)) and float(data['value']) > 90",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "CPU Utilization is critically high at {data['value']:.1f}%.",
+        "recommendations": ["Investigate top queries, consider scaling instance class."]
+      },
+      {
+        "expression": "data['metric_name'] == 'CPUUtilization' and isinstance(data['value'], (int, float)) and float(data['value']) > 75",
+        "level": "high",
+        "score": 4,
+        "reasoning": "CPU Utilization is high at {data['value']:.1f}%.",
+        "recommendations": ["Monitor CPU usage and optimize resource-intensive queries."]
+      }
+    ]
+  },
+  "aws_freeable_memory": {
+    "metric_keywords": ["cloud_metrics"],
+    "data_conditions": [{"key": "metric_name", "exists": true}, {"key": "value", "exists": true}],
+    "rules": [
+      {
+        "expression": "data['metric_name'] == 'FreeableMemory' and isinstance(data['value'], (int, float)) and float(data['value']) < 1 * 1024**3",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "Freeable memory is critically low at {float(data['value']) / 1024**3:.2f} GB.",
+        "recommendations": ["Investigate memory-consuming queries or consider scaling up the instance class."]
+      }
+    ]
+  },
+    "aws_io_latency": {
+    "metric_keywords": ["cloud_metrics"],
+    "data_conditions": [{"key": "metric_name", "exists": true}, {"key": "value", "exists": true}],
+    "rules": [
+      {
+        "expression": "data['metric_name'] in ['ReadLatency', 'WriteLatency'] and isinstance(data['value'], (int, float)) and float(data['value']) > 50",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "Disk {data.get('metric_name', 'I/O')} latency is critically high at {float(data['value']):.2f} ms.",
+        "recommendations": ["High latency severely impacts throughput. Investigate storage-intensive queries or consider upgrading your storage."]
+      }
+    ]
+  },
+  "aws_replica_lag": {
+    "metric_keywords": ["cloud_metrics"],
+    "data_conditions": [{"key": "metric_name", "exists": true}, {"key": "value", "exists": true}],
+    "rules": [
+      {
+        "expression": "data['metric_name'] == 'AuroraReplicaLag' and isinstance(data['value'], (int, float)) and float(data['value']) > 10000",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "Aurora replica lag is critically high at {float(data['value']):.1f} ms.",
+        "recommendations": ["Investigate the cause of the lag, which could be high write load on the primary or network issues."]
+      }
+    ]
+  },
+  "rds_proxy_pinning": {
+    "metric_keywords": ["cloud_metrics"],
+    "data_conditions": [{"key": "metric_name", "exists": true}, {"key": "value", "exists": true}],
+    "rules": [
+      {
+        "expression": "data['metric_name'] == 'ConnectionPinning' and isinstance(data['value'], (int, float)) and float(data['value']) > 5",
+        "level": "high",
+        "score": 4,
+        "reasoning": "RDS Proxy is experiencing connection pinning ({data['value']:.1f}%), reducing pooler efficiency.",
+        "recommendations": ["Investigate application queries for session-level settings that cause pinning."]
+      }
+    ]
+  },
+  "aws_database_connections": {
+    "metric_keywords": ["cloud_metrics"],
+    "data_conditions": [{"key": "metric_name", "exists": true}, {"key": "value", "exists": true}],
+    "rules": [
+      {
+        "expression": "data['metric_name'] == 'DatabaseConnections' and isinstance(data['value'], (int, float)) and (float(data['value']) / int(next((s['setting'] for s in all_structured_findings.get('postgres_overview', {}).get('key_config', {}).get('data', []) if s['name'] == 'max_connections'), '1'))) * 100 > 90",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "Database connection usage is critical at { (float(data['value']) / int(next((s['setting'] for s in all_structured_findings.get('postgres_overview', {}).get('key_config', {}).get('data', []) if s['name'] == 'max_connections'), '1'))) * 100 :.1f}% of the configured maximum.",
+        "recommendations": ["The connection pool is near capacity. Immediate investigation is required to prevent connection failures. Check for application-side connection leaks."]
+      },
+      {
+        "expression": "data['metric_name'] == 'DatabaseConnections' and isinstance(data['value'], (int, float)) and (float(data['value']) / int(next((s['setting'] for s in all_structured_findings.get('postgres_overview', {}).get('key_config', {}).get('data', []) if s['name'] == 'max_connections'), '1'))) * 100 > 75",
+        "level": "high",
+        "score": 4,
+        "reasoning": "Database connection usage is high at { (float(data['value']) / int(next((s['setting'] for s in all_structured_findings.get('postgres_overview', {}).get('key_config', {}).get('data', []) if s['name'] == 'max_connections'), '1'))) * 100 :.1f}% of the configured maximum.",
+        "recommendations": ["Connection usage is high. Monitor application connection patterns and consider tuning or using a connection pooler like RDS Proxy if not already in use."]
+      }
+    ]
+  },
+  "rds_proxy_connection_efficiency": {
+    "metric_keywords": ["cloud_metrics"],
+    "data_conditions": [],
+    "rules": [
+        {
+            "expression": "float(next((m['value'] for m in data if m['metric_name'] == 'DatabaseConnections'), '0')) > 0 and (float(next((m['value'] for m in data if m['metric_name'] == 'DatabaseConnections'), '0')) / float(next((m['value'] for m in data if m['metric_name'] == 'ClientConnections'), '1'))) * 100 > 80",
+            "level": "medium",
+            "score": 3,
+            "reasoning": "The RDS Proxy is maintaining a high ratio of database connections to client connections, which may indicate low connection reuse.",
+            "recommendations": ["A high ratio can suggest that the proxy is not effectively pooling and reusing connections. This could be due to connection pinning or short-lived connections from the application. Review application logic to ensure connections are long-lived enough to be reused."]
+        }
+    ]
+  }
+}

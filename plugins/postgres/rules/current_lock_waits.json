@@ -1,0 +1,24 @@
+{
+  "prolonged_lock_waits": {
+    "metric_keywords": [
+      "lock_waits"
+    ],
+    "data_conditions": [
+      {
+        "key": "wait_duration_seconds",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('wait_duration_seconds', 0)) > 300",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "A session has been blocked for more than 5 minutes ({data.get('wait_duration_seconds')}s), indicating severe transaction contention.",
+        "recommendations": [
+          "Investigate the blocking query immediately to understand the cause of the lock. Long-running transactions should be optimized. If necessary, terminate the blocking session using 'SELECT pg_terminate_backend(blocking_pid);' to resolve the contention."
+        ]
+      }
+    ]
+  }
+}

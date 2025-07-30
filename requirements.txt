@@ -26,3 +26,6 @@ clickhouse-connect
 
 # --- AWS Integration (for RDS/Aurora metrics) ---
 boto3
+
+# --- trend analysis
+deepdiff

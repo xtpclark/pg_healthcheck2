@@ -1,0 +1,130 @@
+= Self-Hosted Trend Analysis Server Setup
+:doctype: article
+:toc: left
+:toclevels: 2
+:sectnums:
+
+== 1. Overview
+This guide provides instructions for setting up a self-hosted trend analysis server. This allows an organization to run the health check tool against their fleet of databases and store the historical trend data in a central PostgreSQL database within their own environment.
+
+The architecture consists of two main parts:
+* **The Health Check Tool**: The client-side application that runs checks.
+* **The Trend Database**: A central PostgreSQL server that receives and stores the data.
+
+== 2. Trend Database Setup
+The first step is to prepare the central PostgreSQL database that will store the trend data.
+
+=== 2.1. Create the Database Schema
+Connect to your PostgreSQL server and execute the `schema.sql` script provided in the project. This script will:
+. Create the `health_check_runs` table with the correct columns.
+. Create an index to ensure efficient querying of the data.
+. Grant the minimum necessary permissions to the application's database user.
+
+[source,bash]
+----
+psql -h your-pg-host -U your-admin-user -d your-db-name -f path/to/schema.sql
+----
+
+=== 2.2. Harden the Database Connection (Recommended)
+For production environments, it is critical to secure the connection to the trend database.
+. **Create a Dedicated User**: Use a non-superuser role for the application with `INSERT`-only privileges, as defined in `schema.sql`.
+. **Configure `pg_hba.conf`**: Restrict connections for the application user to a specific, trusted IP address range.
+. **Enforce SSL/TLS**: Require encrypted connections by setting `sslmode` to `require` or higher in both your server configuration and the `trends.yaml` file.
+
+== 3. Client (Health Check Tool) Setup
+On the machine where you will run the health check tool, configure the `trends.yaml` file to point to your new trend database.
+
+=== 3.1. Configure `trends.yaml`
+Create or edit the `config/trends.yaml` file with the following structure:
+
+[source,yaml]
+----
+# Set the destination for the trend data.
+# For a self-hosted setup, this should be "postgresql".
+destination: postgresql
+
+# Settings for the direct connection to your trend database.
+database:
+  host: "your-pg-host.yourdomain.com"
+  port: 5432
+  dbname: "your-db-name"
+  user: "your_app_user"
+  password: "YOUR_DATABASE_PASSWORD"
+  sslmode: "require" # Recommended for production
+----
+
+* Replace all placeholder values with your actual database connection details.
+
+== 4. Running the System
+Once both the server and client are configured, the system is ready.
+
+. Run the health check tool from the client machine using its standard command:
++
+[source,bash]
+----
+python3 main.py --config config/config.yaml
+----
+. The `trend_shipper` module will automatically read the `trends.yaml` file.
+. It will connect directly to your self-hosted PostgreSQL database.
+. The raw, structured JSON findings from the health check run will be inserted into the `health_check_runs` table.
+
+== 5. Analyzing the Data
+You can use the `monitor_trends.py` CLI tool to connect to the same database and analyze the collected data.
+
+=== 5.1. Command-Line Arguments
+`--company-name <NAME>` (Required)::
+The name of the company to analyze.
+
+`--host <HOST>` (Optional)::
+Filter by a specific database host.
+
+`--port <PORT>` (Optional)::
+Filter by a specific database port.
+
+`--dbname <DBNAME>` (Optional)::
+Filter by a specific database name.
+
+`--start-date <YYYY-MM-DD>` (Optional)::
+The start of the date range to compare. If used, the tool will compare the first and last run within this range.
+
+`--end-date <YYYY-MM-DD>` (Optional)::
+The end of the date range to compare.
+
+=== 5.2. Output Interpretation
+The tool's header provides context for the comparison, including the timestamps of the two runs and the **elapsed time** between them, making it easy to understand the time frame of the analysis.
+
+[source,text]
+----
+================================================================================
+🔍 Comparison Summary for db1.myclient.com:5432/prod_db
+  - Latest Run:   2025-07-26T03:11:24.029738+00:00
+  - Previous Run: 2025-07-25T22:15:13.372739+00:00
+  - Elapsed Time: 4 hour(s), 56 minute(s), 10 second(s)
+================================================================================
+----
+
+=== 5.3. Example Usage
+
+.To compare the two most recent runs for a company's most recently checked database:
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-name "My Client Inc"
+----
+
+.To narrow the comparison to a specific database instance:
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-name "My Client Inc" --host "db1.myclient.com" --port 5432 --dbname "prod_db"
+----
+
+.To compare the very first and very last health check run in the history for a specific database:
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-name "My Client Inc" --host "db1.myclient.com" --start-date "1970-01-01"
+----
+
+.To compare the first and last health check from August 2025:
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-name "My Client Inc" --host "db1.myclient.com" --start-date "2025-08-01" --end-date "2025-08-31"
+----
