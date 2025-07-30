@@ -3,6 +3,7 @@
 company_name: Your Company Name   # Will be sanitized names with spaces, special chars, etc.
 report_title: Database Health Check Report
 logo_image: MyLogo.svg[900,900] # Path to a logo image (relative to adoc_out/company_name/images)
+db_type: "postgres" # <-- THIS IS THE NEW REQUIRED KEY
 show_qry: true              # Set to true to include SQL queries in the report
 row_limit: 10               # Maximum number of rows to display for tabular query results
 run_osinfo: true            # Set to true to run OS information collection (from the client machine)

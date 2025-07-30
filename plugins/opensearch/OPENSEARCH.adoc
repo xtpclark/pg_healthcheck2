@@ -1,0 +1,39 @@
+= OpenSearch Health Check Plugin
+:toc: left
+:toclevels: 2
+:sectnums:
+
+This document provides an overview of the OpenSearch Health Check Plugin for `pg_healthcheck2`.
+
+== Overview
+
+The OpenSearch plugin allows `pg_healthcheck2` to connect to an OpenSearch (or Elasticsearch) cluster and perform health and status checks. It uses the `opensearch-py` client library to interact with the cluster's REST API.
+
+== Configuration
+
+To use the OpenSearch plugin, set the `db_type` in your `config.yaml` to `opensearch`. The plugin requires the following configuration settings:
+
+[source,yaml]
+----
+# config.yaml
+db_type: opensearch
+
+# Connection settings
+host: 'localhost'
+port: 9200
+user: 'admin'
+password: 'your_password'
+use_ssl: true
+verify_certs: true
+----
+
+== Available Checks
+
+This section details the checks included in the default report.
+
+=== Cluster Health Check
+
+*Module*:: `plugins.opensearch.checks.cluster_health_check`
+*Function*:: `run_cluster_health_check`
+
+This check retrieves the overall health of the OpenSearch cluster. It reports the cluster status (`green`, `yellow`, or `red`) and provides key metrics like the number of nodes, initializing shards, and unassigned shards. The status is a critical indicator of the cluster's operational state.

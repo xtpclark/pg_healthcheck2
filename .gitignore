@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+nano # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -208,3 +208,13 @@ __marimo__/
 
 config/config.yaml
 adoc_out/*
+/adoc_out/
+*.py.bak*
+pg_healthcheck2/trend_collector.py
+test_enhanced_ai.py
+setup_cron.sh
+module_template_generator.py
+trend_collector.py
+test_enhanced_ai.py
+setup_cron.sh
+module_template_generator.py

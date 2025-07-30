@@ -1,0 +1,15 @@
+{
+  "duplicate_indexes_found": {
+    "metric_keywords": ["index_health_analysis_duplicate_indexes"],
+    "data_conditions": [{"key": "redundant_indexes", "exists": true}],
+    "rules": [
+        {
+            "expression": "True",
+            "level": "medium",
+            "score": 3,
+            "reasoning": "Duplicate indexes found on table '{data.get('table_name')}', wasting {data.get('total_wasted_size')}.",
+            "recommendations": ["Drop one of the redundant indexes to reduce storage and improve write performance. The redundant indexes are: {data.get('redundant_indexes')}"]
+        }
+    ]
+  }
+}

@@ -1,0 +1,125 @@
+= Feature Proposal: Secure Trend Analysis Platform
+:doctype: article
+:toc: left
+:toclevels: 3
+:sectnums:
+
+== 1. Overview
+This document outlines the design and implementation plan for a new **Trend Analysis Platform**. This feature will securely collect, store, and analyze structured health check data over time, enabling long-term trend analysis, client reporting, and data-driven recommendations.
+
+This feature will be developed in a new branch: `feature/trend-analysis-platform`.
+
+== 2. Core Architecture
+The architecture is designed for modularity, security, and fault tolerance.
+
+=== 2.1. Trend Shipper Module
+A new, self-contained module will be created at `output_handlers/trend_shipper.py`.
+
+* *Single Responsibility*: Its sole purpose is to take the final structured JSON findings from a health check run and send it to the configured destination.
+* *Decoupling*: It completely decouples the core health check tool from the data storage and analysis pipeline.
+
+=== 2.2. Decoupled Configuration
+Configuration will be split to maintain separation of concerns.
+
+* `config/config.yaml`: Manages core tool settings, including which check plugins to run.
+* `config/trends.yaml`: Manages *only* the trend data destination (API or direct database), endpoints, and credentials.
+* *Fault Tolerance*: The core tool will run normally if `trends.yaml` is missing, simply logging a message that trend analysis is being skipped.
+
+=== 2.3. Data-Only Mode
+A new flag will be added to `config.yaml` to control output generation.
+
+[source,yaml]
+----
+# config.yaml
+# ...
+# Set to false to disable AsciiDoc report generation and only output structured data.
+generate_report: true
+----
+
+When `generate_report` is `false`, the tool will execute all checks and collect structured data but will bypass the AsciiDoc report building step entirely, making it efficient for automated data collection pipelines.
+
+== 3. Data Storage & Schema
+A central PostgreSQL database will serve as the single source of truth. Standard PostgreSQL features are sufficient for this workload without requiring extensions like TimescaleDB.
+
+=== 3.1. Tables
+Two primary tables will be used to support multi-tenancy and data storage.
+
+* `companies`: Stores client information.
+[source,sql]
+----
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    company_name TEXT NOT NULL UNIQUE
+);
+----
+
+* `health_check_runs`: Stores all findings, linked to a company.
+[source,sql]
+----
+CREATE TABLE health_check_runs (
+    id SERIAL PRIMARY KEY,
+    company_id INT NOT NULL REFERENCES companies(id),
+    run_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    db_technology TEXT NOT NULL,
+    -- Encrypted columns for sensitive data
+    target_host BYTEA NOT NULL,
+    target_port BYTEA NOT NULL,
+    target_db_name BYTEA NOT NULL,
+    findings BYTEA NOT NULL
+);
+----
+
+=== 3.2. Flexible Data with `jsonb`
+The raw, structured findings are encrypted and stored in the `findings` column (`BYTEA`). Upon decryption, the data is treated as `jsonb`. This allows for maximum flexibility, as the database schema does not need to change if new check modules are added or existing ones produce different data structures.
+
+== 4. Security Model
+Security is a foundational component of the design.
+
+=== 4.1. Encryption in Transit
+All network communication will be encrypted using **TLS**.
+* *API*: Endpoints must be `https://`.
+* *PostgreSQL*: Direct connections must enforce `sslmode=require` or higher.
+
+=== 4.2. Encryption at Rest
+**Application-Level Encryption** will be implemented.
+* The `trend_shipper` module will encrypt sensitive fields (`target_host`, `target_port`, `target_db_name`, and the entire `findings` JSON blob) *before* sending them to the database.
+* The database stores only ciphertext (`BYTEA`), providing a zero-trust environment. The database server and its administrators cannot read the sensitive data.
+
+=== 4.3. Multi-Tenancy & Access Control
+Data will be isolated at the database level using **Row-Level Security (RLS)**.
+* A `company_id` links every run to a client.
+* A PostgreSQL RLS policy will be applied to the `health_check_runs` table, ensuring that queries executed by a user for **Client A** can *never* see data belonging to **Client B**. This is more secure and scalable than managing separate schemas.
+
+== 5. Interfaces & Analysis
+Multiple interfaces will be developed to provide actionable insights from the stored data.
+
+=== 5.1. CLI Tool
+A command-line interface will be available for DBAs and consultants to perform ad-hoc analysis, script comparisons, and quick data retrieval.
+
+=== 5.2. Automated Reports
+A scheduled process will generate professional PDF/HTML reports comparing data over time, ideal for regular client updates.
+
+=== 5.3. Secure Web UI
+A full-featured, client-facing web dashboard will be the primary interface.
+* *Authentication*: Secure login with username/password and **Multi-Factor Authentication (MFA)**.
+* *Authorization*: The UI backend enforces RLS, guaranteeing strict data isolation between clients.
+* *Features*: Interactive time-series graphs, side-by-side run comparisons, and data drill-downs.
+
+=== 5.4. Handling Data Variance
+The reporting interfaces will intelligently handle months where check modules were not run.
+* *Graphs*: Missing data points will appear as gaps in a time-series graph, not as a misleading `0` or `null`.
+* *Comparisons*: Reports will explicitly label checks as "New," "Resolved," or "Not Run," turning data variance into a clear operational insight.
+
+== 6. Integrations
+The platform will support integration with standard monitoring tools.
+
+=== 6.1. Prometheus & Grafana
+The web UI application will expose a secure `/metrics` endpoint.
+* *Prometheus*: This endpoint can be scraped by Prometheus to ingest key numerical metrics from the latest health check run.
+* *Grafana*: This data can then be used to build rich Grafana dashboards for real-time monitoring and alerting, correlating database health with other system metrics.
+
+== 7. Advanced Recommendations
+Technology recommendations will be a feature of the analysis layer, not the collector.
+
+* *Data-Driven*: The analysis UI will identify persistent patterns over multiple runs (e.g., heavy JSON workload in PostgreSQL, time-series data in MySQL) to generate high-confidence recommendations for alternative technologies like **OpenSearch**, **ClickHouse**, or **Valkey**.
+* *Logic*: This keeps the health check plugins focused on objective data gathering, while the analysis interface is responsible for expert interpretation.

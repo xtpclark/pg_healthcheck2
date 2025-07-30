@@ -1,0 +1,121 @@
+= Architectural Refactoring: The Report Builder and Self-Contained Plugins
+:toc: left
+:toclevels: 3
+:sectnums:
+
+This document outlines the architectural refactoring that decouples report generation from `main.py` into a dedicated `ReportBuilder` utility. It also formalizes the template structure, making each plugin a fully self-contained package.
+
+'''
+== 1. Rationale for Refactoring
+
+The primary goal of this refactoring is to adhere to the **Single Responsibility Principle**.
+
+Previously, `main.py` was responsible for orchestrating the entire application, including the detailed logic of iterating through report sections, running modules, and reading content files. This made `main.py` overly complex and tightly coupled to the report generation process.
+
+By moving this logic into a dedicated `ReportBuilder`, we achieve a cleaner separation of concerns:
+
+* **`main.py`**: Becomes a pure orchestrator. Its only job is to initialize the application, load the correct plugin, and delegate tasks to other utilities like the `ReportBuilder` and the AI analysis engine.
+* **`utils/report_builder.py`**: Becomes solely responsible for taking a report definition and building the final report content.
+
+'''
+== 2. The New Components
+
+=== 2.1. The `ReportBuilder` Class
+
+The core of this refactoring is the new `ReportBuilder` class located in `utils/report_builder.py`.
+
+*Role*:: To manage the entire process of building the AsciiDoc report content and aggregating the structured JSON findings.
+
+*Workflow*::
+. The `ReportBuilder` is instantiated in `main.py` and is given the active `connector`, `settings`, `active_plugin`, and the `report_sections` to process.
+. The `build()` method is called, which iterates through the report sections and their defined actions.
+. Based on the `type` of each action, it calls the appropriate internal method (`_run_module` or `_read_report_part`).
+. After processing all actions, it returns the complete AsciiDoc content and the aggregated structured findings back to the `main` orchestrator.
+
+[source,python]
+----
+# utils/report_builder.py
+
+class ReportBuilder:
+    def __init__(self, connector, settings, active_plugin, report_sections):
+        # ... initialization ...
+
+    def build(self):
+        # ... iterates through sections and actions ...
+        return "\n\n".join(self.adoc_content), self.all_structured_findings
+
+    def _run_module(self, module_name, function_name):
+        # ... logic to execute a check module ...
+
+    def _read_report_part(self, filename):
+        # ... logic to read a template file ...
+----
+
+=== 2.2. The Updated `BasePlugin` Interface
+
+To support the new self-contained structure, the `BasePlugin` abstract class in `plugins/base.py` has been updated with a new required method.
+
+[source,python]
+----
+# plugins/base.py
+
+class BasePlugin(ABC):
+    # ... other abstract methods ...
+
+    @abstractmethod
+    def get_template_path(self) -> Path:
+        """Returns the path to the plugin's templates directory."""
+        pass
+----
+
+This ensures that every plugin must declare the location of its own templates, making the system predictable and self-documenting.
+
+'''
+== 3. The Self-Contained Plugin Template Structure
+
+This refactoring formalizes the location of all template and content files. All such files now reside within a `/templates` directory inside each plugin's main folder.
+
+=== 3.1. Standardized Directory Layout
+
+Each plugin now follows this structure:
+
+[source,text]
+----
+plugins/
+`-- postgres/
+    |-- __init__.py
+    |-- connector.py
+    |-- checks/
+    |-- reports/
+    |-- rules/
+    `-- templates/
+        |-- prompts/
+        |   `-- default_prompt.j2
+        `-- report_parts/
+            |-- report_header.txt
+            `-- background.txt
+----
+
+=== 3.2. Template Types and Locations
+
+Two distinct types of templates are now recognized, based on their subdirectory:
+
+==== `templates/report_parts/`
+
+* **Purpose**: Contains simple text files that are inserted directly into the AsciiDoc report.
+* **Action Types**: Both `{'type': 'header', ...}` and `{'type': 'comments', ...}` actions in a report definition will now cause the `ReportBuilder` to look for the specified file inside this directory within the active plugin.
+* **Example**: A reference to `{'type': 'comments', 'file': 'background.txt'}` in the PostgreSQL report definition will now read the file from `plugins/postgres/templates/report_parts/background.txt`.
+
+==== `templates/prompts/`
+
+* **Purpose**: Contains the Jinja2 templates (`.j2`) used by the `dynamic_prompt_generator.py` to construct the final prompt for the AI analysis.
+* **Logic**: The `dynamic_prompt_generator` now calls the active plugin's `get_template_path()` method to find this directory, ensuring that each plugin can have its own customized AI prompts.
+
+'''
+== 4. Summary of Benefits
+
+This refactoring provides several key advantages:
+
+* **Improved Separation of Concerns**: `main.py` is now a clean orchestrator, and all report-building logic is centralized in `ReportBuilder`.
+* **Fully Self-Contained Plugins**: Each plugin now contains everything it needs to run: its connector, checks, reports, rules, and all associated templates. This makes plugins easier to manage, version, and share.
+* **Enhanced Maintainability**: With a consistent and predictable structure, developers can more easily understand and extend the functionality of any given plugin.

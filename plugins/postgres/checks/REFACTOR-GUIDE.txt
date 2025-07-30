@@ -1,0 +1,53 @@
+he New Module Pattern: Connector as the Single Source of Truth
+
+The fundamental principle of the new architecture is that the connector object is the single source of truth. Individual check modules should be "dumb" consumers of the information and functionality that the connector provides.
+
+Key Principles for Refactoring
+
+    No More Local Version Detection: Modules must not perform their own version checks. The connector.version_info dictionary, which is available in every check function, contains all necessary version information (e.g., is_pg14_or_newer).
+
+    Use the Connector's State: All checks should rely on the connector object's pre-populated attributes for database state, such as connector.version_info and connector.has_pgstat.
+
+    Use Version-Aware Query Builders: For complex SQL that changes between PostgreSQL versions, import the necessary helper function from plugins.postgres.utils.postgresql_version_compatibility. Pass the connector object to this function to get the correct query string.
+
+"Before vs. After" Refactoring Example
+
+This example demonstrates how to refactor a module to fit the new pattern.
+
+👎 Before (Old Pattern)
+
+Python
+
+# Anti-pattern: Module performs its own version check
+from plugins.postgres.utils.misc import get_postgresql_version # <-- DO NOT DO THIS
+
+def run_checkpoint_analysis(connector, settings):
+    # Anti-pattern: Local version detection
+    version = get_postgresql_version(connector) # <-- DO NOT DO THIS
+
+    query = ""
+    if version['major_version'] >= 15:
+        query = "SELECT ... FROM pg_stat_bgwriter; -- PG15+ query"
+    else:
+        query = "SELECT ... FROM pg_stat_bgwriter; -- Pre-PG15 query"
+    
+    # ... execute query
+
+👍 After (New, Correct Pattern)
+
+Python
+
+# Correct: Import the stateless query builder
+from plugins.postgres.utils.postgresql_version_compatibility import get_bgwriter_query
+
+def run_checkpoint_analysis(connector, settings):
+    # Correct: Use the compatibility module to get the right query.
+    # The version logic is now handled centrally.
+    bgwriter_query = get_bgwriter_query(connector)
+    
+    # The module is now cleaner and only concerned with executing the query
+    formatted, raw = connector.execute_query(bgwriter_query, return_raw=True)
+    
+    # ... process results
+
+By following this pattern, all check modules will become more consistent, easier to maintain, and free of redundant code.

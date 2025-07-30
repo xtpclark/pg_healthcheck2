@@ -1,0 +1,28 @@
+{
+  "bgwriter_checkpoint_contention": {
+    "metric_keywords": [
+      "bgwriter_stats"
+    ],
+    "data_conditions": [
+      {
+        "key": "checkpoints_req",
+        "exists": true
+      },
+      {
+        "key": "total_checkpoints",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('total_checkpoints', 0)) > 100 and (int(data.get('checkpoints_req', 0)) * 100.0 / int(data.get('total_checkpoints', 1))) > 10",
+        "level": "high",
+        "score": 4,
+        "reasoning": "A high percentage ({ (int(data.get('checkpoints_req', 0)) * 100.0 / int(data.get('total_checkpoints', 1))) :.1f}%) of checkpoints are being requested, not timed. This indicates the WAL is filling up too quickly.",
+        "recommendations": [
+          "Increase 'max_wal_size' to allow more room for WAL logs between checkpoints. This will smooth out I/O performance, especially during periods of high write activity."
+        ]
+      }
+    ]
+  }
+}

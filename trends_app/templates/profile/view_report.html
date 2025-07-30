@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ report_name }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/@asciidoctor/core@2.2.6/dist/browser/asciidoctor.min.js"></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/eclipse.min.css">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/asciidoc/asciidoc.min.js"></script>
+
+    <style>
+        body { background-color: #f8f9fa; }
+        .editor-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            height: 80vh;
+        }
+        .CodeMirror {
+            border: 1px solid #ced4da;
+            border-radius: 0.25rem;
+            height: calc(100% - 45px);
+            font-size: 14px;
+        }
+        #report-preview {
+            background-color: #fff;
+            padding: 1rem;
+            border-radius: 0.25rem;
+            border: 1px solid #ced4da;
+            overflow-y: auto;
+            height: 100%;
+        }
+        .editor-toolbar {
+            background-color: #f1f3f5;
+            padding: 5px;
+            border: 1px solid #ced4da;
+            border-bottom: none;
+            border-top-left-radius: 0.25rem;
+            border-top-right-radius: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid my-4 px-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h1 class="mb-0">{{ report_name }}</h1>
+            <div>
+                <button id="toggle-theme-btn" class="btn btn-outline-secondary">Toggle Theme</button>
+                {% if current_user.has_privilege('EditReports') %}
+                <button id="save-btn" class="btn btn-primary">Save Changes</button>
+                {% endif %}
+                <a href="{{ url_for('profile.report_history') }}" class="btn btn-secondary">Back to History</a>
+            </div>
+        </div>
+        
+        <div id="alert-container"></div>
+
+        <div class="editor-container">
+            <div>
+                <h5>Editor (AsciiDoc)</h5>
+                <div class="editor-toolbar">
+                    <button class="btn btn-sm btn-outline-secondary" id="btn-bold" title="Bold"><i class="bi bi-type-bold"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" id="btn-italic" title="Italic"><i class="bi bi-type-italic"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" id="btn-link" title="Link"><i class="bi bi-link-45deg"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" id="btn-code" title="Code Block"><i class="bi bi-code-slash"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" id="btn-header" title="Article Header"><i class="bi bi-journal-text"></i></button>
+                </div>
+                <textarea id="report-editor">{{ report_content }}</textarea>
+            </div>
+            <div>
+                <h5>Live Preview</h5>
+                <div id="report-preview"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // --- MODIFIED: Load theme from localStorage or set a default ---
+            const savedTheme = localStorage.getItem('editorTheme') || 'material-darker';
+
+            const editor = CodeMirror.fromTextArea(document.getElementById('report-editor'), {
+                lineNumbers: true,
+                mode: 'asciidoc',
+                theme: savedTheme, // Use the saved or default theme
+                lineWrapping: true
+            });
+
+            const preview = document.getElementById('report-preview');
+            const saveBtn = document.getElementById('save-btn');
+            const alertContainer = document.getElementById('alert-container');
+            const reportId = {{ report_id }};
+            const asciidoctor = Asciidoctor();
+
+            // --- Toolbar Functionality (Existing) ---
+            function wrapSelection(prefix, suffix) {
+                const selection = editor.getSelection();
+                if (selection) {
+                    editor.replaceSelection(prefix + selection + (suffix || ''));
+                } else {
+                    const cursor = editor.getCursor();
+                    editor.replaceRange(prefix + (suffix || ''), cursor);
+                }
+                editor.focus();
+            }
+
+            document.getElementById('btn-bold').addEventListener('click', () => wrapSelection('*', '*'));
+            document.getElementById('btn-italic').addEventListener('click', () => wrapSelection('_', '_'));
+            document.getElementById('btn-link').addEventListener('click', () => {
+                const url = prompt("Enter the URL:");
+                if (url) {
+                    const selection = editor.getSelection() || 'link text';
+                    editor.replaceSelection(`${url}[${selection}]`);
+                    editor.focus();
+                }
+            });
+            document.getElementById('btn-code').addEventListener('click', () => {
+                const codeBlock = `[source,sql]\n----\n${editor.getSelection() || 'SELECT * FROM your_table;'}\n----`;
+                editor.replaceSelection(codeBlock);
+                editor.focus();
+            });
+            document.getElementById('btn-header').addEventListener('click', () => {
+                const headerText = `= Your Document Title\n:author: Author Name\n:email: your.email@example.com\n:toc:\n:toc-title: Table of Contents\n\n`;
+                editor.replaceRange(headerText, { line: 0, ch: 0 });
+                editor.focus();
+            });
+
+            // --- MODIFIED: New functionality for theme toggling ---
+            const toggleThemeBtn = document.getElementById('toggle-theme-btn');
+            toggleThemeBtn.addEventListener('click', () => {
+                const currentTheme = editor.getOption('theme');
+                const newTheme = currentTheme === 'material-darker' ? 'eclipse' : 'material-darker';
+                
+                // Set the new theme on the editor instance
+                editor.setOption('theme', newTheme);
+
+                // Save the user's preference to localStorage
+                localStorage.setItem('editorTheme', newTheme);
+            });
+
+
+            function renderPreview() {
+                try {
+                    const content = editor.getValue();
+                    const html = asciidoctor.convert(content, { attributes: { 'showtitle': true } });
+                    preview.innerHTML = html;
+                } catch (e) {
+                    preview.innerHTML = `<div class="alert alert-danger">Error rendering preview: ${e.message}</div>`;
+                }
+            }
+
+            function showAlert(message, type = 'success') {
+                const alertDiv = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">${message}<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>`;
+                alertContainer.innerHTML = alertDiv;
+            }
+
+            // Initial render
+            renderPreview();
+            editor.on('change', renderPreview);
+
+            // Save functionality (Existing)
+            if (saveBtn) {
+                saveBtn.addEventListener('click', function() {
+                    saveBtn.disabled = true;
+                    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...';
+                    
+                    fetch(`/profile/save-report/${reportId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: editor.getValue() })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            showAlert(data.message, 'success');
+                        } else {
+                            showAlert(data.message, 'danger');
+                        }
+                    })
+                    .catch(error => {
+                        showAlert('An unexpected error occurred.', 'danger');
+                        console.error('Save error:', error);
+                    })
+                    .finally(() => {
+                        saveBtn.disabled = false;
+                        saveBtn.innerHTML = 'Save Changes';
+                    });
+                });
+            }
+        });
+    </script>
+</body>
+</html>

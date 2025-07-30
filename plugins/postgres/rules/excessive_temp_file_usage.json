@@ -1,0 +1,37 @@
+{
+  "inefficient_temp_file_usage": {
+    "metric_keywords": [
+      "temp_files_analysis_temp_files"
+    ],
+    "data_conditions": [
+      {
+        "key": "total_temp_written",
+        "exists": true
+      },
+      {
+        "key": "calls",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('calls', 0)) > 100 and (float(data.get('total_temp_written', '0 KB').split(' ')[0]) * (1024**2 if 'GB' in data.get('total_temp_written', '') else 1024 if 'MB' in data.get('total_temp_written', '') else 1) / int(data['calls'])) > 10 * 1024",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "A query is writing an average of { (float(data.get('total_temp_written', '0 KB').split(' ')[0]) * (1024**2 if 'GB' in data.get('total_temp_written', '') else 1024 if 'MB' in data.get('total_temp_written', '') else 1) / int(data['calls'])) / 1024 :.2f} MB of temporary files per execution.",
+        "recommendations": [
+          "This query is consistently spilling large amounts of data to disk. This is a strong indicator that 'work_mem' is severely undersized for this query's needs. Use EXPLAIN (ANALYZE, BUFFERS) to confirm the source of the temp file usage and consider increasing 'work_mem'."
+        ]
+      },
+      {
+        "expression": "int(data.get('calls', 0)) > 100 and (float(data.get('total_temp_written', '0 KB').split(' ')[0]) * (1024**2 if 'GB' in data.get('total_temp_written', '') else 1024 if 'MB' in data.get('total_temp_written', '') else 1) / int(data['calls'])) > 1 * 1024",
+        "level": "high",
+        "score": 4,
+        "reasoning": "A query is writing an average of { (float(data.get('total_temp_written', '0 KB').split(' ')[0]) * (1024**2 if 'GB' in data.get('total_temp_written', '') else 1024 if 'MB' in data.get('total_temp_written', '') else 1) / int(data['calls'])) / 1024 :.2f} MB of temporary files per execution.",
+        "recommendations": [
+          "This query is frequently spilling to disk. Analyze the query plan for indexing opportunities or consider a moderate increase to 'work_mem' to improve its performance."
+        ]
+      }
+    ]
+  }
+}
