@@ -16,7 +16,6 @@ from plugins.base import BasePlugin
 def discover_plugins():
     """
     Finds and loads all available plugins.
-    This is the same resilient discovery function used in main.py.
     """
     plugins_path = Path(__file__).parent.parent / "plugins"
     discovered_plugins = {}
@@ -47,58 +46,46 @@ def main():
     parser.add_argument('--output', default='ai_recommendations.adoc', help='Output file for the AI-generated report')
     args = parser.parse_args()
 
-    # --- Load Settings and Findings ---
     try:
         with open(args.config, 'r') as f:
             settings = yaml.safe_load(f)
         with open(args.findings, 'r') as f:
             all_structured_findings = json.load(f)
-    except FileNotFoundError as e:
-        print(f"Error: Could not find a required file. {e}")
-        sys.exit(1)
     except Exception as e:
         print(f"Error loading files: {e}")
         sys.exit(1)
 
-    # Override the default template if a specific one is provided
     if args.template:
         settings['prompt_template'] = Path(args.template).name
 
-    # --- Discover and Load the Correct Plugin ---
     available_plugins = discover_plugins()
     active_tech = settings.get('db_type')
     active_plugin = available_plugins.get(active_tech)
 
     if not active_plugin:
-        raise ValueError(f"Unsupported or missing db_type: '{active_tech}'. Available plugins: {list(available_plugins.keys())}")
+        raise ValueError(f"Unsupported or missing db_type: '{active_tech}'.")
 
     print(f"\n--- Starting AI Analysis for '{active_tech}' using offline data ---")
 
-    # --- Generate the Prompt ---
     analysis_rules = active_plugin.get_rules_config()
     
-    # We don't have a live connector, so we pull metadata from settings
-    db_version = all_structured_findings.get("version_info", {}).get("data", {}).get("version_string", "N/A")
-    db_name = settings.get('database', 'N/A')
+    # --- Agnostic Metadata Extraction ---
+    db_version = active_plugin.get_db_version_from_findings(all_structured_findings)
+    db_name = active_plugin.get_db_name_from_findings(all_structured_findings)
 
-    # Override the setting to ensure the AI call is made
     settings['ai_run_integrated'] = True
 
-    # Pass the active_plugin object to the prompt generator
     dynamic_analysis = generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin)
     full_prompt = dynamic_analysis['prompt']
 
-    # --- Get Recommendations from AI ---
     ai_adoc, _ = run_recommendation(settings, full_prompt)
 
-    # --- Write the Output ---
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, 'w') as f:
         f.write(ai_adoc)
 
-    print(f"\n✅ AI analysis complete.")
-    print(f"Report saved to: {output_path}")
+    print(f"\n✅ AI analysis complete.\nReport saved to: {output_path}")
 
 if __name__ == '__main__':
     main()

@@ -1,14 +1,25 @@
-from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for, abort, send_file
-from flask_login import login_required, current_user
-import psycopg2
 import io
-from .database import get_unique_targets, load_user_preferences, fetch_runs_by_ids, save_user_preference
+import json
+import os
+import subprocess
+import tempfile
+import psycopg2
+
+from datetime import datetime
+
+from deepdiff import DeepDiff
+from flask import (Blueprint, render_template, request, jsonify, current_app,
+                   redirect, url_for, abort, send_file, Response)
+from flask_login import login_required, current_user
+
+
+from .database import (get_unique_targets, load_user_preferences,
+                       fetch_runs_by_ids, save_user_preference,
+                       fetch_template_asset)
+
 from .utils import load_trends_config, format_path
 from .ai_connector import get_ai_recommendation
-from .prompt_generator import generate_web_prompt
-import json
-from deepdiff import DeepDiff
-from datetime import datetime
+from .prompt_generator import generate_web_prompt, generate_slides_prompt
 
 bp = Blueprint('main', __name__)
 
@@ -74,7 +85,7 @@ def dashboard():
                            unique_targets=unique_targets,
                            user_preferences=json.dumps(user_preferences))
 
-# --- Existing API Routes ---
+# --- API Routes ---
 
 @bp.route('/api/runs')
 @login_required
@@ -148,7 +159,6 @@ def get_all_runs():
 @bp.route('/api/runs/toggle-favorite', methods=['POST'])
 @login_required
 def toggle_favorite():
-    """Toggles the favorite status of a given run for the current user."""
     data = request.get_json()
     run_id = data.get('run_id')
 
@@ -185,7 +195,6 @@ def toggle_favorite():
 @bp.route('/api/save-preference', methods=['POST'])
 @login_required
 def save_preference():
-    """API endpoint to save a user's filter preference."""
     data = request.get_json()
     pref_name = data.get('name')
     pref_value = data.get('value')
@@ -199,12 +208,9 @@ def save_preference():
     
     return jsonify({'status': 'success', 'message': f'Preference {pref_name} saved.'})
 
-# --- AI REPORTING API ROUTES ---
-
 @bp.route('/api/user-ai-profiles')
 @login_required
 def get_user_ai_profiles():
-    """Fetches the current user's saved AI profiles."""
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -228,7 +234,6 @@ def get_user_ai_profiles():
 @bp.route('/api/analysis-rules')
 @login_required
 def get_analysis_rules():
-    """Fetches available analysis rule sets."""
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -249,7 +254,6 @@ def get_analysis_rules():
 @bp.route('/api/prompt-templates')
 @login_required
 def get_prompt_templates():
-    """Fetches available prompt templates."""
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -257,7 +261,10 @@ def get_prompt_templates():
     try:
         conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, template_name FROM prompt_templates ORDER BY template_name;")
+        cursor.execute(
+            "SELECT id, template_name FROM prompt_templates WHERE user_id IS NULL OR user_id = %s ORDER BY template_name;",
+            (current_user.id,)
+        )
         for row in cursor.fetchall():
             templates.append({'id': row[0], 'name': row[1]})
     except psycopg2.Error as e:
@@ -270,82 +277,175 @@ def get_prompt_templates():
 @bp.route('/api/generate-ai-report', methods=['POST'])
 @login_required
 def generate_ai_report():
-    """Generates an AI report, stores it, and returns it for download."""
     if not current_user.has_privilege('GenerateReports'):
         abort(403)
 
     data = request.get_json()
-    run_id = data.get('run_id')
-    profile_id = data.get('profile_id')
-    template_id = data.get('template_id')
-    rule_set_id = data.get('rule_set_id')
-    report_name = data.get('report_name')
-    report_description = data.get('report_description')
+    run_id, profile_id, template_id, rule_set_id = data.get('run_id'), data.get('profile_id'), data.get('template_id'), data.get('rule_set_id')
+    report_name, report_description = data.get('report_name'), data.get('report_description')
 
     if not all([run_id, profile_id, template_id, rule_set_id]):
         return jsonify({"error": "Missing required parameters."}), 400
 
     config = load_trends_config()
     db_settings = config.get('database')
-
-    # 1. Fetch the DECRYPTED findings JSON for the selected run
     accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
     runs_data = fetch_runs_by_ids(db_settings, [run_id], accessible_company_ids)
     if not runs_data:
-        return jsonify({"error": "Run not found or you do not have permission to access it."}), 404
+        return jsonify({"error": "Run not found or permission denied."}), 404
     findings_json = runs_data[0].get('findings')
     if not isinstance(findings_json, dict):
-        return jsonify({"error": "Could not load valid findings data for this run."}), 500
+        return jsonify({"error": "Invalid findings data."}), 500
 
-    # 2. Generate the prompt
     prompt = generate_web_prompt(findings_json, rule_set_id, template_id)
-    if prompt.startswith("Error:"):
-        return jsonify({"error": prompt}), 500
-
-    # 3. Get the AI recommendation
+    if prompt.startswith("Error:"): return jsonify({"error": prompt}), 500
     ai_response = get_ai_recommendation(prompt, profile_id)
-    if ai_response.startswith("Error:"):
-        return jsonify({"error": ai_response}), 500
+    if ai_response.startswith("Error:"): return jsonify({"error": ai_response}), 500
 
-    # 4. Encrypt and store the report
     conn = None
     try:
         conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
         cursor.execute(
-            """
-            INSERT INTO generated_ai_reports (
-                run_id, rule_set_id, ai_profile_id, generated_by_user_id,
-                report_name, report_description, template_id, report_content
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s,
-                pgp_sym_encrypt(%s, get_encryption_key())
-            );
-            """,
+            "INSERT INTO generated_ai_reports (run_id, rule_set_id, ai_profile_id, generated_by_user_id, report_name, report_description, template_id, report_content) VALUES (%s, %s, %s, %s, %s, %s, %s, pgp_sym_encrypt(%s, get_encryption_key()));",
             (run_id, rule_set_id, profile_id, current_user.id, report_name, report_description, template_id, ai_response)
         )
         conn.commit()
     except psycopg2.Error as e:
         if conn: conn.rollback()
-        current_app.logger.error(f"Database error saving generated AI report: {e}")
-        return jsonify({"error": "A database error occurred while saving the report."}), 500
+        current_app.logger.error(f"DB error saving report: {e}")
+        return jsonify({"error": "DB error saving report."}), 500
     finally:
         if conn: conn.close()
 
-    # 5. Return the report for download
-    return send_file(
-        io.BytesIO(ai_response.encode('utf-8')),
-        mimetype='text/plain',
-        as_attachment=True,
-        download_name=f"ai_report_run_{run_id}.adoc"
-    )
+    return send_file(io.BytesIO(ai_response.encode('utf-8')), mimetype='text/plain', as_attachment=True, download_name=f"ai_report_run_{run_id}.adoc")
 
-# --- REPORT HISTORY API ROUTES ---
-
-@bp.route('/api/generated-reports')
+# --- FINAL CORRECTED ROUTE ---
+@bp.route('/generate-slides')
 @login_required
-def get_generated_reports():
-    """Fetches the list of reports generated by the current user with extra context."""
+def generate_slides():
+    """
+    Generates slides from a health check run and renders them server-side.
+    This version uses post-processing to inject directives.
+    """
+    if not current_user.has_privilege('GenerateReports'):
+        abort(403)
+
+    run_id = request.args.get('run_id', type=int)
+    profile_id = request.args.get('profile_id', type=int)
+    rule_set_id = request.args.get('rule_set_id', type=int)
+    template_id = request.args.get('template_id', type=int)
+
+    if not all([run_id, profile_id, rule_set_id, template_id]):
+        return render_template('error.html', error_message="Missing required parameters."), 400
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    
+    accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
+    runs_data = fetch_runs_by_ids(db_settings, [run_id], accessible_company_ids)
+    
+    if not runs_data:
+        return render_template('error.html', error_message="Run not found or permission denied."), 404
+    
+    findings_json = runs_data[0].get('findings')
+    if not isinstance(findings_json, dict):
+        return render_template('error.html', error_message="Invalid findings data."), 500
+
+    temp_files = {}
+    md_file_path = None
+    html_output_path = None
+    try:
+        # Step 1: Get AI content
+        prompt = generate_slides_prompt(findings_json, rule_set_id, template_id, assets={})
+        if prompt.startswith("Error:"):
+            return render_template('error.html', error_message=prompt), 500
+
+        ai_content_md = get_ai_recommendation(prompt, profile_id)
+        if ai_content_md.startswith("Error:"):
+            return render_template('error.html', error_message=ai_content_md), 500
+
+        # Step 2: Prepare temporary image files
+        bg_path = None
+        logo_path = None
+
+        background_data = fetch_template_asset(db_settings, 'slide_background')
+        if background_data:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_bg:
+                temp_bg.write(background_data)
+                bg_path = temp_bg.name
+                temp_files['slide_background'] = bg_path
+        
+        logo_data = fetch_template_asset(db_settings, 'company_logo')
+        if logo_data:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_logo:
+                temp_logo.write(logo_data)
+                logo_path = temp_logo.name
+                temp_files['company_logo'] = logo_path
+
+        # Step 3: Post-process the AI's markdown to inject directives
+        slides = [s for s in ai_content_md.split('---') if s.strip()]
+        processed_slides = []
+
+        for i, slide_content in enumerate(slides):
+            content = slide_content.strip()
+            
+            if i == 0:
+                title_slide = "---"
+                if bg_path:
+                    # Correctly add the Marp directive for the background image
+                    title_slide += f"\n"
+                title_slide += "\nclass: center, middle"
+                title_slide += f"\n{content}"
+                if logo_path:
+                    # Add the standard Markdown for the logo
+                    title_slide += f'\n![Logo]({logo_path})'
+                processed_slides.append(title_slide)
+            else:
+                other_slide = "---"
+                if bg_path:
+                    # Correctly add the Marp directive for all other slides
+                    other_slide += f"\n"
+                other_slide += f"\n{content}"
+                processed_slides.append(other_slide)
+
+        final_markdown = '\n'.join(processed_slides)
+
+        # Step 4: Convert the final markdown to HTML
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.md') as md_file:
+            md_file.write(final_markdown)
+            md_file_path = md_file.name
+        
+        html_output_path = md_file_path.replace('.md', '.html')
+        
+        subprocess.run(['marp', md_file_path, '-o', html_output_path], check=True)
+
+        with open(html_output_path, 'r') as html_file:
+            slides_html = html_file.read()
+        
+        return render_template('profile/view_slides.html', slides_html=slides_html)
+
+    except FileNotFoundError:
+        return render_template('error.html', error_message="`marp-cli` not found. Please ensure it is installed and in your system's PATH."), 500
+    except subprocess.CalledProcessError as e:
+        return render_template('error.html', error_message=f"Error running marp-cli: {e.stderr}"), 500
+    except Exception as e:
+        current_app.logger.error(f"An unexpected error occurred during slide generation: {e}")
+        return render_template('error.html', error_message="An unexpected error occurred during slide generation."), 500
+    finally:
+        # Step 5: Re-enabled cleanup logic
+        for f in temp_files.values():
+            if os.path.exists(f):
+                os.remove(f)
+        if md_file_path and os.path.exists(md_file_path):
+            os.remove(md_file_path)
+        if html_output_path and os.path.exists(html_output_path):
+            os.remove(html_output_path)
+
+
+@bp.route('/api/all-reports')
+@login_required
+def get_all_reports():
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -353,34 +453,37 @@ def get_generated_reports():
     try:
         conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT 
-                gar.id, gar.report_name, gar.report_description, gar.annotations, 
-                gar.generation_timestamp, gar.run_id,
-                hcr.target_host, hcr.target_db_name,
-                uap.profile_name,
-                ar.rule_set_name,
-                pt.template_name
-            FROM generated_ai_reports gar
-            JOIN health_check_runs hcr ON gar.run_id = hcr.id
-            LEFT JOIN user_ai_profiles uap ON gar.ai_profile_id = uap.id
-            LEFT JOIN analysis_rules ar ON gar.rule_set_id = ar.id
-            LEFT JOIN prompt_templates pt ON gar.template_id = pt.id
-            WHERE gar.generated_by_user_id = %s
-            ORDER BY gar.generation_timestamp DESC;
-            """,
-            (current_user.id,)
-        )
+        query = """
+        SELECT 
+            gar.id, 'generated' AS report_type, gar.report_name, gar.report_description,
+            gar.annotations, gar.generation_timestamp AS timestamp, hcr.target_host, 
+            hcr.target_db_name, uap.profile_name, ar.rule_set_name, pt.template_name
+        FROM generated_ai_reports gar
+        JOIN health_check_runs hcr ON gar.run_id = hcr.id
+        LEFT JOIN user_ai_profiles uap ON gar.ai_profile_id = uap.id
+        LEFT JOIN analysis_rules ar ON gar.rule_set_id = ar.id
+        LEFT JOIN prompt_templates pt ON gar.template_id = pt.id
+        WHERE gar.generated_by_user_id = %(user_id)s
+        UNION ALL
+        SELECT
+            ur.id, 'uploaded' AS report_type, ur.report_name, ur.report_description,
+            NULL AS annotations, ur.upload_timestamp AS timestamp, 'N/A' AS target_host,
+            'N/A' AS target_db_name, 'Manual Upload' AS profile_name,
+            NULL AS rule_set_name, NULL AS template_name
+        FROM uploaded_reports ur
+        WHERE ur.uploaded_by_user_id = %(user_id)s
+        ORDER BY timestamp DESC;
+        """
+        cursor.execute(query, {'user_id': current_user.id})
         for row in cursor.fetchall():
             reports.append({
-                "id": row[0], "name": row[1], "description": row[2],
-                "annotations": row[3], "timestamp": row[4].isoformat(), "run_id": row[5],
+                "id": row[0], "type": row[1], "name": row[2], "description": row[3],
+                "annotations": row[4], "timestamp": row[5].isoformat(),
                 "target_host": row[6], "db_name": row[7],
                 "profile_name": row[8], "rules_name": row[9], "template_name": row[10]
             })
     except psycopg2.Error as e:
-        current_app.logger.error(f"Database error fetching report history: {e}")
+        current_app.logger.error(f"DB error fetching all reports: {e}")
         return jsonify({"error": "Could not fetch report history."}), 500
     finally:
         if conn: conn.close()
@@ -389,43 +492,30 @@ def get_generated_reports():
 @bp.route('/api/download-report/<int:report_id>')
 @login_required
 def download_report(report_id):
-    """Decrypts and serves a previously generated report for download."""
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
     try:
         conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
-        # Ensure user can only download their own reports
         cursor.execute(
-            """
-            SELECT pgp_sym_decrypt(report_content::bytea, get_encryption_key()), run_id
-            FROM generated_ai_reports
-            WHERE id = %s AND generated_by_user_id = %s;
-            """,
+            "SELECT pgp_sym_decrypt(report_content::bytea, get_encryption_key()), run_id FROM generated_ai_reports WHERE id = %s AND generated_by_user_id = %s;",
             (report_id, current_user.id)
         )
         report_data = cursor.fetchone()
         if not report_data:
-            abort(404, "Report not found or you do not have permission to access it.")
-        
+            abort(404, "Report not found or permission denied.")
         report_content, run_id = report_data
-        return send_file(
-            io.BytesIO(report_content.encode('utf-8')),
-            mimetype='text/plain',
-            as_attachment=True,
-            download_name=f"ai_report_run_{run_id}_saved.adoc"
-        )
+        return send_file(io.BytesIO(report_content.encode('utf-8')), mimetype='text/plain', as_attachment=True, download_name=f"ai_report_run_{run_id}_saved.adoc")
     except psycopg2.Error as e:
-        current_app.logger.error(f"Database error downloading report: {e}")
-        abort(500, "Database error occurred.")
+        current_app.logger.error(f"DB error downloading report: {e}")
+        abort(500, "DB error occurred.")
     finally:
         if conn: conn.close()
 
 @bp.route('/api/generated-reports/<int:report_id>', methods=['PUT'])
 @login_required
 def update_report_metadata(report_id):
-    """Updates the metadata for a generated report."""
     data = request.get_json()
     config = load_trends_config()
     db_settings = config.get('database')
@@ -434,15 +524,8 @@ def update_report_metadata(report_id):
         conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
         cursor.execute(
-            """
-            UPDATE generated_ai_reports
-            SET report_name = %s, report_description = %s, annotations = %s
-            WHERE id = %s AND generated_by_user_id = %s;
-            """,
-            (
-                data.get('report_name'), data.get('report_description'),
-                data.get('annotations'), report_id, current_user.id
-            )
+            "UPDATE generated_ai_reports SET report_name = %s, report_description = %s, annotations = %s WHERE id = %s AND generated_by_user_id = %s;",
+            (data.get('report_name'), data.get('report_description'), data.get('annotations'), report_id, current_user.id)
         )
         conn.commit()
         if cursor.rowcount == 0:
@@ -450,7 +533,7 @@ def update_report_metadata(report_id):
         return jsonify({"status": "success"})
     except psycopg2.Error as e:
         if conn: conn.rollback()
-        current_app.logger.error(f"Database error updating report metadata: {e}")
-        return jsonify({"error": "Database error occurred."}), 500
+        current_app.logger.error(f"DB error updating report metadata: {e}")
+        return jsonify({"error": "DB error occurred."}), 500
     finally:
         if conn: conn.close()

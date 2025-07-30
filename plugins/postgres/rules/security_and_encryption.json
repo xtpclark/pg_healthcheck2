@@ -1,0 +1,46 @@
+{
+  "weak_password_encryption": {
+    "metric_keywords": [
+      "security_summary"
+    ],
+    "data_conditions": [
+      {
+        "key": "md5_password_count",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('md5_password_count', 0)) > 0",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "{data.get('md5_password_count')} user(s) found using MD5 for password encryption, which is vulnerable to offline cracking.",
+        "recommendations": [
+          "Migrate all users from MD5 to the more secure 'scram-sha-256' hashing algorithm immediately. Set 'password_encryption = scram-sha-256' in postgresql.conf."
+        ]
+      }
+    ]
+  },
+  "unencrypted_connections": {
+    "metric_keywords": [
+      "security_summary"
+    ],
+    "data_conditions": [
+      {
+        "key": "non_ssl_connections_count",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('non_ssl_connections_count', 0)) > 0",
+        "level": "high",
+        "score": 4,
+        "reasoning": "{data.get('non_ssl_connections_count')} active connection(s) are not using SSL/TLS encryption.",
+        "recommendations": [
+          "For optimal security, all connections should be encrypted. Enforce SSL by setting 'ssl = on' in postgresql.conf and updating your pg_hba.conf to only allow 'hostssl' connections."
+        ]
+      }
+    ]
+  }
+}

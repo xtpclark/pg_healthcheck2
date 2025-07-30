@@ -30,11 +30,14 @@
 <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1 class="mb-0">Health Check Dashboard</h1>
-        <!-- MODIFIED NAVIGATION AREA -->
         <div class="btn-group">
             <a href="{{ url_for('profile.report_history') }}" class="btn btn-outline-info">Report History</a>
             <a href="{{ url_for('profile.ai_settings') }}" class="btn btn-info">AI Settings</a>
             
+            {% if current_user.has_privilege('ManageUserTemplates') %}
+            <a href="{{ url_for('profile.prompt_templates') }}" class="btn btn-outline-success">My Templates</a>
+            {% endif %}
+
             {% if current_user.has_privilege('AdministerUsers') %}
             <div class="btn-group" role="group">
                 <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
@@ -46,13 +49,13 @@
                     <li><a class="dropdown-item" href="{{ url_for('admin.list_privileges') }}">Manage Privileges</a></li>
                     <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item" href="{{ url_for('admin.list_ai_providers') }}">Manage AI Providers</a></li>
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_template_assets') }}">Manage Template Assets</a></li>
                 </ul>
             </div>
             {% endif %}
 
             <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
         </div>
-        <!-- END MODIFIED NAVIGATION AREA -->
     </div>
 
     <!-- Filters Card -->
@@ -99,12 +102,11 @@
         </div>
     </div>
 
-    <!-- Comparison and Reporting Card -->
+    <!-- Actions Card -->
     <div class="card mb-4">
         <div class="card-header"><h5 class="mb-0">Actions</h5></div>
         <div class="card-body">
             <div class="row">
-                <!-- Comparison Section -->
                 <div class="col-md-6 border-end">
                     <h6>Compare Two Runs</h6>
                     <p class="text-muted small">Select two runs on the timeline to compare their findings.</p>
@@ -115,10 +117,9 @@
                     </form>
                 </div>
 
-                <!-- AI Report Generation Section -->
                 {% if current_user.has_privilege('GenerateReports') %}
                 <div class="col-md-6">
-                    <h6>Generate AI Report</h6>
+                    <h6>Generate AI Content</h6>
                     <p class="text-muted small">Select one run on the timeline to generate an AI-powered analysis.</p>
                     <div class="row g-2">
                         <div class="col-12">
@@ -126,18 +127,26 @@
                                 <option selected disabled value="">Select AI Profile...</option>
                             </select>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <select id="analysis-rules-select" class="form-select" aria-label="Select Analysis Rules">
                                 <option selected disabled value="">Select Analysis Rules...</option>
                             </select>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <select id="prompt-template-select" class="form-select" aria-label="Select Report Template">
                                 <option selected disabled value="">Select Report Template...</option>
                             </select>
                         </div>
+                        <div class="col-md-4">
+                            <select id="slide-template-select" class="form-select" aria-label="Select Slide Template">
+                                <option selected disabled value="">Select Slide Template...</option>
+                            </select>
+                        </div>
                     </div>
-                    <button id="generate-report-btn" class="btn btn-info mt-2" disabled>Generate AI Report</button>
+                    <div class="mt-2">
+                        <button id="generate-report-btn" class="btn btn-info" disabled>Generate Report</button>
+                        <button id="generate-slides-btn" class="btn btn-secondary" disabled>Generate Slides</button>
+                    </div>
                 </div>
                 {% endif %}
             </div>
@@ -246,8 +255,8 @@
         const promptTemplateSelect = document.getElementById('prompt-template-select');
         const reportMetadataModal = new bootstrap.Modal(document.getElementById('reportMetadataModal'));
         const confirmGenerateBtn = document.getElementById('confirm-generate-report-btn');
-
-        // --- Functions ---
+        const slideTemplateSelect = document.getElementById('slide-template-select');
+        const generateSlidesBtn = document.getElementById('generate-slides-btn');
 
         function savePreference(name, value) {
             fetch("{{ url_for('main.save_preference') }}", {
@@ -372,6 +381,7 @@
             if (generateReportBtn) {
                 const canGenerate = selectedIds.length === 1;
                 generateReportBtn.disabled = !canGenerate;
+                generateSlidesBtn.disabled = !canGenerate;
             }
         }
 
@@ -432,8 +442,26 @@
                 reportMetadataModal.hide();
             }
         }
-        
-        // --- Event Listeners ---
+
+        function generateSlides() {
+            const runId = timeline.getSelection()[0];
+            const profileId = aiProfileSelect.value;
+            const ruleSetId = analysisRulesSelect.value;
+            const templateId = slideTemplateSelect.value;
+
+            if (!profileId || !ruleSetId || !templateId) {
+                alert('Please select an AI Profile, Analysis Rules, and a Slide Template.');
+                return;
+            }
+
+            const url = new URL("{{ url_for('main.generate_slides') }}", window.location.origin);
+            url.searchParams.append('run_id', runId);
+            url.searchParams.append('profile_id', profileId);
+            url.searchParams.append('rule_set_id', ruleSetId);
+            url.searchParams.append('template_id', templateId);
+
+            window.open(url, '_blank');
+        }
         
         timeline.on('select', handleSelectionChange);
         timeline.on('contextmenu', function(properties) {
@@ -456,6 +484,10 @@
             confirmGenerateBtn.addEventListener('click', generateReport);
         }
         
+        if (generateSlidesBtn) {
+            generateSlidesBtn.addEventListener('click', generateSlides);
+        }
+        
         showFavoritesOnlyFilter.addEventListener('change', () => {
             savePreference('dashboard_show_favorites', showFavoritesOnlyFilter.checked);
             applyFavoriteVisibility();
@@ -465,8 +497,6 @@
         endTimeFilter.addEventListener('change', () => savePreference('dashboard_end_time', endTimeFilter.value));
         refreshBtn.addEventListener('click', fetchAndRenderTimeline);
 
-        // --- Initial Load ---
-        
         applyPreferences();
         fetchAndRenderTimeline();
         
@@ -474,6 +504,7 @@
             populateDropdown(aiProfileSelect, "{{ url_for('main.get_user_ai_profiles') }}");
             populateDropdown(analysisRulesSelect, "{{ url_for('main.get_analysis_rules') }}");
             populateDropdown(promptTemplateSelect, "{{ url_for('main.get_prompt_templates') }}");
+            populateDropdown(slideTemplateSelect, "{{ url_for('main.get_prompt_templates') }}");
         }
     });
 </script>
