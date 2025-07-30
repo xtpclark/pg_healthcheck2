@@ -1,0 +1,16 @@
+# -------------------------------------------------------------
+# Configuration for the Trends WEB-UI
+# -------------------------------------------------------------
+destination: postgresql
+database:
+  host: "192.168.1.30"
+  port: 5434
+  dbname: "health_trends"  # The database where your 'health_check_runs' table is located.
+  user: "postgres"
+  password: "postgres" # <-- CHANGE THIS
+  sslmode: "allow" # Use 'require' for encrypted connections, or 'allow' if SSL is not configured.
+
+# Settings for the API endpoint (not used if destination is postgresql)
+api:
+  endpoint_url: "https://api.mycompany.com/v1/health-checks"
+  api_key: "your-secret-api-key"
