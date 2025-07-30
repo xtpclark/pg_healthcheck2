@@ -1,0 +1,37 @@
+{
+  "vacuum_bloat": {
+    "metric_keywords": [
+      "bloated_tables"
+    ],
+    "data_conditions": [
+      {
+        "key": "n_dead_tup",
+        "exists": true
+      },
+      {
+        "key": "n_live_tup",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data['n_live_tup']) > 0 and (int(data['n_dead_tup']) / (int(data['n_dead_tup']) + int(data['n_live_tup']))) > 0.5",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "Critically high dead tuple ratio in table {data.get('relname', 'N/A')}",
+        "recommendations": [
+          "Immediate VACUUM required"
+        ]
+      },
+      {
+        "expression": "int(data['n_live_tup']) > 0 and (int(data['n_dead_tup']) / (int(data['n_dead_tup']) + int(data['n_live_tup']))) > 0.2",
+        "level": "high",
+        "score": 4,
+        "reasoning": "High dead tuple ratio in table {data.get('relname', 'N/A')}",
+        "recommendations": [
+          "Schedule VACUUM to prevent bloat"
+        ]
+      }
+    ]
+  }
+}

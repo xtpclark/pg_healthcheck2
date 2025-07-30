@@ -5,16 +5,14 @@ import psycopg2
 import yaml
 
 # --- Setup Project Path ---
-# This allows the script to import modules from your project root (e.g., plugins)
-# when run from the root directory.
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# --- Import the rules from the main application ---
+# --- Dynamically load the plugin to get the rules ---
 try:
-    from plugins.postgres.rules.analysis_rules import METRIC_ANALYSIS_CONFIG
+    from plugins.postgres import PostgresPlugin
 except ImportError as e:
-    print(f"Error: Could not import analysis rules. Make sure you run this script from the project root.")
+    print("Error: Could not import the PostgresPlugin. Make sure this script is in the correct location.")
     print(f"Details: {e}")
     sys.exit(1)
 
@@ -34,16 +32,27 @@ def load_db_config():
 
 def main():
     """
-    Connects to the database and inserts the imported analysis rules.
+    Connects to the database and inserts the dynamically loaded analysis rules.
     """
     db_config = load_db_config()
     if not db_config:
         sys.exit(1)
 
+    # --- Use the plugin to get the assembled rules ---
+    print("Loading rules via the PostgreSQL plugin...")
+    postgres_plugin = PostgresPlugin()
+    metric_analysis_config = postgres_plugin.get_rules_config()
+    
+    if not metric_analysis_config:
+        print("Error: No rules were loaded by the plugin. Check the rules directory and files.")
+        sys.exit(1)
+        
+    print(f"Successfully loaded {len(metric_analysis_config)} rule configurations.")
+
     # --- Define the Rule Set to be Inserted ---
     rule_set_name = "Default PostgreSQL Rules"
     technology = "postgres"
-    rules_json = json.dumps(METRIC_ANALYSIS_CONFIG) # Convert the Python dict to a JSON string
+    rules_json = json.dumps(metric_analysis_config) # Convert the Python dict to a JSON string
 
     conn = None
     try:
@@ -51,10 +60,10 @@ def main():
         conn = psycopg2.connect(**db_config)
         cursor = conn.cursor()
 
-        # Check if this rule set already exists to prevent duplicates
+        # Check if this rule set already exists
         cursor.execute("SELECT id FROM analysis_rules WHERE rule_set_name = %s;", (rule_set_name,))
         if cursor.fetchone():
-            print(f"'{rule_set_name}' already exists in the database. Skipping insertion.")
+            print(f"'{rule_set_name}' already exists. To update, please remove the existing entry from the table.")
             return
 
         # Insert the new rule set

@@ -10,12 +10,13 @@ import re
 import logging
 import argparse
 import pkgutil
+import socket
+import getpass
 
 from utils.dynamic_prompt_generator import generate_dynamic_prompt
 from utils.run_recommendation import run_recommendation
 from utils.report_builder import ReportBuilder
 from plugins.base import BasePlugin
-# Import the trend shipper module
 from output_handlers import trend_shipper
 
 try:
@@ -69,6 +70,7 @@ class HealthCheck:
         self.paths = self.get_paths()
         self.adoc_content = ""
         self.all_structured_findings = {}
+        self.analysis_output = {}
 
     def load_settings(self, config_file):
         try:
@@ -89,41 +91,64 @@ class HealthCheck:
 
         builder = ReportBuilder(self.connector, self.settings, self.active_plugin, self.report_sections, self.app_version)
         self.adoc_content, self.all_structured_findings = builder.build()
-
+        
+        ai_execution_metrics = {}
         if self.settings.get('ai_analyze', False):
-            self.run_ai_analysis()
+            ai_execution_metrics = self.run_ai_analysis()
 
-        # --- REAL FLOW: Pass connection details to the Trend Shipper ---
+        # Always generate and embed metadata before shipping and saving.
+        self.generate_and_embed_metadata(ai_execution_metrics)
+
         try:
             print("\n--- Handing off findings to Trend Shipper ---")
-            
-            # The 'self.settings' dictionary contains the connection details
-            # that the health check is currently using.
-            trend_shipper.run(self.all_structured_findings, self.settings)
-
+            trend_shipper.run(self.all_structured_findings, self.settings, self.adoc_content)
         except Exception as e:
             print(f"CRITICAL: The trend shipper module failed with an unexpected error: {e}")
-        # ----------------------------------------------------------------
 
         self.save_structured_findings()
         self.connector.disconnect()
 
-    def run_ai_analysis(self):
-        print("\n--- Starting AI Analysis ---")
-        analysis_rules = self.active_plugin.get_rules_config()
-        db_metadata = self.connector.get_db_metadata()
-        db_version = db_metadata.get('version', 'N/A')
-        db_name = db_metadata.get('db_name', self.settings.get('database', 'N/A'))
-
-        dynamic_analysis = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_version, db_name, self.active_plugin)
-        full_prompt = dynamic_analysis['prompt']
+    def generate_and_embed_metadata(self, ai_execution_metrics={}):
+        """
+        Generates summarized findings and embeds all necessary metadata into the
+        main findings object.
+        """
+        if not self.analysis_output:
+            print("\n--- Generating Summarized Findings for Historical Record ---")
+            analysis_rules = self.active_plugin.get_rules_config()
+            db_metadata = self.connector.get_db_metadata()
+            db_version = db_metadata.get('version', 'N/A')
+            db_name = db_metadata.get('db_name', self.settings.get('database', 'N/A'))
+            self.analysis_output = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_version, db_name, self.active_plugin)
         
-        ai_adoc, _ = run_recommendation(self.settings, full_prompt)
-        self.adoc_content += f"\n\n{ai_adoc}"
+        self.all_structured_findings['summarized_findings'] = self.analysis_output.get('summarized_findings', {})
+        self.all_structured_findings['prompt_template_name'] = self.settings.get('prompt_template', 'default_prompt.j2')
+        self.all_structured_findings['execution_context'] = {
+            'tool_version': self.app_version,
+            'run_by_user': getpass.getuser(),
+            'run_from_host': socket.gethostname(),
+            'ai_execution_metrics': ai_execution_metrics
+        }
+
+    def run_ai_analysis(self):
+        """
+        Generates a prompt if needed, sends it to the AI, and returns the execution metrics.
+        """
+        if not self.analysis_output:
+             # This will populate self.analysis_output
+             self.generate_and_embed_metadata()
+        
+        print("\n--- Sending Prompt to AI for Analysis ---")
+        full_prompt = self.analysis_output.get('prompt')
+        ai_metrics = {}
+        if full_prompt:
+            ai_adoc, ai_metrics = run_recommendation(self.settings, full_prompt)
+            self.adoc_content += f"\n\n{ai_adoc}"
+        else:
+            print("Warning: Prompt generation failed; skipping AI analysis.")
+        return ai_metrics
 
     def save_structured_findings(self):
-        self.all_structured_findings['application_version'] = self.app_version
-        
         output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:

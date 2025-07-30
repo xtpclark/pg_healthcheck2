@@ -1,0 +1,33 @@
+{
+  "systemic_bloat": {
+    "metric_keywords": [
+      "bloat_summary"
+    ],
+    "data_conditions": [
+      {
+        "key": "tables_with_high_bloat",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data['tables_with_critical_bloat']) > 5",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "Systemic bloat detected: {data['tables_with_critical_bloat']} tables have critical bloat levels (>50%).",
+        "recommendations": [
+          "Global autovacuum settings are likely misconfigured for the workload. Review and tune immediately."
+        ]
+      },
+      {
+        "expression": "int(data['tables_with_high_bloat']) > 10",
+        "level": "high",
+        "score": 4,
+        "reasoning": "Systemic bloat detected: {data['tables_with_high_bloat']} tables have high bloat levels (>20%).",
+        "recommendations": [
+          "Global autovacuum settings may need tuning. Investigate workload patterns."
+        ]
+      }
+    ]
+  }
+}

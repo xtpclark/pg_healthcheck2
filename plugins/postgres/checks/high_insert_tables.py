@@ -1,4 +1,8 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_high_insert_tables_query
+from plugins.postgres.utils.qrylib.high_insert_tables import get_high_insert_tables_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 3 # High importance for a critical, point-in-time issue.
 
 def run_high_insert_tables(connector, settings):
     """

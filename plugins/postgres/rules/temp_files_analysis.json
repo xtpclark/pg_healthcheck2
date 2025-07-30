@@ -1,0 +1,24 @@
+{
+  "excessive_temp_file_usage": {
+    "metric_keywords": [
+      "temp_files"
+    ],
+    "data_conditions": [
+      {
+        "key": "total_temp_written",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('total_temp_written', '0 MB').split(' ')[0]) > 1024 and 'GB' in data.get('total_temp_written', '0 MB')",
+        "level": "high",
+        "score": 4,
+        "reasoning": "A query wrote over 1 GB of temporary files ({data.get('total_temp_written')}), indicating significant memory pressure.",
+        "recommendations": [
+          "Queries that spill to disk are often bottlenecked by memory. Increase 'work_mem' for the session, or analyze the query's execution plan to find opportunities for optimization, such as adding indexes."
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "inactive_replication_slots": {
+    "metric_keywords": ["replication_slots_summary"],
+    "data_conditions": [{"key": "inactive_slots_count", "exists": true}],
+    "rules": [
+      {
+        "expression": "int(data.get('inactive_slots_count', 0)) > 0",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "{data.get('inactive_slots_count')} inactive replication slot(s) were found. Inactive slots prevent the primary from recycling WAL files.",
+        "recommendations": ["This is a critical issue that will eventually lead to disk exhaustion and a database outage. Identify and drop any unused replication slots immediately using 'SELECT pg_drop_replication_slot(\"slot_name\");'."]
+      }
+    ]
+  }
+}
+
+
