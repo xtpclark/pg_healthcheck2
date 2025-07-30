@@ -3,6 +3,11 @@ from plugins.postgres.utils.postgresql_version_compatibility import (
     get_pk_exhaustion_details_query
 )
 
+def get_weight():
+    """Returns the importance score for this module."""
+    return 10 # highest importance
+
+
 def run_primary_key_analysis(connector, settings):
     """
     Analyzes integer-based primary keys for exhaustion risks and provides a summary.

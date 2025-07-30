@@ -1,3 +1,8 @@
+def get_weight():
+    """Returns the importance score for this module."""
+    return 10 # Core configuration, highest importance
+
+
 def run_autovacuum_config(connector, settings):
     """
     Analyzes and presents global autovacuum settings and highlights any tables

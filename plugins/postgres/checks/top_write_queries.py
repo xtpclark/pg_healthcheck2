@@ -1,4 +1,8 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_top_write_queries_query
+from plugins.postgres.utils.qrylib.top_write_queries import get_top_write_queries_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 5 # Symtom, not disease
 
 def run_top_write_queries(connector, settings):
     """

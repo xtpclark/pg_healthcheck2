@@ -1,4 +1,9 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_object_counts_query
+from plugins.postgres.utils.qrylib.table_object_counts import get_object_counts_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 10 # Core configuration, highest importance
+
 
 def run_table_object_counts(connector, settings):
     """
