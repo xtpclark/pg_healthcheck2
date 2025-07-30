@@ -1,0 +1,66 @@
+= Trend Analysis Web UI Guide
+:doctype: article
+:toc: left
+:toclevels: 2
+:sectnums:
+
+== 1. Overview
+This guide provides instructions for setting up and using the Trend Analysis Web UI. This web-based dashboard provides a secure, intuitive, and interactive way to explore and compare historical health check data.
+
+The UI is a multi-tenant application that allows users to:
+* Log in securely.
+* View a graphical timeline of all health check runs for their company.
+* Select any two runs from the timeline to perform a detailed comparison.
+* View a summarized report of all changes between the two selected runs.
+
+== 2. Prerequisites
+Before running the web application, ensure the following are in place:
+
+* **Python Dependencies**: The application requires several Python libraries. Install them via pip:
++
+[source,bash]
+----
+pip install Flask Flask-Login Werkzeug psycopg2-binary pyyaml deepdiff
+----
+* **Database Schema**: The trend database must be initialized with the latest `schema.sql` script, which includes the `companies` and `users` tables.
+* **Configuration File**: A correctly configured `config/trends.yaml` must exist. The web app uses this file to connect to the database.
+
+== 3. Running the Web Application
+The web UI is a Flask application. To start the development server, run the following command from the root of the project:
+
+[source,bash]
+----
+python3 analysis_tools/web_ui/app.py
+----
+
+Once the server is running, you can access the dashboard by navigating to `http://127.0.0.1:5001` in your web browser.
+
+== 4. First-Time Setup
+For a new installation, a default user is created to grant initial access.
+
+=== 4.1. Default Login
+. **Username**: `admin`
+. **Password**: `admin`
+
+=== 4.2. Forced Password Change
+For security, the first time you log in with the default `admin` credentials, you will be immediately and automatically redirected to a "Change Password" page. You will not be able to access any other part of the application until you have set a new, secure password.
+
+. Enter your new password in both fields and click "Update Password".
+. You will be logged out and redirected back to the login page.
+. Log in again with your new password to access the dashboard.
+
+== 5. Using the Dashboard
+The dashboard is designed around an interactive timeline for selecting and comparing health check runs.
+
+=== 5.1. The Timeline View
+The main feature of the dashboard is the graphical timeline.
+* It displays all historical health check runs for your company as points on a timeline.
+* Each point is labeled with the target database it represents.
+* You can pan and zoom the timeline to navigate through the history.
+
+=== 5.2. Comparing Runs
+To compare two health check runs:
+. **Select two points** on the timeline. Use **Ctrl+Click** (or **Cmd+Click** on macOS) to select a second point.
+. Once two points are selected, the "Compare Selected Runs" button will become active.
+. Click the **"Compare Selected Runs"** button.
+. The page will reload with a **Comparison Summary** card, showing a detailed breakdown of all the differences between the two selected runs, grouped by check.

@@ -1,5 +1,9 @@
 # Correct: Import the stateless query builder from the central utility
-from plugins.postgres.utils.postgresql_version_compatibility import get_checkpoint_query
+from plugins.postgres.utils.qrylib.checkpoint import get_checkpoint_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 5 
 
 def run_checkpoint_analysis(connector, settings):
     """

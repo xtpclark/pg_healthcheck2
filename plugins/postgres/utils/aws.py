@@ -1,6 +1,24 @@
 import boto3
 from datetime import datetime, timedelta
 
+def get_instance_details(aws_region, db_identifier):
+    """
+    Fetches RDS instance details like instance class and allocated storage.
+    """
+    rds = boto3.client('rds', region_name=aws_region)
+    try:
+        response = rds.describe_db_instances(DBInstanceIdentifier=db_identifier)
+        if response['DBInstances']:
+            instance = response['DBInstances'][0]
+            # This can be expanded later to fetch RAM size based on instance class
+            return {
+                "instance_class": instance.get('DBInstanceClass'),
+                "allocated_storage_gb": instance.get('AllocatedStorage')
+            }
+    except Exception as e:
+        print(f"Warning: Could not fetch RDS instance details for {db_identifier}: {e}")
+    return None
+
 def get_cloudwatch_metrics(aws_region, dimensions, metrics_to_fetch, hours=24, period=3600):
     """
     Generic helper function to fetch a list of metrics from CloudWatch.

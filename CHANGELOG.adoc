@@ -1,0 +1,29 @@
+= Changelog: Health Check Tool v2.1.0
+
+
+July 29, 2025
+
+This release focuses on major architectural refactoring to improve modularity, maintainability, and the intelligence of the AI-driven analysis. The system is now fully database-agnostic, supports dynamic rule and metadata loading, and provides a more robust and testable framework.
+
+== New Features
+
+* **Rule Testing Utility**: Introduced a new standalone script, `scripts/rules_tester.py`, for testing and debugging analysis rules against a static findings file. It supports verbose output for detailed analysis and can preview the final, rendered AI prompt.
+* **Execution Context Tracking**: The tool now captures and stores critical metadata with each health check run, including the user, hostname, and the version of the tool that was executed. This information is saved to the `health_check_runs` table in the database for improved auditing.
+* **AsciiDoc Report Archiving**: The final, complete AsciiDoc report (including the AI-generated analysis) is now saved to the `health_check_runs` table, creating a perfect historical record of each analysis.
+
+== Architectural Refinements
+
+* **Modular, File-Based Rules**: The core analysis logic has been refactored. The monolithic `analysis_rules.py` file has been replaced with a system that dynamically loads individual `.json` rule files from the `plugins/postgres/rules/` directory. This is managed by the `get_rules_config()` method in the `PostgresPlugin`.
+* **Modular Query Library (`qrylib`)**: The monolithic `postgresql_version_compatibility.py` file has been broken apart into a new `plugins/postgres/utils/qrylib/` directory. Each file in this library now contains the version-aware SQL queries for a single, corresponding check module, making the checks cleaner and more maintainable.
+* **Intelligent, Weighted Token Budgeting**: The `utils/dynamic_prompt_generator.py` script has been significantly improved. It now uses a weighted, proportional sampling strategy to trim data for the AI prompt. This ensures that the most critical context is preserved while staying within token limits.
+* **Decentralized Module Weights**: The importance scores (weights) for token budgeting are now defined directly within each check module via a `get_weight()` function. The `PostgresPlugin` dynamically discovers these weights at runtime, making each check module fully self-contained.
+* **Database-Agnostic Tools**: The `utils/offline_ai_processor.py` script and other core utilities have been refactored to be fully database-agnostic. They now rely on new methods in the `BasePlugin` interface (`get_db_version_from_findings`, `get_db_name_from_findings`) to get metadata, removing all hardcoded, technology-specific logic.
+* **Centralized Data Normalization**: The `aws_cloudwatch_metrics.py` check module was refactored to normalize its own data into a clean, consistent list format. This removed the need for special-case logic in the generic `dynamic_prompt_generator.py` script.
+* **Frontend Data Strategy**: The system now embeds the `summarized_findings` and `prompt_template_name` into the main `findings` JSON blob that is sent to the `health_trends` database by `output_handlers/trend_shipper.py`. This allows the web application to efficiently re-generate AI reports without needing to perform the complex budgeting logic itself.
+
+== Bug Fixes & Rule Improvements
+
+* **Corrected Rule Logic**: Several analysis rules were improved to be more accurate, including switching from `total_exec_time` to `mean_exec_time` for identifying consistently slow queries, and making the database connections rule dynamic based on `max_connections`.
+* **Parser Robustness**: The recursive parser in `utils/dynamic_prompt_generator.py` was updated to correctly handle all the varied and nested JSON structures produced by the different check modules.
+* **Exhaustive Rule Analysis**: Fixed a critical logic flaw in the `analyze_metric_severity` function to ensure that it checks *all* applicable rules for a piece of data, not just the first one it finds.
+* **Pathing and Configuration Fixes**: Corrected pathing issues in `scripts/rules_tester.py` and `trends_app/trends_db/migrations/00_populate_analysis_rules.py` to ensure they can correctly locate project modules from their subdirectories.

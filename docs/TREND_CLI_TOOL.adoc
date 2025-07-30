@@ -1,0 +1,71 @@
+= Trend Analysis CLI Tool (`analysis_tools/cli/monitor_trends.py`)
+:doctype: article
+:toc: left
+:toclevels: 2
+:sectnums:
+
+== 1. Overview
+The Trend Analysis CLI (`monitor_trends.py`) is a powerful diagnostic tool for database consultants and administrators. Its primary function is to connect to the central trend database, fetch the two most recent health check runs for a specific company, and generate a high-level summary of all changes that occurred between those two snapshots.
+
+This allows for quick, at-a-glance identification of new issues, resolved problems, and performance regressions.
+
+== 2. Prerequisites
+Before running the tool, ensure the following are in place:
+
+* **Python Dependencies**: The tool requires `psycopg2-binary` for database connections, `pyyaml` for configuration, and `deepdiff` for data comparison. Install them via pip:
++
+[source,bash]
+----
+pip install psycopg2-binary pyyaml deepdiff cryptography
+----
+* **Configuration File**: A correctly configured `config/trends.yaml` must exist. The tool uses this file to find the database, get credentials, and load the encryption key.
+
+== 3. Usage
+The script is executed from the command line and requires a single argument.
+
+[source,bash]
+----
+python3 analysis_tools/cli/monitor_trends.py --company-id <ID>
+----
+
+=== 3.1. Command-Line Arguments
+`--company-id <ID>` (Required)::
+The integer `id` of the company you wish to analyze. This ID corresponds to the primary key in the `companies` table in your trend database.
+
+== 4. Output Interpretation
+The tool produces a summary broken down by the top-level check where changes were detected.
+
+=== 4.1. Header
+The output begins with a header showing the timestamps of the two runs being compared.
+
+[source,text]
+----
+================================================================================
+🔍 Comparison Summary
+  - Latest Run:   2025-07-25T22:17:30.070898+00:00
+  - Previous Run: 2025-07-25T22:15:13.372739+00:00
+================================================================================
+----
+
+=== 4.2. Changes by Check
+The main body of the report groups all detected changes under the check where they occurred.
+
+* `* In '<check_name>'` denotes the beginning of a section for a specific check (e.g., `'cache_analysis'`).
+
+Within each section, individual changes are prefixed with an icon:
+
+* `🔄 Value changed`: Indicates that a specific metric has changed from one value to another.
++
+[source,text]
+----
+  * In 'postgres_overview':
+      🔄 Value changed at 'postgres_overview[database_size][data][0][size]': '2054 MB' -> '2055 MB'
+----
+* `➕ Item added`: Indicates that a new item was added to a list. This is most common for identifying new objects, new duplicate indexes, or new issues.
++
+[source,text]
+----
+  * In 'database_object_inventory':
+      ➕ Item added to list at '...[data][94]': {"schema_name": "public", "object_name": "this_is_a_new_table", "object_type": "TABLE"}
+----
+* `➖ Item removed`: (Not shown in example) Indicates that an item that existed in the previous run is now gone, often signifying a resolved issue or a dropped object.

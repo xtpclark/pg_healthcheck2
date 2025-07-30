@@ -1,4 +1,4 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_available_extensions_query
+from plugins.postgres.utils.qrylib.extensions_update_check import get_available_extensions_query
 
 def run_extensions_update_check(connector, settings):
     """

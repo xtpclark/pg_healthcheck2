@@ -1,0 +1,22 @@
+{
+  "query_workload_concentration": {
+    "metric_keywords": ["query_workload_summary"],
+    "data_conditions": [
+      {
+        "key": "total_execution_time_all_queries_ms",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "data.get('total_execution_time_all_queries_ms') and data['total_execution_time_all_queries_ms'] > 0 and (sum(q.get('total_exec_time', 0) for q in all_structured_findings.get('query_analysis', {}).get('top_by_time', {}).get('data', [])) / data['total_execution_time_all_queries_ms']) * 100 > 75",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "High workload concentration detected. The top {settings['row_limit']} queries account for more than 75% of the total database execution time.",
+        "recommendations": [
+          "Focus optimization efforts on the top queries from the 'Top Queries by Total Execution Time' section, as this will yield the most significant performance improvements."
+        ]
+      }
+    ]
+  }
+}

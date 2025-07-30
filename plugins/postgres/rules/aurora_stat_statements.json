@@ -1,0 +1,28 @@
+{
+  "aurora_high_cpu_queries": {
+    "metric_keywords": ["aurora_stat_statements_top_by_cpu"],
+    "data_conditions": [{"key": "cpu_time", "exists": true}],
+    "rules": [
+      {
+        "expression": "float(data.get('cpu_time', 0)) > 1000000000",
+        "level": "high",
+        "score": 4,
+        "reasoning": "A query was found with a high cumulative CPU time of {float(data.get('cpu_time', 0)) / 1000000 :.2f} seconds on instance '{data.get('instance_id')}'.",
+        "recommendations": ["High CPU consumption can lead to performance degradation and increased costs. Analyze the query's execution plan to identify CPU-intensive operations, such as complex calculations or inefficient joins, and optimize accordingly."]
+      }
+    ]
+  },
+  "aurora_high_memory_queries": {
+    "metric_keywords": ["aurora_stat_statements_top_by_cpu"],
+    "data_conditions": [{"key": "total_mem_usage", "exists": true}],
+    "rules": [
+      {
+        "expression": "float(data.get('total_mem_usage', 0)) > 1 * 1024**3",
+        "level": "high",
+        "score": 4,
+        "reasoning": "A query was found with high memory usage of {float(data.get('total_mem_usage', 0)) / 1024**2 :.2f} MB on instance '{data.get('instance_id')}'.",
+        "recommendations": ["Queries with high memory consumption can put pressure on the system and may indicate inefficient operations. Review the query to see if its memory usage can be optimized, or if the instance needs more RAM for its workload."]
+      }
+    ]
+  }
+}

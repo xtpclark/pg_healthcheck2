@@ -1,0 +1,33 @@
+{
+  "low_cache_hit_ratio": {
+    "metric_keywords": [
+      "database_cache_hit_ratio"
+    ],
+    "data_conditions": [
+      {
+        "key": "hit_ratio_percent",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('hit_ratio_percent', 100)) < 95",
+        "level": "high",
+        "score": 4,
+        "reasoning": "The cache hit ratio for database '{data.get('datname')}' is {data.get('hit_ratio_percent')}%, which is below the recommended minimum of 95%. This indicates frequent disk reads.",
+        "recommendations": [
+          "A low cache hit ratio is a significant performance bottleneck. Increase the 'shared_buffers' parameter to allocate more memory for caching. Also, analyze slow queries to ensure they are using indexes effectively to reduce unnecessary disk I/O."
+        ]
+      },
+      {
+        "expression": "float(data.get('hit_ratio_percent', 100)) < 99",
+        "level": "medium",
+        "score": 3,
+        "reasoning": "The cache hit ratio for database '{data.get('datname')}' is {data.get('hit_ratio_percent')}%, which is slightly below the ideal of 99% for OLTP workloads.",
+        "recommendations": [
+          "While not critical, a cache hit ratio below 99% suggests room for improvement. Monitor 'shared_buffers' and consider a moderate increase if memory is available. Ensure that new, heavy queries are properly indexed."
+        ]
+      }
+    ]
+  }
+}

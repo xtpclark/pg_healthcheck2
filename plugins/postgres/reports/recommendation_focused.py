@@ -14,6 +14,7 @@ REPORT_SECTIONS = [
     {
         'title': 'Testing Modules',
         'actions': [
+            {'type': 'module', 'module': 'plugins.postgres.checks.database_object_inventory', 'function': 'run_object_inventory'},
             {'type': 'module', 'module': 'plugins.postgres.checks.table_object_counts', 'function': 'run_table_object_counts'},
             {'type': 'module', 'module': 'plugins.postgres.checks.primary_key_analysis', 'function': 'run_primary_key_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.bgwriter', 'function': 'run_bgwriter_analysis'},
