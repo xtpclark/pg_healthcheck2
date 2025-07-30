@@ -51,19 +51,22 @@ def ship_to_database(db_config, target_info, findings_json, structured_findings,
         tool_version = context.get('tool_version', 'unknown')
         prompt_template_name = structured_findings.get('prompt_template_name')
 
+        ai_context = context.get('ai_execution_metrics')
+        ai_context_json = json.dumps(ai_context) if ai_context else None
+
         # Updated insert query to include all new columns
         insert_query = """
         INSERT INTO health_check_runs (
             company_id, db_technology, target_host, target_port, target_db_name, 
             findings, prompt_template_name, run_by_user, run_from_host, tool_version,
-            report_adoc
+            report_adoc, ai_execution_context
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
         """
         cursor.execute(insert_query, (
             company_id, db_type, host, port, database, findings_json, 
             prompt_template_name, run_by_user, run_from_host, tool_version,
-            adoc_content
+            adoc_content,  ai_context_json
         ))
 
         conn.commit()

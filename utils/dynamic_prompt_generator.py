@@ -4,8 +4,8 @@ Dynamic Prompt Generator for Health Check AI Analysis
 
 This module analyzes structured findings and generates context-aware prompts
 based on the severity and type of issues detected in the database.
-It is completely technology-agnostic and relies on the calling script
-to provide specific metadata and analysis rules.
+It uses a weighted token budgeting strategy to ensure the prompt fits within
+the AI model's context window.
 """
 
 import json
@@ -14,7 +14,6 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 import jinja2
 from pathlib import Path
-
 
 def convert_to_json_serializable(obj):
     """Convert non-JSON-serializable objects to JSON-compatible types."""
@@ -27,7 +26,8 @@ def convert_to_json_serializable(obj):
 
 def analyze_metric_severity(metric_name, data_row, settings, all_findings, analysis_rules, rule_stats, verbose=False):
     """
-    Analyzes the severity of a single row of metric data and provides verbose output if enabled.
+    Analyzes the severity of a single row of metric data based on all applicable rules,
+    returning the finding with the highest severity.
     """
     highest_severity_finding = {'level': 'info', 'score': 0, 'reasoning': '', 'recommendations': []}
 
@@ -176,7 +176,7 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
                             data_value['data'].pop()
                             trimmed = True
                 if not trimmed:
-                    break # Cannot trim further
+                    break 
 
             findings_for_prompt[module_name] = module_data
 
@@ -201,6 +201,7 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
 
     return {
         'prompt': prompt,
+        'summarized_findings': findings_for_prompt,
         'critical_issues': critical_issues,
         'high_priority_issues': high_priority_issues,
         'medium_priority_issues': medium_priority_issues,
