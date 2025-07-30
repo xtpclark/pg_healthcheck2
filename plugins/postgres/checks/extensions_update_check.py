@@ -1,5 +1,9 @@
 from plugins.postgres.utils.qrylib.extensions_update_check import get_available_extensions_query
 
+def get_weight():
+    """Returns the importance score for this module."""
+    return 4 # Core configuration, highest importance
+
 def run_extensions_update_check(connector, settings):
     """
     Checks for installed extensions that have available updates.

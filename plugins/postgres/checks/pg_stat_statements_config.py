@@ -1,3 +1,8 @@
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 10 # Core configuration, highest importance
+
 def run_pg_stat_statements_config(connector, settings):
     """
     Checks if pg_stat_statements is enabled and properly configured for query analysis.
@@ -47,7 +52,7 @@ def run_pg_stat_statements_config(connector, settings):
 
     # --- Tailored Recommendations ---
     if is_preloaded and is_extension_created and is_tracking_enabled:
-        adoc_content.append("\n[SUCCESS]\n====\nThe `pg_stat_statements` extension is **fully enabled** and configured correctly for query monitoring.\n====\n")
+        adoc_content.append("\n[NOTE]\n====\nThe `pg_stat_statements` extension is **fully enabled** and configured correctly for query monitoring.\n====\n")
     else:
         adoc_content.append("\n[IMPORTANT]\n====\n**Action Required:** `pg_stat_statements` is not fully functional. Please follow these steps:\n")
         if not is_preloaded:

@@ -1,7 +1,5 @@
-from plugins.postgres.utils.postgresql_version_compatibility import (
-    get_pg_stat_statements_query,
-    get_top_queries_by_io_time_query
-)
+from plugins.postgres.utils.qrylib.pg_stat_statements import (get_pg_stat_statements_query)
+from plugins.postgres.utils.qrylib.query_analysis import (get_top_queries_by_io_time_query)
 
 def run_query_analysis(connector, settings):
     """

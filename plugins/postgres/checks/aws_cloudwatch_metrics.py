@@ -1,6 +1,10 @@
 from plugins.postgres.utils.aws import get_cloudwatch_metrics, get_instance_details
 from decimal import Decimal
 
+def get_weight():
+    """Returns the importance score for this module."""
+    return 9 # Core configuration, highest importance
+
 def format_metrics_for_adoc(metric_list):
     """Helper function to format a list of metric dictionaries into an AsciiDoc table."""
     adoc_table = ['[cols="3,2,2",options="header"]', '|===', '| Metric | Value | Unit']

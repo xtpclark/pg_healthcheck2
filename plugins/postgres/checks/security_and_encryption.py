@@ -1,7 +1,12 @@
-from plugins.postgres.utils.postgresql_version_compatibility import (
+from plugins.postgres.utils.qrylib.security_audit_queries import (
     get_security_audit_query,
     get_ssl_stats_query
 )
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 3
+
 
 def run_security_and_encryption_analysis(connector, settings):
     """

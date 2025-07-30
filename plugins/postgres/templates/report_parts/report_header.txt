@@ -1,5 +1,5 @@
 = Health Check
-Netapp PostgreSQL Professional Services
+PostgreSQL Professional Services
 :doctype: book
 :encoding: utf-8
 :lang: en

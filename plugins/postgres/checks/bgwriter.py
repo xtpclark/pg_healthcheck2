@@ -1,5 +1,10 @@
 from plugins.postgres.utils.qrylib.bgwriter import get_bgwriter_query
 
+def get_weight():
+    """Returns the importance score for this module."""
+    return 7 # Core configuration, highest importance
+
+
 def run_bgwriter_analysis(connector, settings):
     """
     Analyzes bgwriter and checkpointer statistics.
