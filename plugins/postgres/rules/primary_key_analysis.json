@@ -1,0 +1,15 @@
+{
+  "primary_key_exhaustion_risk": {
+    "metric_keywords": ["primary_key_analysis_high_risk_pks"],
+    "data_conditions": [{"key": "percentage_used", "exists": true}],
+    "rules": [
+        {
+            "expression": "float(data.get('percentage_used', 0)) > 80",
+            "level": "critical",
+            "score": 5,
+            "reasoning": "Primary key for table '{data.get('table_schema')}.{data.get('table_name')}' is {data.get('percentage_used')}% exhausted.",
+            "recommendations": ["Once an integer primary key is exhausted, INSERTs will fail. Plan an immediate migration of this key from 'integer' to 'bigint'."]
+        }
+    ]
+  }
+}

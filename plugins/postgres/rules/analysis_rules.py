@@ -1,6 +1,7 @@
 # --- Configuration for Metric Analysis ---
 # PostgreSQL Rules
 METRIC_ANALYSIS_CONFIG = {
+   #query_analysis.py
     'query_workload_concentration': {
         # This now correctly looks for the summary key from the query_analysis module
         'metric_keywords': ['query_workload_summary'],
@@ -27,6 +28,8 @@ METRIC_ANALYSIS_CONFIG = {
             {'expression': "not settings.get('using_connection_pooler', False) and (int(data['total_connections']) / int(data['max_connections'])) * 100 > 75", 'level': 'high', 'score': 4, 'reasoning': "Connection usage at {(int(data['total_connections']) / int(data['max_connections'])) * 100:.1f}% of maximum", 'recommendations': ["Monitor connection usage and consider connection pooling"]}
         ]
     },
+
+# long_running_queries.py
     'long_running_queries': {
         'metric_keywords': ['query', 'statements'],
         'data_conditions': [{'key': 'total_exec_time', 'exists': True}],

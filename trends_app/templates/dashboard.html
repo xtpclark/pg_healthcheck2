@@ -11,19 +11,18 @@
         .accordion-button:not(.collapsed) { background-color: #e7f1ff; }
         code { font-size: 0.875em; color: #d63384; }
         #timeline { border: 1px solid #ddd; border-radius: 5px; background-color: #fff; }
-        .vis-item { border-color: #0d6efd; background-color: #cfe2ff; }
+        .vis-item { border-color: #0d6efd; background-color: #cfe2ff; transition: opacity 0.3s ease-in-out; }
         .vis-item.vis-selected { border-color: #fd7e14; background-color: #ffe5d0; }
         
-        /* Styles for the favorite star */
-        .favorite-star {
-            cursor: pointer;
-            font-size: 1.2em;
-            color: #ccc; /* Default color for non-favorite */
-            margin-right: 8px;
-            float: left; /* Position star to the left of the text */
+        .vis-item.favorite-item {
+            border-color: #ffc107;
+            background-color: #fff3cd;
+            box-shadow: 0 0 8px rgba(255, 193, 7, 0.8);
+            border-width: 2px;
         }
-        .favorite-star.is-favorite {
-            color: #ffc107; /* Yellow color for favorite */
+
+        .vis-item.dimmed-item {
+            opacity: 0.3;
         }
     </style>
 </head>
@@ -31,10 +30,35 @@
 <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1 class="mb-0">Health Check Dashboard</h1>
-        <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
+        <div class="btn-group">
+            <a href="{{ url_for('profile.report_history') }}" class="btn btn-outline-info">Report History</a>
+            <a href="{{ url_for('profile.ai_settings') }}" class="btn btn-info">AI Settings</a>
+            
+            {% if current_user.has_privilege('ManageUserTemplates') %}
+            <a href="{{ url_for('profile.prompt_templates') }}" class="btn btn-outline-success">My Templates</a>
+            {% endif %}
+
+            {% if current_user.has_privilege('AdministerUsers') %}
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Admin
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_users') }}">Manage Users</a></li>
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_roles') }}">Manage Roles</a></li>
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_privileges') }}">Manage Privileges</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_ai_providers') }}">Manage AI Providers</a></li>
+                    <li><a class="dropdown-item" href="{{ url_for('admin.list_template_assets') }}">Manage Template Assets</a></li>
+                </ul>
+            </div>
+            {% endif %}
+
+            <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
+        </div>
     </div>
 
-    <!-- Filters Card with Refresh Button -->
+    <!-- Filters Card -->
     <div class="card mb-4">
         <div class="card-header"><h5 class="mb-0">Filters</h5></div>
         <div class="card-body">
@@ -60,63 +84,143 @@
                     <button id="refresh-timeline-btn" class="btn btn-primary w-100">Refresh</button>
                 </div>
             </div>
+            <hr>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="show-favorites-only-filter">
+                <label class="form-check-label" for="show-favorites-only-filter">Highlight Favorites</label>
+            </div>
         </div>
     </div>
 
+    <!-- Timeline Card -->
     <div class="card mb-4">
-        <div class="card-header"><h5 class="mb-0">Timeline Comparison</h5></div>
+        <div class="card-header"><h5 class="mb-0">Timeline</h5></div>
         <div class="card-body">
-            <p>Select two points on the timeline below to compare them. (Use Ctrl+Click or Cmd+Click)</p>
+            <p>Select items to compare or generate reports. Right-click any item to toggle favorite status.</p>
             <div id="timeline-message"></div>
             <div id="timeline" class="mt-3"></div>
-            
-            <form id="run-selector-form" method="GET" action="{{ url_for('main.dashboard') }}" class="mt-3">
-                <input type="hidden" id="run1" name="run1" value="{{ request.args.get('run1', '') }}">
-                <input type="hidden" id="run2" name="run2" value="{{ request.args.get('run2', '') }}">
-                <button type="submit" id="compareBtn" class="btn btn-success" disabled>Compare Selected Runs</button>
-            </form>
         </div>
     </div>
 
-    {% if runs and runs|length >= 2 %}
-        <div class="card mb-4">
-            <div class="card-header"><h5 class="mb-0">🔍 Comparison Summary</h5></div>
-            <div class="card-body">
-                <ul class="list-group list-group-flush mb-3">
-                    <li class="list-group-item"><strong>Comparing Run:</strong> {{ runs[0].run_timestamp }}</li>
-                    <li class="list-group-item"><strong>Against Run:</strong> {{ runs[1].run_timestamp }}</li>
-                </ul>
-                {% if changes_by_check %}
-                    <h5 class="card-title mt-2">Detected Changes by Check</h5>
-                    <div class="accordion" id="changesAccordion">
-                        {% for check, changes in changes_by_check|dictsort %}
-                            <div class="accordion-item">
-                                <h2 class="accordion-header">
-                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-{{ loop.index }}">
-                                        <strong>{{ check }}</strong>&nbsp;<span class="badge bg-primary ms-2">{{ changes|length }} changes</span>
-                                    </button>
-                                </h2>
-                                <div id="collapse-{{ loop.index }}" class="accordion-collapse collapse" data-bs-parent="#changesAccordion">
-                                    <div class="accordion-body">
-                                        <ul class="list-group">
-                                            {% for change_summary in changes %}
-                                                <li class="list-group-item">{{ change_summary | safe }}</li>
-                                            {% endfor %}
-                                        </ul>
-                                    </div>
-                                </div>
-                            </div>
-                        {% endfor %}
+    <!-- Actions Card -->
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Actions</h5></div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6 border-end">
+                    <h6>Compare Two Runs</h6>
+                    <p class="text-muted small">Select two runs on the timeline to compare their findings.</p>
+                    <form id="run-selector-form" method="GET" action="{{ url_for('main.dashboard') }}">
+                        <input type="hidden" id="run1" name="run1" value="{{ request.args.get('run1', '') }}">
+                        <input type="hidden" id="run2" name="run2" value="{{ request.args.get('run2', '') }}">
+                        <button type="submit" id="compareBtn" class="btn btn-success" disabled>Compare Selected Runs</button>
+                    </form>
+                </div>
+
+                {% if current_user.has_privilege('GenerateReports') %}
+                <div class="col-md-6">
+                    <h6>Generate AI Content</h6>
+                    <p class="text-muted small">Select one run on the timeline to generate an AI-powered analysis.</p>
+                    <div class="row g-2">
+                        <div class="col-12">
+                            <select id="ai-profile-select" class="form-select" aria-label="Select AI Profile">
+                                <option selected disabled value="">Select AI Profile...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="analysis-rules-select" class="form-select" aria-label="Select Analysis Rules">
+                                <option selected disabled value="">Select Analysis Rules...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="prompt-template-select" class="form-select" aria-label="Select Report Template">
+                                <option selected disabled value="">Select Report Template...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="slide-template-select" class="form-select" aria-label="Select Slide Template">
+                                <option selected disabled value="">Select Slide Template...</option>
+                            </select>
+                        </div>
                     </div>
-                {% else %}
-                    <div class="alert alert-success mt-3">No changes detected between the selected runs.</div>
+                    <div class="mt-2">
+                        <button id="generate-report-btn" class="btn btn-info" disabled>Generate Report</button>
+                        <button id="generate-slides-btn" class="btn btn-secondary" disabled>Generate Slides</button>
+                    </div>
+                </div>
                 {% endif %}
             </div>
         </div>
+    </div>
+
+    <!-- Comparison Results -->
+    {% if runs and runs|length >= 2 %}
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">🔍 Comparison Summary</h5></div>
+        <div class="card-body">
+            <ul class="list-group list-group-flush mb-3">
+                <li class="list-group-item"><strong>Comparing Run:</strong> {{ runs[0].run_timestamp }}</li>
+                <li class="list-group-item"><strong>Against Run:</strong> {{ runs[1].run_timestamp }}</li>
+            </ul>
+            {% if changes_by_check %}
+                <h5 class="card-title mt-2">Detected Changes by Check</h5>
+                <div class="accordion" id="changesAccordion">
+                    {% for check, changes in changes_by_check|dictsort %}
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-{{ loop.index }}">
+                                    <strong>{{ check }}</strong>&nbsp;<span class="badge bg-primary ms-2">{{ changes|length }} changes</span>
+                                </button>
+                            </h2>
+                            <div id="collapse-{{ loop.index }}" class="accordion-collapse collapse" data-bs-parent="#changesAccordion">
+                                <div class="accordion-body">
+                                    <ul class="list-group">
+                                        {% for change_summary in changes %}
+                                            <li class="list-group-item">{{ change_summary | safe }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="alert alert-success mt-3">No changes detected between the selected runs.</div>
+            {% endif %}
+        </div>
+    </div>
     {% elif request.args.get('run1') %}
         <div class="alert alert-warning">Could not find two valid runs for the selected IDs. Please select two different runs.</div>
     {% endif %}
+
 </div>
+
+<!-- AI Report Metadata Modal -->
+<div class="modal fade" id="reportMetadataModal" tabindex="-1" aria-labelledby="reportMetadataModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="reportMetadataModalLabel">Report Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="report-name" class="form-label">Report Name</label>
+          <input type="text" class="form-control" id="report-name" placeholder="e.g., Q3 Performance Review">
+        </div>
+        <div class="mb-3">
+          <label for="report-description" class="form-label">Description (Optional)</label>
+          <textarea class="form-control" id="report-description" rows="3"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirm-generate-report-btn">Generate and Download</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script type="text/javascript" src="https://unpkg.com/vis-timeline@latest/standalone/umd/vis-timeline-graph2d.min.js"></script>
@@ -129,20 +233,10 @@
         const timelineMessage = document.getElementById('timeline-message');
         const items = new vis.DataSet([]);
         
-        // --- Timeline Item Template ---
-        function itemTemplate(item, element, data) {
-            const starClass = item.is_favorite ? 'is-favorite' : '';
-            return `
-                <span class="favorite-star ${starClass}" data-run-id="${item.id}">&#9733;</span>
-                <span>${item.content}</span>
-            `;
-        }
-
         const options = { 
             multiselect: true, 
             maxHeight: '300px', 
-            zoomable: true,
-            template: itemTemplate // Use the template for rendering items
+            zoomable: true
         };
         const timeline = new vis.Timeline(timelineContainer, items, options);
 
@@ -150,12 +244,19 @@
         const startTimeFilter = document.getElementById('start-time-filter');
         const endTimeFilter = document.getElementById('end-time-filter');
         const refreshBtn = document.getElementById('refresh-timeline-btn');
+        const showFavoritesOnlyFilter = document.getElementById('show-favorites-only-filter');
         
         const run1Input = document.getElementById('run1');
         const run2Input = document.getElementById('run2');
         const compareBtn = document.getElementById('compareBtn');
-
-        // --- Functions ---
+        const generateReportBtn = document.getElementById('generate-report-btn');
+        const aiProfileSelect = document.getElementById('ai-profile-select');
+        const analysisRulesSelect = document.getElementById('analysis-rules-select');
+        const promptTemplateSelect = document.getElementById('prompt-template-select');
+        const reportMetadataModal = new bootstrap.Modal(document.getElementById('reportMetadataModal'));
+        const confirmGenerateBtn = document.getElementById('confirm-generate-report-btn');
+        const slideTemplateSelect = document.getElementById('slide-template-select');
+        const generateSlidesBtn = document.getElementById('generate-slides-btn');
 
         function savePreference(name, value) {
             fetch("{{ url_for('main.save_preference') }}", {
@@ -169,6 +270,26 @@
             targetFilter.value = userPreferences.dashboard_target_filter || 'all';
             startTimeFilter.value = userPreferences.dashboard_start_time || '';
             endTimeFilter.value = userPreferences.dashboard_end_time || '';
+            showFavoritesOnlyFilter.checked = userPreferences.dashboard_show_favorites === 'true';
+        }
+
+        function applyFavoriteVisibility() {
+            const showOnlyFavorites = showFavoritesOnlyFilter.checked;
+            const updatedItems = [];
+
+            items.forEach(item => {
+                let newClassName = item.is_favorite ? 'favorite-item' : '';
+                if (showOnlyFavorites && !item.is_favorite) {
+                    newClassName += ' dimmed-item';
+                }
+                if (item.className !== newClassName) {
+                    updatedItems.push({ id: item.id, className: newClassName });
+                }
+            });
+
+            if (updatedItems.length > 0) {
+                items.update(updatedItems);
+            }
         }
 
         function fetchAndRenderTimeline() {
@@ -193,11 +314,13 @@
                         id: run.id,
                         content: run.target,
                         start: new Date(run.timestamp),
-                        is_favorite: run.is_favorite // Pass favorite status to the item
+                        is_favorite: run.is_favorite,
+                        className: run.is_favorite ? 'favorite-item' : ''
                     }));
                     items.clear();
                     items.add(runItems);
                     timeline.fit();
+                    applyFavoriteVisibility();
                 })
                 .catch(err => {
                     console.error("Failed to fetch timeline data:", err);
@@ -214,8 +337,10 @@
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    // Update the item in the local dataset to instantly reflect the change
-                    items.update({ id: runId, is_favorite: data.is_favorite });
+                    const itemToUpdate = items.get(runId);
+                    itemToUpdate.is_favorite = data.is_favorite;
+                    items.update(itemToUpdate);
+                    applyFavoriteVisibility();
                 } else {
                     console.error("Failed to toggle favorite:", data.message);
                 }
@@ -223,38 +348,164 @@
             .catch(err => console.error("API error toggling favorite:", err));
         }
 
-        // --- Event Listeners ---
+        function populateDropdown(selectElement, apiUrl) {
+            fetch(apiUrl)
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        data.forEach(item => {
+                            const option = new Option(item.name, item.id);
+                            selectElement.add(option);
+                        });
+                    } else {
+                        selectElement.disabled = true;
+                        selectElement.querySelector('option').textContent = `No items found`;
+                    }
+                })
+                .catch(err => console.error(`Failed to load ${selectElement.id}:`, err));
+        }
 
-        timelineContainer.addEventListener('click', function(event) {
-            if (event.target.classList.contains('favorite-star')) {
-                const runId = event.target.getAttribute('data-run-id');
-                toggleFavorite(parseInt(runId, 10));
-            }
-        });
-
-        timeline.on('select', function(properties) {
-            const selectedIds = properties.items;
-            if (selectedIds.length === 2) {
+        function handleSelectionChange() {
+            const selectedIds = timeline.getSelection();
+            
+            const canCompare = selectedIds.length === 2;
+            compareBtn.disabled = !canCompare;
+            if (canCompare) {
                 run1Input.value = selectedIds[0];
                 run2Input.value = selectedIds[1];
-                compareBtn.disabled = false;
                 compareBtn.textContent = `Compare Runs #${selectedIds[0]} and #${selectedIds[1]}`;
             } else {
-                run1Input.value = '';
-                run2Input.value = '';
-                compareBtn.disabled = true;
                 compareBtn.textContent = 'Compare Selected Runs';
+            }
+
+            if (generateReportBtn) {
+                const canGenerate = selectedIds.length === 1;
+                generateReportBtn.disabled = !canGenerate;
+                generateSlidesBtn.disabled = !canGenerate;
+            }
+        }
+
+        async function generateReport() {
+            const runId = timeline.getSelection()[0];
+            const profileId = aiProfileSelect.value;
+            const ruleSetId = analysisRulesSelect.value;
+            const templateId = promptTemplateSelect.value;
+            const reportName = document.getElementById('report-name').value;
+            const reportDescription = document.getElementById('report-description').value;
+
+            if (!reportName) {
+                alert('Please provide a name for the report.');
+                return;
+            }
+
+            confirmGenerateBtn.disabled = true;
+            confirmGenerateBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Generating...';
+
+            try {
+                const response = await fetch("{{ url_for('main.generate_ai_report') }}", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        run_id: runId,
+                        profile_id: profileId,
+                        rule_set_id: ruleSetId,
+                        template_id: templateId,
+                        report_name: reportName,
+                        report_description: reportDescription
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+
+                const blob = await response.blob();
+                const contentDisposition = response.headers.get('Content-Disposition');
+                const filename = contentDisposition ? contentDisposition.split('filename=')[1].replace(/"/g, '') : `ai-report-${runId}.adoc`;
+                
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+                
+            } catch (error) {
+                alert(`Failed to generate report: ${error.message}`);
+            } finally {
+                confirmGenerateBtn.disabled = false;
+                confirmGenerateBtn.textContent = 'Generate and Download';
+                reportMetadataModal.hide();
+            }
+        }
+
+        function generateSlides() {
+            const runId = timeline.getSelection()[0];
+            const profileId = aiProfileSelect.value;
+            const ruleSetId = analysisRulesSelect.value;
+            const templateId = slideTemplateSelect.value;
+
+            if (!profileId || !ruleSetId || !templateId) {
+                alert('Please select an AI Profile, Analysis Rules, and a Slide Template.');
+                return;
+            }
+
+            const url = new URL("{{ url_for('main.generate_slides') }}", window.location.origin);
+            url.searchParams.append('run_id', runId);
+            url.searchParams.append('profile_id', profileId);
+            url.searchParams.append('rule_set_id', ruleSetId);
+            url.searchParams.append('template_id', templateId);
+
+            window.open(url, '_blank');
+        }
+        
+        timeline.on('select', handleSelectionChange);
+        timeline.on('contextmenu', function(properties) {
+            properties.event.preventDefault();
+            if (properties.item !== null) {
+                toggleFavorite(parseInt(properties.item, 10));
             }
         });
 
+        if (generateReportBtn) {
+            generateReportBtn.addEventListener('click', () => {
+                if (aiProfileSelect.value && analysisRulesSelect.value && promptTemplateSelect.value) {
+                    document.getElementById('report-name').value = '';
+                    document.getElementById('report-description').value = '';
+                    reportMetadataModal.show();
+                } else {
+                    alert('Please select an AI Profile, Analysis Rules, and a Report Template.');
+                }
+            });
+            confirmGenerateBtn.addEventListener('click', generateReport);
+        }
+        
+        if (generateSlidesBtn) {
+            generateSlidesBtn.addEventListener('click', generateSlides);
+        }
+        
+        showFavoritesOnlyFilter.addEventListener('change', () => {
+            savePreference('dashboard_show_favorites', showFavoritesOnlyFilter.checked);
+            applyFavoriteVisibility();
+        });
         targetFilter.addEventListener('change', () => savePreference('dashboard_target_filter', targetFilter.value));
         startTimeFilter.addEventListener('change', () => savePreference('dashboard_start_time', startTimeFilter.value));
         endTimeFilter.addEventListener('change', () => savePreference('dashboard_end_time', endTimeFilter.value));
         refreshBtn.addEventListener('click', fetchAndRenderTimeline);
 
-        // --- Initial Load ---
         applyPreferences();
         fetchAndRenderTimeline();
+        
+        if (generateReportBtn) {
+            populateDropdown(aiProfileSelect, "{{ url_for('main.get_user_ai_profiles') }}");
+            populateDropdown(analysisRulesSelect, "{{ url_for('main.get_analysis_rules') }}");
+            populateDropdown(promptTemplateSelect, "{{ url_for('main.get_prompt_templates') }}");
+            populateDropdown(slideTemplateSelect, "{{ url_for('main.get_prompt_templates') }}");
+        }
     });
 </script>
 </body>

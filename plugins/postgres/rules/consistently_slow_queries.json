@@ -1,0 +1,25 @@
+{
+  "consistently_slow_queries": {
+    "metric_keywords": [
+      "query_analysis_top_by_time",
+      "top_queries_by_execution_time"
+    ],
+    "data_conditions": [
+      {
+        "key": "mean_exec_time",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('mean_exec_time', 0)) > 500",
+        "level": "high",
+        "score": 4,
+        "reasoning": "A query was found with a consistently high average execution time of {float(data.get('mean_exec_time', 0)):.2f} ms.",
+        "recommendations": [
+          "This query is slow with each execution, indicating a potential issue with its execution plan. Use 'EXPLAIN (ANALYZE, BUFFERS)' on the query to identify inefficiencies like full table scans or poor join strategies."
+        ]
+      }
+    ]
+  }
+}

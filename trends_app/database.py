@@ -38,7 +38,18 @@ def load_user(db_config, user_id):
             cursor.execute("SELECT c.id, c.company_name FROM user_company_access uca JOIN companies c ON uca.company_id = c.id WHERE uca.user_id = %s;", (user_id,))
             accessible_companies = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
 
-            cursor.execute("SELECT p.priv_name FROM usrpriv up JOIN priv p ON up.usrpriv_priv_id = p.priv_id WHERE up.usrpriv_username = %s;", (username,))
+            # This query now correctly joins usrgrp, grppriv, and priv to get all inherited privileges
+            # and combines them with any directly assigned privileges.
+            privileges_query = """
+                SELECT p.priv_name FROM usrpriv up JOIN priv p ON up.usrpriv_priv_id = p.priv_id 
+                WHERE up.usrpriv_username = %(username)s
+                UNION
+                SELECT p.priv_name FROM usrgrp ug
+                JOIN grppriv gp ON ug.usrgrp_grp_id = gp.grppriv_grp_id
+                JOIN priv p ON gp.grppriv_priv_id = p.priv_id
+                WHERE ug.usrgrp_username = %(username)s;
+            """
+            cursor.execute(privileges_query, {'username': username})
             privileges = {row[0] for row in cursor.fetchall()}
 
             return User(user_id, username, is_admin, password_change_required, accessible_companies, privileges)
@@ -99,6 +110,45 @@ def save_user_preference(db_config, username, pref_name, pref_value):
     except psycopg2.Error as e:
         current_app.logger.error(f"Database error saving user preference via function: {e}")
         if conn: conn.rollback()
+    finally:
+        if conn: conn.close()
+
+
+def fetch_template_asset(db_settings, asset_name):
+    """Fetches a single template asset's raw data from the database."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT asset_data FROM template_assets WHERE asset_name = %s;",
+            (asset_name,)
+        )
+        result = cursor.fetchone()
+        # Returns the binary data (bytea) if found, otherwise None
+        return result[0] if result else None
+    except psycopg2.Error as e:
+        print(f"Database error fetching template asset: {e}") # Or use current_app.logger
+        return None
+    finally:
+        if conn: conn.close()
+
+def fetch_prompt_template_content(db_settings, template_id):
+    """Fetches the content of a specific prompt template from the database."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT template_content FROM prompt_templates WHERE id = %s;",
+            (template_id,)
+        )
+        result = cursor.fetchone()
+        # Returns the template string if found, otherwise None
+        return result[0] if result else None
+    except psycopg2.Error as e:
+        print(f"Database error fetching prompt template: {e}") # Or use current_app.logger
+        return None
     finally:
         if conn: conn.close()
 
