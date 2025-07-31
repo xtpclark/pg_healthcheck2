@@ -1,0 +1,26 @@
+{
+  "superuser_reserved_check": {
+    "metric_keywords": [
+      "superuser",
+      "reserved",
+      "connections"
+    ],
+    "data_conditions": [
+      {
+        "key": "superuser_reserved_connections",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data['superuser_reserved_connections']) < 3",
+        "level": "warning",
+        "score": 4,
+        "reasoning": "PostgreSQL's 'superuser_reserved_connections' is set to {data['superuser_reserved_connections']}, which is below the recommended minimum of 3. This increases the risk of being locked out of the database during periods of high connection usage.",
+        "recommendations": [
+          "Set 'superuser_reserved_connections' to at least 3 (the default value). This can be done via 'ALTER SYSTEM SET superuser_reserved_connections = 3;' followed by a configuration reload ('SELECT pg_reload_conf();')."
+        ]
+      }
+    ]
+  }
+}

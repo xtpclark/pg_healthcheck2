@@ -1,0 +1,135 @@
+= Cross-Node Tools for PostgreSQL Healthcheck
+:doctype: article
+:encoding: utf-8
+:lang: en
+:toc: left
+:numbered:
+
+== Overview
+
+This directory contains advanced tools for cross-node or multi-node analysis of PostgreSQL clusters. The primary utility is the *Cross-Node Index Usage Analyzer*, which connects to a primary and multiple replica nodes, aggregates index usage statistics, and generates a comprehensive AsciiDoc report with actionable recommendations for index cleanup.
+
+The tool supports both manual configuration and automatic discovery of *AWS Aurora* cluster nodes.
+
+'''
+
+== Features
+
+* Aggregates index usage across all nodes (primary + replicas) 
+* Identifies truly unused indexes (unused everywhere, not supporting constraints) 
+* Automatic discovery of AWS Aurora cluster nodes using the cluster identifier
+* Generates detailed AsciiDoc reports with node-by-node summaries and SQL removal recommendations 
+* Configurable via YAML for flexible environments (Docker, cloud, on-prem) 
+* Safe recommendations: never suggests dropping indexes supporting constraints 
+* Storage savings estimation 
+* Easy CLI usage 
+* Generates a structured json document
+
+'''
+
+== Installation
+
+. *Install Python dependencies:* 
++
+[source,bash]
+----
+pip install -r requirements.txt
+----
++
+Contents of `requirements.txt`:
++
+[source,text]
+----
+psycopg2-binary
+PyYAML
+boto3
+----
+
+. *Ensure network access* to all PostgreSQL nodes (primary and replicas) from the machine running the analyzer.
+
+. *(For AWS Aurora Users)* Configure your AWS credentials. The script uses `boto3`, which will automatically search for credentials in standard locations (e.g., `~/.aws/credentials`, environment variables, or an IAM role).
+
+'''
+
+== Configuration
+
+Copy the sample config and edit it for your environment:
+
+[source,bash]
+----
+cp cross_node_index_config.yaml.sample cross_node_index_config.yaml
+----
+
+You can configure the database connections in two ways:
+
+=== 1. Manual Primary and Replica Configuration
+
+This is the default method, suitable for on-premise, Docker, or other non-Aurora environments.
+
+[source,yaml]
+----
+# cross_node_index_config.yaml
+
+primary:
+  host: "db-primary.example.com"
+  port: 5432
+  database: "testdb"
+  user: "testuser"
+  password: "testpass"
+
+replicas:
+  - host: "db-replica1.example.com"
+    port: 5432
+    database: "testdb"
+    user: "testuser"
+    password: "testpass"
+----
+
+=== 2. AWS Aurora Cluster Auto-Discovery
+
+For AWS Aurora clusters, you can provide the cluster identifier, and the script will automatically discover the primary (writer) and replica (reader) nodes. *This will override the manual configuration if present.*
+
+[source,yaml]
+----
+# cross_node_index_config.yaml
+
+aws_aurora:
+  db_cluster_id: "your-aurora-cluster-identifier"
+  database: "testdb"
+  user: "testuser"
+  password: "testpass"
+----
+
+The rest of the configuration options (`analysis` and `report`) are the same for both methods.
+
+'''
+
+== Usage
+
+Run the analyzer from the command line, pointing to your configuration file and specifying an output file.
+
+[source,bash]
+----
+python3 cross_node_index_analyzer.py --config cross_node_index_config.yaml --output index_report.adoc
+----
+
+* `--config`: Path to your YAML config file 
+* `--output`: Path for the generated AsciiDoc report 
+
+'''
+
+== Best Practices & Notes
+
+* *Never drop indexes in production without review and testing.* 
+* Always test recommendations in a staging environment first.
+* The analyzer is conservative: it will not recommend dropping indexes that support constraints (PK, FK, UK).
+* You can tune the minimum index size and other filters in the config.
+* The tool requires read access to `pg_stat_user_indexes` and `pg_constraint` on all nodes.
+
+'''
+
+== Extending or Contributing
+
+* Place new cross-node or multi-node analysis tools in this directory.
+* Follow the pattern of config-driven, report-generating utilities.
+* PRs and suggestions welcome! 

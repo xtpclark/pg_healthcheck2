@@ -140,6 +140,13 @@ class HealthCheck:
         
         print("\n--- Sending Prompt to AI for Analysis ---")
         full_prompt = self.analysis_output.get('prompt')
+
+        # === ADD THIS DEBUGGING LINE ===
+        print(f"[DEBUG] Prompt length being passed to run_recommendation: {len(full_prompt)} characters.")
+        # ===============================
+
+
+
         ai_metrics = {}
         if full_prompt:
             ai_adoc, ai_metrics = run_recommendation(self.settings, full_prompt)

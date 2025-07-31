@@ -121,10 +121,9 @@ def _process_findings_recursively(current_findings, settings, analysis_rules, al
         elif 'status' not in value:
             _process_findings_recursively(value, settings, analysis_rules, all_findings, rule_stats, issue_lists, module_issue_map, parent_key=metric_name, verbose=verbose)
 
-
 def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin, verbose=False):
     """
-    Generates a dynamic prompt using a weighted budgeting strategy.
+    Generates a dynamic prompt using a weighted budgeting strategy and reports on trimmed content.
     """
     findings_for_analysis = convert_to_json_serializable(all_structured_findings)
     rule_stats = {}
@@ -134,51 +133,78 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
 
     _process_findings_recursively(findings_for_analysis, settings, analysis_rules, findings_for_analysis, rule_stats, issue_lists, module_issue_map, verbose=verbose)
 
-    # --- Weighted Token Budgeting Logic ---
+
+# --- Weighted Token Budgeting Logic ---
     TOKEN_CHARACTER_RATIO = 4
+    # Reserve 4000 characters (~1000 tokens) for prompt instructions, headers, and summaries.
+    RESERVED_BUFFER_FOR_PROMPT_OVERHEAD = 4000 
+    
     max_prompt_tokens = settings.get('ai_max_prompt_tokens', 8000)
-    token_budget = max_prompt_tokens * TOKEN_CHARACTER_RATIO
-    findings_for_prompt = {}
-    estimated_size = 0
+    # The total budget for the entire prompt string
+    total_character_budget = max_prompt_tokens * TOKEN_CHARACTER_RATIO
+    # The budget for just the findings_json part is the total minus our buffer
+    token_budget = total_character_budget - RESERVED_BUFFER_FOR_PROMPT_OVERHEAD
 
-    # Stage 1: Add all modules with critical or high-priority issues in full
-    for module_name, issues in module_issue_map.items():
-        if issues['critical'] > 0 or issues['high'] > 0:
-            if module_name in findings_for_analysis:
-                findings_for_prompt[module_name] = findings_for_analysis[module_name]
-                estimated_size += len(json.dumps(findings_for_analysis[module_name]))
-
-    # Stage 2: Perform weighted, proportional sampling for remaining modules
-    remaining_findings = copy.deepcopy(findings_for_analysis)
+    
+    # Create a single list of all modules with a calculated priority score
     module_weights = active_plugin.get_module_weights()
+    all_modules_with_priority = []
+    for module_name, module_data in findings_for_analysis.items():
+        priority_score = module_weights.get(module_name, 1)
+        if module_name in module_issue_map:
+            if module_issue_map[module_name]['critical'] > 0:
+                priority_score += 1000  # High boost for critical issues
+            if module_issue_map[module_name]['high'] > 0:
+                priority_score += 100   # Medium boost for high-priority issues
+        all_modules_with_priority.append({'name': module_name, 'data': module_data, 'priority': priority_score})
 
-    for module_name in findings_for_prompt:
-        if module_name in remaining_findings:
-            del remaining_findings[module_name]
+    # Sort all modules by the new priority score, descending
+    sorted_modules = sorted(all_modules_with_priority, key=lambda x: x['priority'], reverse=True)
 
-    total_weight = sum(module_weights.get(name, 1) for name in remaining_findings)
-    remaining_budget = token_budget - estimated_size
+    # --- Single Loop for Prompt Assembly ---
+    current_size = 0
+    findings_for_prompt = {}
+    trimmed_modules_log = {}
 
-    if total_weight > 0:
-        for module_name, module_data in remaining_findings.items():
-            weight = module_weights.get(module_name, 1)
-            proportional_budget = (weight / total_weight) * remaining_budget
-            
-            # Iteratively trim lists until the module fits its budget
-            while len(json.dumps(module_data)) > proportional_budget:
-                trimmed = False
-                if 'data' in module_data and isinstance(module_data.get('data'), list) and len(module_data['data']) > 1:
-                    module_data['data'].pop()
-                    trimmed = True
-                elif 'data' in module_data and isinstance(module_data.get('data'), dict):
-                    for data_key, data_value in module_data['data'].items():
-                        if isinstance(data_value, dict) and isinstance(data_value.get('data'), list) and len(data_value['data']) > 1:
-                            data_value['data'].pop()
-                            trimmed = True
-                if not trimmed:
-                    break 
+    for module in sorted_modules:
+        module_name = module['name']
+        # Use a deep copy to ensure original findings aren't modified
+        module_data = copy.deepcopy(module['data'])
 
+        # First, check if the UNTRIMMED module fits
+        original_module_size = len(json.dumps(module_data))
+        if (current_size + original_module_size) <= token_budget:
             findings_for_prompt[module_name] = module_data
+            current_size += original_module_size
+            continue
+
+        # If it doesn't fit, try to trim it
+        trim_details = []
+        for sub_report_name, sub_report_data in module_data.items():
+            if isinstance(sub_report_data, dict) and 'data' in sub_report_data and isinstance(sub_report_data['data'], list) and len(sub_report_data['data']) > 1:
+                original_len = len(sub_report_data['data'])
+                sub_report_data['data'] = sub_report_data['data'][:1]
+                trim_details.append(f"  - List '{sub_report_name}' trimmed from {original_len} to 1 items.")
+        
+        trimmed_module_size = len(json.dumps(module_data))
+
+        # Check if the TRIMMED version now fits
+        if (current_size + trimmed_module_size) <= token_budget:
+            findings_for_prompt[module_name] = module_data
+            current_size += trimmed_module_size
+            if trim_details:
+                trimmed_modules_log[module_name] = trim_details
+    
+    # Log the results of trimming actions
+    if trimmed_modules_log:
+        print("\n--- Prompt Content Trimming Summary ---")
+        for module_name, details in trimmed_modules_log.items():
+            print(f"Module '{module_name}':")
+            for detail in details:
+                print(detail)
+    
+    if len(findings_for_prompt) < len(all_structured_findings):
+        print(f"[INFO] Token budget enforced. Some modules may have been skipped or trimmed to meet the {max_prompt_tokens} token limit.")
 
     # --- Template Rendering ---
     template_dir = active_plugin.get_template_path() / "prompts"
@@ -208,3 +234,5 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
         'total_issues': len(critical_issues) + len(high_priority_issues) + len(medium_priority_issues),
         'rule_application_stats': rule_stats
     }
+
+
