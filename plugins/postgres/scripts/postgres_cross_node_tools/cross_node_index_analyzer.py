@@ -36,6 +36,7 @@ class CrossNodeIndexAnalyzer:
         self.config = self.load_config(config_file)
         self.cluster_nodes = []
         self.stats_reset_time = None
+        self.rds_proxy = None
         if 'aws_aurora' in self.config:
             self._discover_and_configure_aurora()
         else:
@@ -75,6 +76,20 @@ class CrossNodeIndexAnalyzer:
                     'host': replica_config['host']
                 })
 
+    def _discover_rds_proxy(self, rds_client, cluster_id):
+        """Discover if an RDS Proxy is associated with the cluster."""
+        try:
+            proxies = rds_client.describe_db_proxies()
+            for proxy in proxies.get('DBProxies', []):
+                for target_group in proxy.get('TargetGroups', []):
+                    if target_group.get('DBClusterIdentifiers') and cluster_id in target_group['DBClusterIdentifiers']:
+                        self.rds_proxy = proxy
+                        print(f"  - Found associated RDS Proxy: {proxy['DBProxyName']}")
+                        return
+        except Exception as e:
+            print(f"[WARN] Could not check for RDS Proxy: {e}")
+
+
     def _discover_and_configure_aurora(self):
         """Discover Aurora cluster nodes and configure them for analysis."""
         print("🔍 AWS Aurora configuration detected. Discovering cluster nodes...")
@@ -86,6 +101,8 @@ class CrossNodeIndexAnalyzer:
 
         try:
             rds_client = boto3.client('rds')
+            
+            # Discover cluster members
             cluster_info = rds_client.describe_db_clusters(DBClusterIdentifier=cluster_id)['DBClusters'][0]
 
             self.config['primary'] = None
@@ -121,6 +138,9 @@ class CrossNodeIndexAnalyzer:
             if not self.config.get('primary'):
                 print("❌ Could not identify a primary writer instance in the Aurora cluster.")
                 sys.exit(1)
+
+            # Discover associated RDS Proxy
+            self._discover_rds_proxy(rds_client, cluster_id)
 
         except Exception as e:
             print(f"❌ Failed to discover Aurora cluster nodes: {e}")
@@ -267,7 +287,38 @@ class CrossNodeIndexAnalyzer:
                     })
         unused_indexes = ensure_list(unused_indexes, context="identify_unused_indexes")
         return unused_indexes
-    
+
+    def identify_multi_node_indexes(self) -> List[Dict]:
+        """Identifies indexes that are used on more than one cluster node."""
+        multi_node_indexes = []
+        try:
+            primary_indexes = {row[1] for row in self.index_data['primary']['index_usage']}
+        except Exception as e:
+            print(f"[WARN] Could not get primary indexes for multi-node analysis: {e}")
+            return []
+        
+        for index_name in primary_indexes:
+            using_nodes = []
+            usage_details = {}
+            table_name = ''
+            for node_name, node_data in self.index_data.items():
+                for row in node_data.get('index_usage', []):
+                    if row[1] == index_name:
+                        if not table_name:
+                            table_name = row[0]
+                        if row[2] > 0:  # idx_scan > 0
+                            using_nodes.append(node_name)
+                            usage_details[node_name] = {'scans': row[2]}
+                        break
+            if len(using_nodes) > 1:
+                multi_node_indexes.append({
+                    'index_name': index_name,
+                    'table_name': table_name,
+                    'used_on_nodes': using_nodes,
+                    'usage_details': usage_details,
+                })
+        return multi_node_indexes
+
     def check_index_constraints(self, index_name: str) -> bool:
         """Check if an index supports any constraints."""
         constraint_indicators = ['_pkey', '_key', '_idx', '_uk_', '_fk_']
@@ -291,11 +342,12 @@ class CrossNodeIndexAnalyzer:
         
         return sql_statements
     
-    def generate_report(self, unused_indexes: list, removal_sql: list, output_file: str):
+    def generate_report(self, unused_indexes: list, removal_sql: list, multi_node_indexes: list, output_file: str):
         """Generate a comprehensive AsciiDoc report."""
         report_content = []
-        unused_indexes = ensure_list(unused_indexes, context="generate_report")
-        
+        unused_indexes = ensure_list(unused_indexes, context="generate_report (unused)")
+        multi_node_indexes = ensure_list(multi_node_indexes, context="generate_report (multi-node)")
+
         report_content.extend([
             "= Cross-Node Index Usage Analysis Report",
             f":doctype: book",
@@ -329,6 +381,7 @@ class CrossNodeIndexAnalyzer:
             f"**Analysis Results:**",
             f"- Total nodes analyzed: {len(self.index_data)}",
             f"- Unused indexes identified: {len(unused_indexes)}",
+            f"- Indexes with multi-node usage: {len(multi_node_indexes)}",
             f"- Potential storage savings: {self.calculate_storage_savings(unused_indexes)}",
             ""
         ])
@@ -340,7 +393,10 @@ class CrossNodeIndexAnalyzer:
         if self.config.get('aws_aurora'):
             cluster_id = self.config['aws_aurora'].get('db_cluster_id', 'N/A')
             report_content.append(f"Analyzed AWS Aurora Cluster ID: *{cluster_id}*")
+            if self.rds_proxy:
+                report_content.append(f"Detected RDS Proxy: *{self.rds_proxy['DBProxyName']}*")
             report_content.append("")
+
 
         report_content.extend([
             "The following cluster members were analyzed:",
@@ -356,26 +412,37 @@ class CrossNodeIndexAnalyzer:
             ""
         ])
         
-        report_content.extend([
-            "== Node Analysis Summary",
-            ""
-        ])
-        
+        report_content.extend(["== Node Analysis Summary", ""])
         for node_name, node_data in self.index_data.items():
             total_indexes = len(node_data['index_usage'])
             used_indexes = sum(1 for row in node_data['index_usage'] if row[2] > 0)
             unused_count = total_indexes - used_indexes
-            
             report_content.extend([
-                f"=== {node_name.title()}",
-                "",
-                f"- Total indexes: {total_indexes}",
-                f"- Used indexes: {used_indexes}",
-                f"- Unused indexes: {unused_count}",
-                f"- Usage rate: {(used_indexes/total_indexes*100):.1f}%",
-                ""
+                f"=== {node_name.title()}", "", f"- Total indexes: {total_indexes}",
+                f"- Used indexes: {used_indexes}", f"- Unused indexes: {unused_count}",
+                f"- Usage rate: {(used_indexes/total_indexes*100):.1f}%", ""
             ])
-        
+
+        if multi_node_indexes:
+            report_content.extend([
+                "== Indexes with Multi-Node Usage",
+                "",
+                "[WARNING]",
+                "=====",
+                "The following indexes are being used on multiple nodes, including the primary.",
+                "This may indicate that read queries are being directed to the writer instance instead of a reader replica, which could be suboptimal.",
+                "Review the applications that use these indexes to ensure they are connecting to the appropriate endpoint (e.g., the reader endpoint for read-only queries).",
+                "=====",
+                "",
+                "[cols=\"1,1,2\",options=\"header\"]",
+                "|===",
+                "|Index Name|Table Name|Used On Nodes",
+            ])
+            for index_info in multi_node_indexes:
+                nodes_str = ", ".join([n.title() for n in index_info['used_on_nodes']])
+                report_content.append(f"|{index_info['index_name']}|{index_info['table_name']}|{nodes_str}")
+            report_content.append("|===")
+
         if unused_indexes:
             report_content.extend([
                 "== Unused Indexes Analysis",
@@ -444,24 +511,13 @@ class CrossNodeIndexAnalyzer:
                 ])
             
             report_content.append("----")
-        else:
-            report_content.extend([
-                "== Index Removal Recommendations",
-                "",
-                "[NOTE]",
-                "=====",
-                "No index removal recommendations at this time.",
-                "All indexes appear to be in use or support constraints.",
-                "=====",
-                ""
-            ])
         
         with open(output_file, 'w') as f:
             f.write('\n'.join(report_content))
         
         print(f"✅ AsciiDoc report generated: {output_file}")
 
-    def generate_json_output(self, unused_indexes: list, removal_sql: list):
+    def generate_json_output(self, unused_indexes: list, removal_sql: list, multi_node_indexes: list):
         """Generate a structured JSON file of the findings."""
         timestamp_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         if self.config.get('aws_aurora'):
@@ -477,26 +533,13 @@ class CrossNodeIndexAnalyzer:
         for node_name, node_data in self.index_data.items():
             total_indexes = len(node_data['index_usage'])
             used_indexes = sum(1 for row in node_data['index_usage'] if row[2] > 0)
-            node_summaries[node_name] = {
-                'total_indexes': total_indexes,
-                'used_indexes': used_indexes,
-                'unused_indexes': total_indexes - used_indexes,
-                'usage_rate_percent': round((used_indexes / total_indexes * 100), 1) if total_indexes > 0 else 0
-            }
+            node_summaries[node_name] = {'total_indexes': total_indexes, 'used_indexes': used_indexes, 'unused_indexes': total_indexes-used_indexes, 'usage_rate_percent': round((used_indexes/total_indexes*100),1) if total_indexes > 0 else 0}
 
         unused_indexes_details = []
         for i, index_info in enumerate(unused_indexes):
             sql_info = removal_sql[i]
             usage_summary_formatted = {node: {'scans': summary['idx_scan']} for node, summary in index_info['usage_summary'].items()}
-            
-            unused_indexes_details.append({
-                'index_name': index_info['index_name'],
-                'table_name': sql_info['table_name'],
-                'size': list(index_info['usage_summary'].values())[0]['index_size'],
-                'supports_constraints': index_info['supports_constraints'],
-                'usage_summary': usage_summary_formatted,
-                'recommended_sql': sql_info['sql']
-            })
+            unused_indexes_details.append({'index_name': index_info['index_name'], 'table_name': sql_info['table_name'], 'size': list(index_info['usage_summary'].values())[0]['index_size'], 'supports_constraints': index_info['supports_constraints'], 'usage_summary': usage_summary_formatted, 'recommended_sql': sql_info['sql']})
 
         json_data = {
             'analysis_metadata': {
@@ -507,12 +550,17 @@ class CrossNodeIndexAnalyzer:
             'cluster_configuration': {
                 'type': config_type,
                 'aurora_cluster_id': self.config.get('aws_aurora', {}).get('db_cluster_id'),
+                'rds_proxy_name': self.rds_proxy['DBProxyName'] if self.rds_proxy else None,
                 'nodes': self.cluster_nodes
             },
             'node_summaries': node_summaries,
             'unused_indexes_analysis': {
                  'count': len(unused_indexes_details),
                  'details': unused_indexes_details
+            },
+            'multi_node_usage_analysis': {
+                'count': len(multi_node_indexes),
+                'details': multi_node_indexes
             }
         }
 
@@ -536,14 +584,11 @@ class CrossNodeIndexAnalyzer:
         for index_info in unused_indexes:
             for node_data in index_info['usage_summary'].values():
                 size_str = node_data['index_size']
-                total_bytes += 1024 * 1024
+                total_bytes += 1024 * 1024 # Simplified calculation
         
-        if total_bytes < 1024 * 1024:
-            return f"{total_bytes / 1024:.1f} KB"
-        elif total_bytes < 1024 * 1024 * 1024:
-            return f"{total_bytes / (1024 * 1024):.1f} MB"
-        else:
-            return f"{total_bytes / (1024 * 1024 * 1024):.1f} GB"
+        if total_bytes < 1024 * 1024: return f"{total_bytes / 1024:.1f} KB"
+        elif total_bytes < 1024 * 1024 * 1024: return f"{total_bytes / (1024 * 1024):.1f} MB"
+        else: return f"{total_bytes / (1024 * 1024 * 1024):.1f} GB"
 
 def main():
     parser = argparse.ArgumentParser(description='Cross-Node Index Usage Analyzer')
@@ -557,18 +602,19 @@ def main():
     analyzer.analyze_all_nodes()
     
     unused_indexes = analyzer.identify_unused_indexes()
-    unused_indexes = ensure_list(unused_indexes, context="main")
-
     removal_sql = analyzer.generate_removal_sql(unused_indexes)
     
+    multi_node_indexes = analyzer.identify_multi_node_indexes()
+    
     # Generate AsciiDoc report
-    analyzer.generate_report(unused_indexes, removal_sql, args.output)
+    analyzer.generate_report(unused_indexes, removal_sql, multi_node_indexes, args.output)
     
     # Generate JSON report
-    analyzer.generate_json_output(unused_indexes, removal_sql)
+    analyzer.generate_json_output(unused_indexes, removal_sql, multi_node_indexes)
 
     print(f"\n🎉 Analysis complete!")
     print(f"📊 Found {len(unused_indexes)} potentially unused indexes")
+    print(f"⚠️ Found {len(multi_node_indexes)} indexes with multi-node usage")
     
 if __name__ == '__main__':
     main()
