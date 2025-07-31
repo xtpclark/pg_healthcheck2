@@ -1,6 +1,10 @@
-# Performance-Focused Report Configuration
-# This configuration focuses on performance analysis and optimization
-# Use with: python3 pg_healthcheck.py --report-config report_config_performance.py
+"""Defines the performance report structure for PostgreSQL health checks, detailing the sections and the specific check modules to be run in order.
+
+Attributes:
+    REPORT_SECTIONS (list): A list of dictionaries defining the report
+        structure. Each dictionary represents a section with a title and
+        a list of actions (modules to run).
+"""
 
 REPORT_SECTIONS = [
     # Report Header
@@ -77,13 +81,9 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "autovacuum_config", "function": "run_autovacuum_config"},
             {"type": "module", "module": "vacstat2", "function": "run_vacstat2"}
         ]
-    },
-    {
-        "title": "Performance Recommendations",
-        "actions": [
-            {"type": "module", "module": "run_recommendation_enhanced", "function": "run_recommendation_enhanced", "condition": {"var": "ai_analyze", "value": True}},
-            {"type": "module", "module": "run_recommendation", "function": "run_recommendation", "condition": {"var": "ai_analyze", "value": True, "fallback": True}},
-            {"type": "comments", "file": "recommendations.txt", "display_title": "Recommendations (Other)"}
-        ]
     }
-] 
+]
+
+    # --- FINAL SECTION: AI-Generated Recommendations ---
+    # This section is now implicitly handled by the core engine when `ai_analyze: true` is set in config.
+    # No explicit module call is needed in the report configuration itse

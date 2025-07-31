@@ -2,8 +2,21 @@ import boto3
 from datetime import datetime, timedelta
 
 def get_instance_details(aws_region, db_identifier):
-    """
-    Fetches RDS instance details like instance class and allocated storage.
+    """Fetches RDS instance details like instance class and storage.
+
+    Uses the boto3 client to call the `describe_db_instances` API
+    endpoint and retrieve key metadata for the specified database instance.
+
+    Args:
+        aws_region (str): The AWS region where the RDS instance is located
+            (e.g., "us-east-1").
+        db_identifier (str): The unique DBInstanceIdentifier for the RDS
+            database instance.
+
+    Returns:
+        dict | None: A dictionary containing instance details if found,
+        otherwise None. The dictionary includes 'instance_class' and
+        'allocated_storage_gb'.
     """
     rds = boto3.client('rds', region_name=aws_region)
     try:
@@ -20,18 +33,28 @@ def get_instance_details(aws_region, db_identifier):
     return None
 
 def get_cloudwatch_metrics(aws_region, dimensions, metrics_to_fetch, hours=24, period=3600):
-    """
-    Generic helper function to fetch a list of metrics from CloudWatch.
+    """Fetches a set of specified metrics from Amazon CloudWatch.
+
+    This function iterates through a list of desired metrics, queries the
+    `GetMetricStatistics` API for each one over a defined time period,
+    and returns the latest datapoint found for each. It gracefully handles
+    cases where a metric may not exist for a given resource.
 
     Args:
-        aws_region (str): The AWS region to query.
-        dimensions (list): The dimensions to filter the metrics (e.g., DBInstanceIdentifier).
-        metrics_to_fetch (list): A list of dictionaries, each defining a metric to fetch.
-        hours (int): The number of hours back from now to query.
+        aws_region (str): The AWS region to query (e.g., "us-east-1").
+        dimensions (list[dict]): The dimensions to filter the metrics, e.g.,
+            `[{'Name': 'DBInstanceIdentifier', 'Value': 'my-db-instance'}]`.
+        metrics_to_fetch (list[dict]): A list of dictionaries, each defining
+            a metric. Each dict must contain 'Namespace', 'MetricName',
+            'Statistic', and 'Unit'.
+        hours (int): The number of hours back from now to query. Defaults to 24.
         period (int): The granularity of the data points in seconds.
+            Defaults to 3600 (1 hour).
 
     Returns:
-        dict: A dictionary of the fetched metrics and their latest values.
+        dict: A dictionary where keys are the MetricNames and values are objects
+              containing the latest datapoint's value, unit, statistic, and
+              timestamp.
     """
     cloudwatch = boto3.client('cloudwatch', region_name=aws_region)
     end_time = datetime.utcnow()
