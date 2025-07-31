@@ -218,3 +218,5 @@ trend_collector.py
 test_enhanced_ai.py
 setup_cron.sh
 module_template_generator.py
+
+doc_source/_build
