@@ -1,3 +1,12 @@
+"""Offline AI Analysis Processor.
+
+This script provides a command-line interface to re-run the AI analysis
+portion of a health check using a pre-existing findings file. It is useful
+for testing different prompt templates, using different AI models, or
+debugging the analysis process without needing to re-connect to the database
+and re-run the entire health check.
+"""
+
 import json
 import argparse
 from pathlib import Path
@@ -14,9 +23,17 @@ from utils.run_recommendation import run_recommendation
 from plugins.base import BasePlugin
 
 def discover_plugins():
+    """Finds and loads all available plugins from the 'plugins' directory.
+
+    This function iterates through the subdirectories of the 'plugins' folder,
+    imports them as modules, and looks for classes that inherit from BasePlugin.
+    It instantiates each found plugin and returns a dictionary mapping the
+    plugin's technology name to its instance.
+
+    Returns:
+        dict: A dictionary of loaded plugin instances, keyed by technology name.
     """
-    Finds and loads all available plugins.
-    """
+
     plugins_path = Path(__file__).parent.parent / "plugins"
     discovered_plugins = {}
     for _, name, _ in pkgutil.iter_modules([str(plugins_path)]):
@@ -39,6 +56,17 @@ def discover_plugins():
     return discovered_plugins
 
 def main():
+    """Executes the offline AI analysis process.
+
+    This main function orchestrates the entire offline workflow:
+    1.  Parses command-line arguments for config, findings, and output files.
+    2.  Loads the settings and the pre-existing structured findings JSON.
+    3.  Discovers and loads the appropriate plugin based on the `db_type`.
+    4.  Generates a dynamic prompt using the findings and rules.
+    5.  Calls the AI recommendation engine with the generated prompt.
+    6.  Saves the resulting AsciiDoc report to the specified output file.
+    """
+
     parser = argparse.ArgumentParser(description='Offline AI Analysis Processor')
     parser.add_argument('--config', required=True, help='Path to the configuration file (e.g., config/config.yaml)')
     parser.add_argument('--findings', required=True, help='Path to the structured_health_check_findings.json file')
