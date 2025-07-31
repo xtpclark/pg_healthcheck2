@@ -1,4 +1,4 @@
-output\_handlers package
+Output Handlers
 ========================
 
 Submodules

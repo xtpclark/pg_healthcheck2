@@ -15,6 +15,5 @@ documentation for details.
    :maxdepth: 2
    :caption: Contents:
 
-   guides
    api/index
-   changelog
+   trends_app/index
