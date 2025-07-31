@@ -16,7 +16,19 @@ import jinja2
 from pathlib import Path
 
 def convert_to_json_serializable(obj):
-    """Convert non-JSON-serializable objects to JSON-compatible types."""
+    """Recursively convert non-JSON-serializable objects.
+
+    This function walks through nested objects (dicts, lists) and converts
+    types like Decimal, datetime, and timedelta into JSON-compatible formats
+    (float, string, seconds).
+
+    Args:
+        obj (Any): The Python object to convert.
+
+    Returns:
+        Any: A version of the object with non-serializable types converted.
+    """
+
     if isinstance(obj, Decimal): return float(obj)
     if isinstance(obj, datetime): return obj.isoformat()
     if isinstance(obj, timedelta): return obj.total_seconds()
@@ -25,10 +37,28 @@ def convert_to_json_serializable(obj):
     return obj
 
 def analyze_metric_severity(metric_name, data_row, settings, all_findings, analysis_rules, rule_stats, verbose=False):
+    """Analyzes a metric against rules and returns the highest severity finding.
+
+    This function iterates through all defined analysis rules, checking if a
+    given metric and its data match the rule's keywords and conditions. If they
+    match, it evaluates the rule's expression to see if an issue is triggered.
+    It tracks all triggered rules and returns only the one with the highest
+    'score'. The `rule_stats` dict is updated in-place.
+
+    Args:
+        metric_name (str): The name of the metric being analyzed (e.g., 'cache_hit_rate').
+        data_row (dict): A single dictionary representing one row of data for the metric.
+        settings (dict): The main application settings dictionary.
+        all_findings (dict): The complete findings structure for contextual checks.
+        analysis_rules (dict): The loaded JSON rules to evaluate against.
+        rule_stats (dict): A dictionary to be updated with rule execution statistics.
+        verbose (bool, optional): If True, prints detailed debugging information.
+
+    Returns:
+        dict: The finding with the highest severity score, containing keys
+              like 'level', 'score', 'reasoning', and 'recommendations'.
     """
-    Analyzes the severity of a single row of metric data based on all applicable rules,
-    returning the finding with the highest severity.
-    """
+
     highest_severity_finding = {'level': 'info', 'score': 0, 'reasoning': '', 'recommendations': []}
 
     for config_name, config in analysis_rules.items():
@@ -78,9 +108,31 @@ def analyze_metric_severity(metric_name, data_row, settings, all_findings, analy
 
 
 def _process_findings_recursively(current_findings, settings, analysis_rules, all_findings, rule_stats, issue_lists, module_issue_map, parent_key='', verbose=False):
+    """A recursive helper to walk through findings and analyze each metric.
+
+    This function navigates the potentially nested structure of the findings
+    dictionary. For each successful data point or list of data points it finds,
+    it calls `analyze_metric_severity` and populates the results into the
+    `issue_lists` and `module_issue_map` arguments.
+
+    Args:
+        current_findings (dict): The current level of the findings to process.
+        settings (dict): The main application settings dictionary.
+        analysis_rules (dict): The loaded rule configurations.
+        all_findings (dict): The complete findings structure for context.
+        rule_stats (dict): A dictionary to be updated with rule execution stats.
+        issue_lists (tuple): A tuple of lists (`critical`, `high`, `medium`) to
+            be populated with any findings that trigger a rule.
+        module_issue_map (dict): A dictionary to be populated with issue counts
+            per module, used for prioritizing data.
+        parent_key (str, optional): The key of the parent node, used to build
+            a full metric name (e.g., 'overview_database_size').
+        verbose (bool, optional): If True, prints detailed debugging info.
+
+    Returns:
+        None: This function modifies `issue_lists` and `module_issue_map` in-place.
     """
-    A recursive helper to process potentially nested finding structures.
-    """
+
     critical_issues, high_priority_issues, medium_priority_issues = issue_lists
 
     for key, value in current_findings.items():
@@ -122,9 +174,33 @@ def _process_findings_recursively(current_findings, settings, analysis_rules, al
             _process_findings_recursively(value, settings, analysis_rules, all_findings, rule_stats, issue_lists, module_issue_map, parent_key=metric_name, verbose=verbose)
 
 def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin, verbose=False):
+    """Orchestrates the analysis of findings to generate a final AI prompt.
+
+    This is the main function of the module. It performs several key steps:
+    1.  Recursively processes all findings to identify issues based on rules.
+    2.  Calculates a priority score for each module based on its inherent weight
+        and the severity of issues found within it.
+    3.  Applies a token budget to intelligently select or trim the findings data,
+        prioritizing modules with critical issues to ensure the most important
+        information is included in the prompt.
+    4.  Renders the final prompt using a Jinja2 template.
+
+    Args:
+        all_structured_findings (dict): The complete raw findings from all checks.
+        settings (dict): The main application settings, including token limits.
+        analysis_rules (dict): The loaded rule configurations.
+        db_version (str): The version string of the database being analyzed.
+        db_name (str): The name of the database being analyzed.
+        active_plugin (object): The active plugin instance, used to get module
+            weights and template paths.
+        verbose (bool, optional): Enables detailed debug printing.
+
+    Returns:
+        dict: A dictionary containing the final rendered 'prompt' and other
+              analysis artifacts like 'summarized_findings', 'critical_issues',
+              and 'rule_application_stats'.
     """
-    Generates a dynamic prompt using a weighted budgeting strategy and reports on trimmed content.
-    """
+
     findings_for_analysis = convert_to_json_serializable(all_structured_findings)
     rule_stats = {}
     critical_issues, high_priority_issues, medium_priority_issues = [], [], []

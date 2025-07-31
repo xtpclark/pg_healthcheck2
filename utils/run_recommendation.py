@@ -1,12 +1,37 @@
+"""Handles the interaction with external Generative AI APIs.
+
+This module contains the function responsible for taking a finalized prompt,
+constructing the appropriate API request for the configured AI provider
+(e.g., OpenAI, Google), sending the request, and parsing the response.
+"""
+
 import json
 import requests
 import time
 
 def run_recommendation(settings, full_prompt):
+    """Handles the AI analysis workflow by sending a prompt to an AI service.
+
+    This function reads AI provider details from the settings, builds a
+    provider-specific payload (supporting OpenAI-compatible and Google
+    Generative AI endpoints), and sends the prompt via an HTTP POST request.
+    It times the request, collects execution metrics, and formats the AI's
+    response and the metrics into a single AsciiDoc block for inclusion in
+    the final report.
+
+    Args:
+        settings (dict): The main application settings dictionary, containing all
+            AI provider details like `ai_provider`, `ai_endpoint`, `ai_model`,
+            `ai_api_key`, etc.
+        full_prompt (str): The complete, formatted prompt string to be sent
+            to the AI model for analysis.
+
+    Returns:
+        tuple[str, dict]: A tuple where the first element is the formatted
+        AsciiDoc string containing the AI's response and a details table,
+        and the second is a dictionary of execution metrics.
     """
-    Handles the AI analysis workflow, now including the AI request details
-    directly in the AsciiDoc report output.
-    """
+
     ai_provider = settings.get('ai_provider', 'openai')
     API_ENDPOINT = settings.get('ai_endpoint')
     AI_MODEL = settings.get('ai_model')
@@ -40,10 +65,6 @@ def run_recommendation(settings, full_prompt):
     if not settings.get('ai_run_integrated', True):
         adoc_content.append("[NOTE]\n====\nOnline AI analysis is disabled (`ai_run_integrated: false`).\n====\n")
         return "\n".join(adoc_content), ai_metrics
-
-#    if not settings.get('ai_run_integrated', True):
-#        adoc_content.append("[NOTE]\n====\nOnline AI analysis is disabled (`ai_run_integrated: false`). Use the offline_ai_processor.py to generate reports from the saved findings.\n====\n")
-#        return "\n".join(adoc_content), 0.0
 
     API_KEY = settings.get('ai_api_key', '')
     if not API_KEY:
@@ -115,8 +136,6 @@ def run_recommendation(settings, full_prompt):
 
     except Exception as e:
         adoc_content.append(f"[ERROR]\n====\nFailed to get AI recommendations: {e}\n====\n")
-#        return "\n".join(adoc_content), 0.0
         return "\n".join(adoc_content), ai_metrics
 
-#    return "\n".join(adoc_content), duration
     return "\n".join(adoc_content), ai_metrics
