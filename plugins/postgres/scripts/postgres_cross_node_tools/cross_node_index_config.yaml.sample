@@ -1,6 +1,10 @@
-# Cross-Node Index Usage Analyzer Configuration for Docker Environment
-# 
-# This configuration connects to the PostgreSQL cluster running in Docker containers
+# Cross-Node Index Usage Analyzer Configuration
+#
+# Choose one of the following configuration methods.
+
+# -----------------------------------------------------------------------------
+# Method 1: Manual configuration for Docker, on-premise, or non-Aurora clouds
+# -----------------------------------------------------------------------------
 
 # Primary/Master node configuration
 primary:
@@ -26,6 +30,24 @@ replicas:
     user: "testuser"
     password: "testpass"
 
+# -----------------------------------------------------------------------------
+# Method 2: AWS Aurora Auto-Discovery
+# Uncomment this section to use it. It will override the manual configuration.
+# -----------------------------------------------------------------------------
+#
+# aws_aurora:
+#  # The identifier for your Aurora PostgreSQL cluster
+#  db_cluster_id: "your-aurora-cluster-identifier"
+#  
+#  # Database connection credentials
+#  database: "testdb"
+#  user: "testuser"
+#  password: "testpass"
+
+# -----------------------------------------------------------------------------
+# Analysis and Report Settings (common to both methods)
+# -----------------------------------------------------------------------------
+
 # Analysis settings
 analysis:
   # Minimum index size to consider for removal (in bytes)
@@ -49,4 +71,4 @@ report:
   include_storage_calculation: true
   
   # Include risk assessment
-  include_risk_assessment: true 
+  include_risk_assessment: true
