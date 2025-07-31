@@ -382,7 +382,7 @@ class CrossNodeIndexAnalyzer:
         if self.stats_reset_time:
             report_content.extend(["[IMPORTANT]", "=====", f"**Statistics Last Reset:** {self.stats_reset_time.strftime('%Y-%m-%d %H:%M:%S %Z')}", "", "The index usage data for this analysis is based on statistics collected since the last reset.", "If this reset was recent, the report may not reflect long-term index usage patterns.", "Exercise extreme caution before dropping indexes if the statistics uptime is short.", "=====", ""])
 
-        report_content.extend([f"This report analyzes index usage across {len(self.index_data)} database nodes.", "", f"**Analysis Results:**\n", f"- Total nodes analyzed: {len(self.index_data)}", f"- Unused indexes identified: {len(unused_indexes)}", f"- Indexes with multi-node usage: {len(multi_node_indexes)}", f"- Potential storage savings: {self.calculate_storage_savings(unused_indexes)}", ""])
+        report_content.extend([f"This report analyzes index usage across {len(self.index_data)} database nodes.", "", f"**Analysis Results:**", f"- Total nodes analyzed: {len(self.index_data)}", f"- Unused indexes identified: {len(unused_indexes)}", f"- Indexes with multi-node usage: {len(multi_node_indexes)}", f"- Potential storage savings: {self.calculate_storage_savings(unused_indexes)}", ""])
 
         report_content.extend(["== Cluster Configuration", ""])
         if self.config.get('aws_aurora'):
@@ -416,9 +416,67 @@ class CrossNodeIndexAnalyzer:
             report_content.extend([f"=== {node_name.title()}", "", f"- Total indexes: {total_indexes}", f"- Used indexes: {used_indexes}", f"- Unused indexes: {total_indexes - used_indexes}", f"- Usage rate: {((used_indexes/total_indexes*100) if total_indexes > 0 else 0):.1f}%", ""])
 
         if multi_node_indexes:
-            report_content.extend(["== Indexes with Multi-Node Usage\n", "", "[WARNING]", "=====", "The following indexes are being used on multiple nodes, including the primary.\n", "This may indicate that read queries are being directed to the writer instance instead of a reader replica, which could be suboptimal.\n", "Review the applications that use these indexes to ensure they are connecting to the appropriate endpoint (e.g., the reader endpoint for read-only queries).\n", "=====", "", "[cols=\"1,1,2\",options=\"header\"]", "|===", "|Index Name|Table Name|Used On Nodes"])
+            report_content.extend(["== Indexes with Multi-Node Usage", "", "[WARNING]", "=====", "The following indexes are being used on multiple nodes, including the primary.", "This may indicate that read queries are being directed to the writer instance instead of a reader replica, which could be suboptimal.", "Review the applications that use these indexes to ensure they are connecting to the appropriate endpoint (e.g., the reader endpoint for read-only queries).", "=====", "", "[cols=\"1,1,2\",options=\"header\"]", "|===", "|Index Name|Table Name|Used On Nodes"])
             for index_info in multi_node_indexes: report_content.append(f"|{index_info['index_name']}|{index_info['table_name']}|{', '.join([n.title() for n in index_info['used_on_nodes']])}")
             report_content.append("|===")
+
+        if unused_indexes:
+            report_content.extend([
+                "== Unused Indexes Analysis",
+                "",
+                "The following indexes appear unused across all nodes and may be candidates for removal:",
+                "",
+                "[cols=\"1,1,1,1,1\",options=\"header\"]",
+                "|===",
+                "|Index Name|Table Name|Size|Usage Summary|Supports Constraints",
+            ])
+            
+            for index_info in unused_indexes:
+                index_name = index_info['index_name']
+                table_name = list(index_info['usage_summary'].values())[0]['table_name']
+                size = list(index_info['usage_summary'].values())[0]['index_size']
+                usage_summary = self.format_usage_summary(index_info['usage_summary'])
+                supports_constraints = "Yes" if index_info['supports_constraints'] else "No"
+                
+                report_content.extend([
+                    f"|{index_name}|{table_name}|{size}|{usage_summary}|{supports_constraints}"
+                ])
+            
+            report_content.append("|===")
+        
+        if removal_sql:
+            report_content.extend([
+                "== Index Removal Recommendations",
+                "",
+                "[IMPORTANT]",
+                "=====",
+                "**Before removing any indexes:**",
+                "",
+                "1. **Verify the analysis**: Double-check that these indexes are truly unused",
+                "2. **Test in staging**: Remove indexes in a staging environment first",
+                "3. **Monitor performance**: Watch for any performance impact after removal",
+                "4. **Low-traffic window**: Remove during maintenance windows",
+                "5. **Backup plan**: Have a rollback strategy ready",
+                "=====",
+                "",
+                "=== Recommended SQL Statements",
+                "",
+                "The following SQL statements can be used to remove unused indexes:",
+                "",
+                "[source,sql]",
+                "----",
+            ])
+            
+            for sql_info in removal_sql:
+                report_content.extend([
+                    f"-- Remove unused index: {sql_info['index_name']}",
+                    f"-- Table: {sql_info['table_name']}",
+                    f"-- Reason: {sql_info['reason']}",
+                    sql_info['sql'],
+                    ""
+                ])
+            
+            report_content.append("----")
 
         with open(output_file, 'w') as f:
             f.write('\n'.join(report_content))
