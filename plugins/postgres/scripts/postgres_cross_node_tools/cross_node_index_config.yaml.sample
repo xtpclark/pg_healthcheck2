@@ -35,7 +35,7 @@ replicas:
 # Uncomment this section to use it. It will override the manual configuration.
 # -----------------------------------------------------------------------------
 #
-# aws_aurora:
+#aws_aurora:
 #  # The identifier for your Aurora PostgreSQL cluster
 #  db_cluster_id: "your-aurora-cluster-identifier"
 #  
@@ -43,10 +43,25 @@ replicas:
 #  database: "testdb"
 #  user: "testuser"
 #  password: "testpass"
+#
+#  # --- Optional: CloudWatch Metrics Analysis ---
+#  cloudwatch_metrics:
+#    # Master switch to enable/disable this feature. Defaults to true.
+#    enabled: true
+#    # Time window for pulling metrics, in hours. Defaults to 24.
+#    time_window_hours: 24
+#    # Toggle individual metrics. All default to true if this section is omitted.
+#    metrics:
+#      CPUUtilization: true
+#      DatabaseConnections: true
+#      FreeableMemory: true
+#      ReadIOPS: true
+#      WriteIOPS: true
+#      ReadLatency: true
+#      WriteLatency: true
 
-# -----------------------------------------------------------------------------
-# Analysis and Report Settings (common to both methods)
-# -----------------------------------------------------------------------------
+
+
 
 # Analysis settings
 analysis:
