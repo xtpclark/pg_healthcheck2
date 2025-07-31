@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""
+Main entrypoint for the Database Health Check Tool.
+
+This script initializes the application, discovers plugins, parses command-line
+arguments, and orchestrates the execution of health checks, report generation,
+and AI analysis based on the provided configuration.
+"""
+
 import yaml
 import sys
 import importlib
@@ -25,6 +33,7 @@ except FileNotFoundError:
     APP_VERSION = "unknown"
 
 class CustomJsonEncoder(json.JSONEncoder):
+    """A custom JSON encoder to handle special data types like Decimal and datetime."""
     def default(self, obj):
         if isinstance(obj, Decimal): return float(obj)
         if isinstance(obj, datetime): return obj.isoformat()
@@ -32,7 +41,16 @@ class CustomJsonEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 def discover_plugins():
-    """Find and load all available plugins from the 'plugins' directory."""
+    """Finds and loads all available plugins from the 'plugins' directory.
+
+    This function iterates through the subdirectories of the 'plugins' folder,
+    imports them as modules, and looks for classes that inherit from BasePlugin.
+    It instantiates each found plugin and returns a dictionary mapping the
+    plugin's technology name to its instance.
+
+    Returns:
+        dict: A dictionary of loaded plugin instances, keyed by technology name.
+    """
     plugins_path = Path(__file__).parent / "plugins"
     discovered_plugins = {}
     for _, name, _ in pkgutil.iter_modules([str(plugins_path)]):
@@ -55,7 +73,16 @@ def discover_plugins():
     return discovered_plugins
 
 class HealthCheck:
+    """Orchestrates the entire health check process from start to finish."""
     def __init__(self, config_file, report_config_file=None):
+        """Initializes the HealthCheck application.
+
+        Args:
+            config_file (str): Path to the main `config.yaml` file.
+            report_config_file (str, optional): Path to a custom report
+                configuration file. If not provided, the default for the
+                selected plugin will be used.
+        """
         self.settings = self.load_settings(config_file)
         self.app_version = APP_VERSION
         self.available_plugins = discover_plugins()
@@ -73,6 +100,7 @@ class HealthCheck:
         self.analysis_output = {}
 
     def load_settings(self, config_file):
+        """Loads the main YAML configuration file."""
         try:
             with open(config_file, 'r') as f:
                 return yaml.safe_load(f)
@@ -81,12 +109,18 @@ class HealthCheck:
             sys.exit(1)
 
     def get_paths(self):
+        """Generates the output paths for report artifacts."""
         workdir = Path.cwd()
         sanitized_company_name = re.sub(r'\W+', '_', self.settings['company_name'].lower()).strip('_')
         return { 'adoc_out': workdir / 'adoc_out' / sanitized_company_name }
 
     def run_report(self):
-        """Orchestrates the health check process."""
+        """Orchestrates the main health check process.
+
+        This method connects to the database, runs the report builder to
+        collect data, optionally triggers AI analysis, embeds metadata, ships
+        the data to a trend analysis platform, and saves the final output.
+        """
         self.connector.connect()
 
         builder = ReportBuilder(self.connector, self.settings, self.active_plugin, self.report_sections, self.app_version)
@@ -109,10 +143,7 @@ class HealthCheck:
         self.connector.disconnect()
 
     def generate_and_embed_metadata(self, ai_execution_metrics={}):
-        """
-        Generates summarized findings and embeds all necessary metadata into the
-        main findings object.
-        """
+        """Generates summarized findings and embeds all metadata into the findings object.""" 
         if not self.analysis_output:
             print("\n--- Generating Summarized Findings for Historical Record ---")
             analysis_rules = self.active_plugin.get_rules_config()
@@ -131,8 +162,11 @@ class HealthCheck:
         }
 
     def run_ai_analysis(self):
-        """
-        Generates a prompt if needed, sends it to the AI, and returns the execution metrics.
+        """Generates a prompt, sends it to the AI, and returns execution metrics.
+
+        Returns:
+            dict: A dictionary containing metrics about the AI query execution,
+                  such as token count and execution time.
         """
         if not self.analysis_output:
              # This will populate self.analysis_output
@@ -156,6 +190,7 @@ class HealthCheck:
         return ai_metrics
 
     def save_structured_findings(self):
+        """Saves the final structured findings object to a JSON file."""
         output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
@@ -163,12 +198,14 @@ class HealthCheck:
         print(f"\nStructured health check findings saved to: {output_path}")
 
     def write_adoc(self, output_file):
+        """Writes the generated AsciiDoc content to the final report file."""
         output_path = self.paths['adoc_out'] / output_file
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
             f.write(self.adoc_content)
 
 def main():
+    """Parses command line arguments and runs the health check."""
     parser = argparse.ArgumentParser(description='Database Health Check Tool')
     parser.add_argument('--config', default='config/config.yaml', help='Path to configuration file')
     parser.add_argument('--report-config', help='Path to a custom report configuration file.')
