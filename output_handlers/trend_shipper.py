@@ -1,3 +1,11 @@
+"""Handles shipping of health check results to a persistent backend.
+
+This module is responsible for taking the final results of a health check
+and sending them to a storage destination for trend analysis. It is driven
+by the `config/trends.yaml` file and acts as a dispatcher, supporting
+different backends like PostgreSQL or a generic HTTP API.
+"""
+
 import yaml
 import psycopg2
 import requests
@@ -6,6 +14,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 
 class CustomJsonEncoder(json.JSONEncoder):
+    """A custom JSON encoder to handle special data types like Decimal and datetime."""
     def default(self, obj):
         if isinstance(obj, Decimal): return float(obj)
         if isinstance(obj, datetime): return obj.isoformat()
@@ -13,7 +22,17 @@ class CustomJsonEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 def load_config(config_path='config/trends.yaml'):
-    """Loads the trend shipper configuration."""
+    """Loads the trend shipper configuration from a YAML file.
+
+    Args:
+        config_path (str, optional): The path to the trend shipper
+            configuration file. Defaults to 'config/trends.yaml'.
+
+    Returns:
+        dict | None: A dictionary with the configuration if the file is
+        found and valid, otherwise None.
+    """
+
     try:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
@@ -25,10 +44,25 @@ def load_config(config_path='config/trends.yaml'):
         return None
 
 def ship_to_database(db_config, target_info, findings_json, structured_findings, adoc_content):
+    """Connects to PostgreSQL and inserts the health check data.
+
+    This function handles the entire database transaction, including creating
+    a company record if it doesn't exist and inserting the full findings,
+    report, and execution context into the `health_check_runs` table.
+
+    Args:
+        db_config (dict): Database connection parameters for psycopg2.
+        target_info (dict): Information about the target system being analyzed.
+        findings_json (str): The complete structured findings, pre-serialized
+            as a JSON string for database insertion.
+        structured_findings (dict): The structured findings as a Python dict,
+            used to extract execution context metadata.
+        adoc_content (str): The full AsciiDoc report content to be stored.
+
+    Returns:
+        None
     """
-    Connects to PostgreSQL and inserts the health check data, including the
-    final AsciiDoc report and execution context.
-    """
+
     conn = None
     try:
         conn = psycopg2.connect(**db_config)
@@ -79,7 +113,18 @@ def ship_to_database(db_config, target_info, findings_json, structured_findings,
         if conn: conn.close()
 
 def ship_to_api(api_config, target_info, findings, adoc_content):
-    """Sends raw health check data and the AsciiDoc report to the API endpoint."""
+    """Sends health check data and the AsciiDoc report to an API endpoint.
+
+    Args:
+        api_config (dict): Configuration for the API, including the `endpoint_url`.
+        target_info (dict): Information about the target system.
+        findings (dict): The complete structured findings dictionary.
+        adoc_content (str): The full AsciiDoc report content.
+
+    Returns:
+        None
+    """
+
     try:
         headers = {'Content-Type': 'application/json'}
         full_payload = {
@@ -94,7 +139,23 @@ def ship_to_api(api_config, target_info, findings, adoc_content):
         print(f"Error: Failed to ship data to API. {e}")
 
 def run(structured_findings, target_info, adoc_content=None):
-    """Main entry point for the trend shipper."""
+    """Main entry point for the trend shipper module.
+
+    This function is called by the main application after a health check is
+    complete. It loads the `trends.yaml` configuration and, based on the
+    specified `destination`, calls the appropriate function to ship the results.
+
+    Args:
+        structured_findings (dict): The final dictionary of all structured
+            findings from the health check.
+        target_info (dict): A dictionary containing metadata about the target
+            system (e.g., host, db_type, company_name).
+        adoc_content (str, optional): The full AsciiDoc report. Defaults to None.
+
+    Returns:
+        None
+    """
+
     print("--- Trend Shipper Module Started ---")
     config = load_config()
     if not config:

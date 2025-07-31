@@ -1,3 +1,11 @@
+"""
+Defines the main Flask blueprint for the web application.
+
+This module contains the primary routes for the application, including the
+dashboard, all API endpoints for the frontend to fetch data and perform
+actions, and server-side report generation logic.
+"""
+
 import io
 import json
 import os
@@ -25,20 +33,42 @@ bp = Blueprint('main', __name__)
 
 @bp.before_request
 def before_request_callback():
-    """Redirects user to change password if required."""
+    """Redirects authenticated users to change their password if required.
+
+    This function runs before every request. If the currently logged-in user
+    has the `password_change_required` flag set, it redirects them to the
+    password change page, preventing access to other parts of the application.
+    """
+
     if current_user.is_authenticated and current_user.password_change_required:
         if request.endpoint and 'static' not in request.endpoint and 'auth.' not in request.endpoint:
              return redirect(url_for('auth.change_password'))
 
 @bp.app_template_filter('format_path')
 def jinja_format_path(path):
-    """Makes the format_path function available in templates."""
+    """Exposes the `format_path` utility function to Jinja2 templates."""
     return format_path(path)
 
 @bp.route('/')
 @login_required
 def dashboard():
-    """Main dashboard route."""
+    """Renders the main dashboard page.
+
+    This route fetches all necessary data for the dashboard, including a list
+    of unique targets for filtering and user preferences. If `run1` and `run2`
+    query parameters are provided, it fetches those two specific health check
+    runs and performs a `DeepDiff` to identify and display changes between them.
+
+    Args:
+        run1 (int, optional): The ID of the first run to compare, passed as a
+            URL query parameter.
+        run2 (int, optional): The ID of the second run to compare, passed as a
+            URL query parameter.
+
+    Returns:
+        A rendered HTML template of the dashboard.
+    """
+
     config = load_trends_config()
     db_settings = config.get('database')
     
@@ -90,7 +120,22 @@ def dashboard():
 @bp.route('/api/runs')
 @login_required
 def get_all_runs():
-    """API endpoint to fetch runs, with support for filtering and favorites."""
+    """API endpoint to fetch all accessible health check runs.
+
+    This endpoint returns a list of all runs the current user has permission
+    to view. It supports filtering by target system and by a date range. It
+    also indicates whether each run has been marked as a "favorite" by the user.
+
+    Args:
+        target (str, optional): A filter string in the format
+            'company:host:port:dbname'.
+        start_time (str, optional): A start date string (e.g., 'YYYY-MM-DD').
+        end_time (str, optional): An end date string (e.g., 'YYYY-MM-DD').
+
+    Returns:
+        JSON: A JSON array of run objects.
+    """
+
     config = load_trends_config()
     db_settings = config.get('database')
     
@@ -159,6 +204,7 @@ def get_all_runs():
 @bp.route('/api/runs/toggle-favorite', methods=['POST'])
 @login_required
 def toggle_favorite():
+    """API endpoint to add or remove a run from the user's favorites."""
     data = request.get_json()
     run_id = data.get('run_id')
 
@@ -195,6 +241,12 @@ def toggle_favorite():
 @bp.route('/api/save-preference', methods=['POST'])
 @login_required
 def save_preference():
+    """API endpoint to save a user-specific preference.
+
+    Accepts a JSON object with 'name' and 'value' keys to store a key-value
+    preference in the database for the current user.
+    """
+
     data = request.get_json()
     pref_name = data.get('name')
     pref_value = data.get('value')
@@ -211,6 +263,7 @@ def save_preference():
 @bp.route('/api/user-ai-profiles')
 @login_required
 def get_user_ai_profiles():
+    """API endpoint to fetch all AI profiles for the current user."""
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -234,6 +287,7 @@ def get_user_ai_profiles():
 @bp.route('/api/analysis-rules')
 @login_required
 def get_analysis_rules():
+    """API endpoint to fetch all available analysis rule sets."""
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -254,6 +308,10 @@ def get_analysis_rules():
 @bp.route('/api/prompt-templates')
 @login_required
 def get_prompt_templates():
+    """API endpoint to fetch prompt templates available to the user.
+
+    This includes global templates and custom templates created by the user.
+    """
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -277,6 +335,14 @@ def get_prompt_templates():
 @bp.route('/api/generate-ai-report', methods=['POST'])
 @login_required
 def generate_ai_report():
+    """API endpoint to generate an on-demand AI report.
+
+    This is a privileged action. It takes the IDs for a run, AI profile,
+    template, and rule set, generates a prompt, gets the AI recommendation,
+    saves the encrypted report to the database, and returns the report
+    as a downloadable file.
+    """
+
     if not current_user.has_privilege('GenerateReports'):
         abort(403)
 
@@ -324,10 +390,20 @@ def generate_ai_report():
 @bp.route('/generate-slides')
 @login_required
 def generate_slides():
+
+    """Generates an HTML slide presentation from a health check run.
+
+    This is a privileged action that orchestrates a complex workflow:
+    1. Fetches health check findings from the database.
+    2. Generates a markdown-based prompt for an AI to create slide content.
+    3. Fetches template assets (backgrounds, logos) from the database.
+    4. Post-processes the AI's markdown response to inject Marp directives
+       for theming and layout.
+    5. Calls the external `marp-cli` tool to convert the final markdown into
+       a standalone HTML slide presentation.
+    6. Renders the resulting HTML in a viewer template.
     """
-    Generates slides from a health check run and renders them server-side.
-    This version uses post-processing to inject directives.
-    """
+
     if not current_user.has_privilege('GenerateReports'):
         abort(403)
 
@@ -446,6 +522,13 @@ def generate_slides():
 @bp.route('/api/all-reports')
 @login_required
 def get_all_reports():
+    """API endpoint to fetch the user's complete report history.
+
+    This includes both AI-generated reports and manually uploaded reports,
+    joining across multiple tables to provide comprehensive metadata for
+    each report in the user's history.
+    """
+
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -492,6 +575,12 @@ def get_all_reports():
 @bp.route('/api/download-report/<int:report_id>')
 @login_required
 def download_report(report_id):
+    """API endpoint to download a previously generated AI report.
+
+    Fetches the encrypted report content from the database, decrypts it,
+    and returns it as a downloadable AsciiDoc file.
+    """
+
     config = load_trends_config()
     db_settings = config.get('database')
     conn = None
@@ -516,6 +605,13 @@ def download_report(report_id):
 @bp.route('/api/generated-reports/<int:report_id>', methods=['PUT'])
 @login_required
 def update_report_metadata(report_id):
+    """API endpoint to update the metadata of a generated report.
+
+    Allows the user to change the name, description, and annotations
+    of a report they have previously generated.
+    """
+
+
     data = request.get_json()
     config = load_trends_config()
     db_settings = config.get('database')

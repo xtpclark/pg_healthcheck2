@@ -1,6 +1,14 @@
-# Security-Focused Report Configuration
-# This configuration focuses on security analysis and compliance
-# Use with: python3 pg_healthcheck.py --report-config report_config_security.py
+"""PostgreSQL Security-Focused Report Configuration
+
+This configuration focuses on security analysis and compliance
+
+Attributes:
+    REPORT_SECTIONS (list): A list of dictionaries defining the report
+        structure. Each dictionary represents a section with a title and
+        a list of actions (modules to run).
+"""
+
+
 
 REPORT_SECTIONS = [
     # Report Header
@@ -53,12 +61,5 @@ REPORT_SECTIONS = [
             {"type": "comments", "file": "rds_aurora_best_practices.txt", "display_title": "AWS RDS/Aurora Best Practices"}
         ]
     },
-    {
-        "title": "Security Recommendations",
-        "actions": [
-            {"type": "module", "module": "run_recommendation_enhanced", "function": "run_recommendation_enhanced", "condition": {"var": "ai_analyze", "value": True}},
-            {"type": "module", "module": "run_recommendation", "function": "run_recommendation", "condition": {"var": "ai_analyze", "value": True, "fallback": True}},
-            {"type": "comments", "file": "recommendations.txt", "display_title": "Recommendations (Other)"}
-        ]
-    }
-] 
+]    
+

@@ -1,5 +1,13 @@
-# This file defines the structure and execution order of the health check report.
-# It is focused on generating actionable recommendations with consolidated checks.
+"""Defines the default report structure for PostgreSQL health checks.
+
+This module contains the primary configuration for the standard report,
+detailing the sections and the specific check modules to be run in order.
+
+Attributes:
+    REPORT_SECTIONS (list): A list of dictionaries defining the report
+        structure. Each dictionary represents a section with a title and
+        a list of actions (modules to run).
+"""
 
 REPORT_SECTIONS = [
     # --- Section 1: Header and Overview ---

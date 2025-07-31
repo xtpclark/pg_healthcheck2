@@ -5,8 +5,20 @@ def get_weight():
     return 5 # Core availability setting
 
 def run_superuser_reserved(connector, settings):
-    """
-    Checks the number of connections reserved for superusers to ensure administrative access.
+    """Checks the number of connections reserved for superusers.
+
+    This check queries the `superuser_reserved_connections` setting
+    from `pg_settings` to ensure that a specific number of connections
+    are held back for administrative access, which is crucial for
+    emergency troubleshooting.
+
+    Args:
+        connector (object): The database connector object used to execute queries.
+        settings (dict): A dictionary of settings for the check, such as `show_qry`.
+
+    Returns:
+        tuple: A tuple where the first element is the AsciiDoc report string
+               and the second is the structured dictionary of findings.
     """
     adoc_content = ["=== Superuser Reserved Connections", "Ensures that connections are reserved for superuser accounts to maintain administrative access."]
     structured_data = {}

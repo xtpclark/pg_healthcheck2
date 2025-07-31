@@ -1,6 +1,14 @@
-# Minimal Report Configuration
-# This configuration includes only the most essential health check sections
-# Use with: python3 pg_healthcheck.py --report-config report_config_minimal.py
+"""Defines a minimal report structure for PostgreSQL health checks.
+
+This module contains the primary configuration for the minimal report,
+detailing the sections and the specific check modules to be run in order.
+
+Attributes:
+    REPORT_SECTIONS (list): A list of dictionaries defining the report
+        structure. Each dictionary represents a section with a title and
+        a list of actions (modules to run).
+"""
+
 
 REPORT_SECTIONS = [
     # Report Header
@@ -44,13 +52,5 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "current_lock_waits", "function": "run_current_lock_waits"},
             {"type": "module", "module": "long_running_queries", "function": "run_long_running_queries"}
         ]
-    },
-    {
-        "title": "Recommendations",
-        "actions": [
-            {"type": "module", "module": "run_recommendation_enhanced", "function": "run_recommendation_enhanced", "condition": {"var": "ai_analyze", "value": True}},
-            {"type": "module", "module": "run_recommendation", "function": "run_recommendation", "condition": {"var": "ai_analyze", "value": True, "fallback": True}},
-            {"type": "comments", "file": "recommendations.txt", "display_title": "Recommendations (Other)"}
-        ]
     }
-] 
+]
