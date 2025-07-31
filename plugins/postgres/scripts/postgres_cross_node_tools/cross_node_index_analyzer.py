@@ -17,7 +17,7 @@ import argparse
 import json
 import psycopg2
 import yaml
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 from typing import Dict, List, Tuple, Optional
@@ -463,7 +463,7 @@ class CrossNodeIndexAnalyzer:
 
     def generate_json_output(self, unused_indexes: list, removal_sql: list):
         """Generate a structured JSON file of the findings."""
-        timestamp_str = datetime.now().strftime('%Y%m%d%H%M%S')
+        timestamp_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         if self.config.get('aws_aurora'):
             file_prefix = self.config['aws_aurora'].get('db_cluster_id', 'aurora-cluster')
             config_type = 'aws_aurora'
@@ -500,7 +500,7 @@ class CrossNodeIndexAnalyzer:
 
         json_data = {
             'analysis_metadata': {
-                'report_generated_at_utc': datetime.utcnow().isoformat(),
+                'report_generated_at_utc': datetime.now(timezone.utc).isoformat(),
                 'statistics_last_reset_utc': self.stats_reset_time.isoformat() if self.stats_reset_time else None,
                 'potential_storage_savings': self.calculate_storage_savings(unused_indexes)
             },
