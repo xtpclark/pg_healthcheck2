@@ -1,7 +1,7 @@
-utils
-=====
+output_handlers
+===============
 
 .. toctree::
    :maxdepth: 4
 
-   utils
+   output_handlers
