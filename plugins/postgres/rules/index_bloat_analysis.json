@@ -1,0 +1,19 @@
+{
+  "high_index_bloat": {
+    "metric_keywords": [
+      "index_bloat"
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('bloat_pct', 0)) > 30",
+        "level": "high",
+        "score": 6,
+        "reasoning": "The index '{data.get('idxname')}' on table '{data.get('tblname')}' has an estimated bloat of {data.get('bloat_pct'):.2f}%. High index bloat wastes disk space and makes index scans less efficient.",
+        "recommendations": [
+          "Rebuild the bloated index to reclaim space and improve performance by running `REINDEX INDEX CONCURRENTLY \\\"{data.get('idxname')}\\\";`.",
+          "For tables with frequent updates or deletes, consider tuning the `fillfactor` storage parameter on the index to leave more free space for new versions of rows, which can help mitigate future bloat."
+        ]
+      }
+    ]
+  }
+}

@@ -37,7 +37,7 @@ def run_primary_key_analysis(connector, settings):
             adoc_content.append("[NOTE]\n====\nNo integer-based primary keys found to be more than 80% exhausted. This is a healthy sign.\n====\n")
             structured_data["high_risk_pks_details"] = {"status": "success", "data": []}
         else:
-            adoc_content.append("[CRITICAL]\n====\n**Action Required:** The following primary keys are nearing their maximum value. Once the limit is reached, `INSERT` operations will fail, causing an application outage. Plan to migrate these to `bigint` immediately.\n====\n")
+            adoc_content.append("[WARNING]\n====\n**Action Required:** The following primary keys are nearing their maximum value. Once the limit is reached, `INSERT` operations will fail, causing an application outage. Plan to migrate these to `bigint` immediately.\n====\n")
             adoc_content.append(formatted)
             structured_data["high_risk_pks_details"] = {"status": "success", "data": raw}
 

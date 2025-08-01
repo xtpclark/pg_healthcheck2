@@ -1,0 +1,19 @@
+{
+  "table_needs_vacuum": {
+    "metric_keywords": [
+      "vacuum_candidates"
+    ],
+    "rules": [
+      {
+        "expression": "data.get('needs_vacuum') == 'VACUUM'",
+        "level": "high",
+        "score": 7,
+        "reasoning": "The table '{data.get('schema_name')}.{data.get('table_name')}' has exceeded its autovacuum threshold and is a candidate for vacuuming. A backlog of tables needing vacuum can lead to table bloat and performance degradation.",
+        "recommendations": [
+          "Monitor the `pg_stat_activity` view to ensure autovacuum workers are running and processing this table.",
+          "If this table consistently appears in this report, it may indicate that autovacuum is not aggressive enough to keep up with churn. Consider lowering the `autovacuum_vacuum_scale_factor` or `autovacuum_vacuum_threshold` for this specific table."
+        ]
+      }
+    ]
+  }
+}

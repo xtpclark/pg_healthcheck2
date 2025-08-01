@@ -8,7 +8,7 @@ def get_weight():
     return 3
 
 
-def run_security_and_encryption_analysis(connector, settings):
+def run_security_and_encryption(connector, settings):
     """
     Performs a security audit, checking for superuser roles, weak password
     encryption, and the status of SSL/TLS encrypted connections. Handles

@@ -5,7 +5,7 @@ def get_weight():
     return 7 # Core configuration, highest importance
 
 
-def run_bgwriter_analysis(connector, settings):
+def run_bgwriter_query(connector, settings):
     """
     Analyzes bgwriter and checkpointer statistics.
     """

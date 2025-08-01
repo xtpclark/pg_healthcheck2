@@ -5,7 +5,7 @@ def get_weight():
     # Data integrity is critical.
     return 8
 
-def run_data_checksums(connector, settings):
+def run_data_checksums_analysis(connector, settings):
     """
     Analyzes the data_checksums configuration to ensure data integrity.
     """
@@ -32,7 +32,7 @@ def run_data_checksums(connector, settings):
                 adoc_content.append("Data checksums are correctly enabled, providing a crucial layer of protection against silent data corruption on disk.")
             else:
                 adoc_content.append("\n==== Data Checksums: ❌ DISABLED")
-                adoc_content.append("[CRITICAL]\n====\nData checksums are disabled. This creates a significant risk of undetected data corruption, which can lead to permanent data loss, incorrect query results, and failed recovery operations. It is strongly recommended to enable this feature.\n====\n")
+                adoc_content.append("[WARNING]\n====\nData checksums are disabled. This creates a significant risk of undetected data corruption, which can lead to permanent data loss, incorrect query results, and failed recovery operations. It is strongly recommended to enable this feature.\n====\n")
 
             # Add the raw output table for reference
             adoc_content.append(formatted)

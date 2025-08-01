@@ -1,0 +1,47 @@
+{
+  "high_total_execution_time": {
+    "metric_keywords": ["queries_by_total_time"],
+    "rules": [
+      {
+        "expression": "float(data.get('total_time', 0)) > 300000",
+        "level": "high",
+        "score": 7,
+        "reasoning": "The query `{data.get('query')}` has a very high total execution time of {data.get('total_time'):.2f}ms, indicating it is a major source of database load.",
+        "recommendations": [
+          "Focus optimization efforts on this query, as improvements will have a large impact on overall system performance.",
+          "Use EXPLAIN (ANALYZE, BUFFERS) to find opportunities for indexing or rewriting."
+        ]
+      }
+    ]
+  },
+  "high_mean_execution_time": {
+    "metric_keywords": ["queries_by_mean_time"],
+    "rules": [
+      {
+        "expression": "float(data.get('mean_time', 0)) > 1000 and int(data.get('calls', 0)) > 5",
+        "level": "medium",
+        "score": 5,
+        "reasoning": "The query `{data.get('query')}` has a high mean execution time of {data.get('mean_time'):.2f}ms, indicating it is consistently slow and impacts application latency.",
+        "recommendations": [
+          "Use EXPLAIN (ANALYZE, BUFFERS) to investigate the query plan for inefficiencies.",
+          "Analyze the query for missing indexes or suboptimal join logic."
+        ]
+      }
+    ]
+  },
+  "high_buffer_hits_query": {
+    "metric_keywords": ["hot_queries"],
+    "rules": [
+      {
+        "expression": "int(data.get('shared_blks_hit', 0)) > 1000000",
+        "level": "info",
+        "score": 2,
+        "reasoning": "The query `{data.get('query')}` is a 'hot query' with {data.get('shared_blks_hit')} buffer hits, indicating it is a critical data access path for your application.",
+        "recommendations": [
+          "Ensure this query remains highly optimal, as any degradation will significantly impact performance.",
+          "Confirm that `shared_buffers` is adequately sized to keep this data in memory."
+        ]
+      }
+    ]
+  }
+}

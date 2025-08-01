@@ -40,7 +40,7 @@ def run_foreign_key_audit(connector, settings):
         elif not missing_fk_indexes_raw:
             adoc_content.append("[NOTE]\n====\nNo unindexed foreign keys found. This is excellent for write performance.\n====\n")
         else:
-            adoc_content.append("[CRITICAL]\n====\n**Action Required: Unindexed Foreign Keys Found**\n\nWhen a row in a parent table is `DELETED` or its key is `UPDATED`, PostgreSQL must check the child table for referencing rows. Without an index on the foreign key column(s), this check requires a **full sequential scan** on the child table, causing severe write amplification and potential locking issues.\n====\n")
+            adoc_content.append("[WARNING]\n====\n**Action Required: Unindexed Foreign Keys Found**\n\nWhen a row in a parent table is `DELETED` or its key is `UPDATED`, PostgreSQL must check the child table for referencing rows. Without an index on the foreign key column(s), this check requires a **full sequential scan** on the child table, causing severe write amplification and potential locking issues.\n====\n")
             adoc_content.append(formatted)
         structured_data["missing_fk_indexes_details"] = {"status": "success", "data": missing_fk_indexes_raw}
     except Exception as e:

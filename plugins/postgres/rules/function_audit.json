@@ -1,0 +1,48 @@
+{
+  "security_definer_function_found": {
+    "metric_keywords": ["security_definer_functions"],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "high",
+        "score": 8,
+        "reasoning": "The function `{data.get('function_name')}` owned by `{data.get('owner')}` is a SECURITY DEFINER function, which can create privilege escalation risks.",
+        "recommendations": [
+          "Review the function's code to ensure it is secure and necessary.",
+          "Set a secure `search_path` at the beginning of the function body (e.g., `SET search_path = pg_catalog;`).",
+          "Ensure EXECUTE privilege is granted only to trusted roles."
+        ]
+      }
+    ]
+  },
+  "superuser_owned_function_found": {
+    "metric_keywords": ["superuser_owned_functions"],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "medium",
+        "score": 6,
+        "reasoning": "The function `{data.get('function_name')}` is owned by a superuser (`{data.get('owner')}`), which violates the principle of least privilege.",
+        "recommendations": [
+          "Change the function ownership to a dedicated, non-superuser role: `ALTER FUNCTION {data.get('function_name')}({data.get('argument_types')}) OWNER TO new_role_name;`",
+          "If this function is also SECURITY DEFINER, treat this as a high-severity security risk."
+        ]
+      }
+    ]
+  },
+  "volatile_function_found": {
+    "metric_keywords": ["volatile_functions"],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "low",
+        "score": 3,
+        "reasoning": "The function `{data.get('function_name')}` is marked VOLATILE, which can prevent performance optimizations like query parallelization.",
+        "recommendations": [
+          "Review the function to see if it can be safely re-labeled as `STABLE` (if it only reads data) or `IMMUTABLE` (if it's a pure calculation).",
+          "Correctly labeling function volatility gives the query planner more information to create faster execution plans."
+        ]
+      }
+    ]
+  }
+}

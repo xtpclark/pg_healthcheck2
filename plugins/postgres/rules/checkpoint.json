@@ -1,0 +1,19 @@
+{
+  "frequent_requested_checkpoints": {
+    "metric_keywords": [
+      "checkpoint_stats"
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('total_checkpoints', 0)) > 100 and (int(data.get('checkpoints_req', 0)) * 100.0 / int(data.get('total_checkpoints', 1))) > 20",
+        "level": "high",
+        "score": 7,
+        "reasoning": "A high percentage ({ (int(data.get('checkpoints_req', 0)) * 100.0 / int(data.get('total_checkpoints', 1))):.1f}%) of checkpoints are being requested by the system, not based on time. This indicates the WAL is filling up too quickly, which can cause I/O storms and inconsistent performance.",
+        "recommendations": [
+          "Increase the `max_wal_size` parameter in `postgresql.conf` to allow more room for WAL logs between checkpoints. This will smooth out I/O performance, especially during periods of high write activity.",
+          "Monitor the `pg_stat_bgwriter` (or `pg_stat_checkpointer` on PG17+) view to track the ratio of timed vs. requested checkpoints after making changes."
+        ]
+      }
+    ]
+  }
+}

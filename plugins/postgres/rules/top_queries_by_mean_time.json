@@ -1,0 +1,17 @@
+{
+  "high_mean_execution_time": {
+    "metric_keywords": ["top_queries_by_mean_time"],
+    "rules": [
+      {
+        "expression": "float(data.get('mean_time', 0)) > 1000 and int(data.get('calls', 0)) > 10",
+        "level": "medium",
+        "score": 5,
+        "reasoning": "The query `{data.get('query')}` has a high mean execution time of {data.get('mean_time'):.2f}ms over {data.get('calls')} calls, indicating it is consistently slow.",
+        "recommendations": [
+          "Use EXPLAIN (ANALYZE, BUFFERS) on the query to get a detailed execution plan.",
+          "Analyze the query for missing indexes, inefficient joins, or complex calculations that could be optimized."
+        ]
+      }
+    ]
+  }
+}
