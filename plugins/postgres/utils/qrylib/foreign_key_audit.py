@@ -37,20 +37,27 @@ def get_missing_fk_indexes_query(connector):
 
 def get_fk_summary_query(connector):
     """
-    Returns a query that provides a summary of foreign key health,
-    counting total FKs and those missing an index.
+    Returns a robust query to count total and unindexed foreign keys.
     """
     return """
-        SELECT
-            COUNT(*) AS total_foreign_keys,
-            COUNT(*) FILTER (
-                WHERE NOT EXISTS (
+        WITH fk_summary AS (
+            SELECT
+                c.conrelid,
+                c.conkey,
+                -- Check for the existence of any index where the leading columns
+                -- match the foreign key columns in the same order.
+                EXISTS (
                     SELECT 1
                     FROM pg_index i
                     WHERE i.indrelid = c.conrelid
-                    AND (i.indkey::int[] @> c.conkey::int[] AND i.indkey::int[] <@ c.conkey::int[])
-                )
-            ) AS unindexed_foreign_keys
-        FROM pg_constraint c
-        WHERE c.contype = 'f';
+                      AND (i.indkey::text[])[0:array_length(c.conkey, 1)] = c.conkey::text[]
+                ) AS has_valid_index
+            FROM pg_constraint c
+            WHERE c.contype = 'f'
+              AND c.convalidated -- Only count validated foreign keys
+        )
+        SELECT
+            count(*) AS total_fk_count,
+            count(*) FILTER (WHERE NOT has_valid_index) AS unindexed_fk_count
+        FROM fk_summary;
     """
