@@ -1,6 +1,8 @@
 import re
-# The import of get_postgresql_version is no longer needed as the connector handles version detection.
-# from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 1
 
 def run_suggested_config_values(connector, settings):
     """

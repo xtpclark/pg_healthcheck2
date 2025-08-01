@@ -1,5 +1,8 @@
-
 # consolidated idx_ check modules.
+def get_weight():
+    """Returns the importance score for this module."""
+    return 1 # Core configuration, highest importance
+
 def run_index_type_analysis(connector, settings):
     """
     Analyzes the usage of specialized index types (GIN, GIST, BRIN, etc.)

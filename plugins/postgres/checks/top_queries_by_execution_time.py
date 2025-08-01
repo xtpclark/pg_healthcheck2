@@ -1,4 +1,8 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_pg_stat_statements_query
+from plugins.postgres.utils.qrylib.pg_stat_statements import get_pg_stat_statements_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 3
 
 def run_top_queries_by_execution_time(connector, settings):
     """

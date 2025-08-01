@@ -1,3 +1,8 @@
+from plugins.postgres.utils.qrylib.autovacuum_config import (
+    get_global_autovacuum_settings_query,
+    get_autovacuum_overrides_query
+)
+
 def get_weight():
     """Returns the importance score for this module."""
     return 10 # Core configuration, highest importance
@@ -14,31 +19,18 @@ def run_autovacuum_config(connector, settings):
     try:
         # --- Global Settings ---
         adoc_content.append("==== Global Autovacuum Settings")
-        global_settings_query = "SELECT name, setting FROM pg_settings WHERE name LIKE 'autovacuum_%' ORDER BY name;"
+        global_settings_query = get_global_autovacuum_settings_query()
         global_formatted, global_raw = connector.execute_query(global_settings_query, return_raw=True)
 
         if "[ERROR]" in global_formatted:
             raise Exception("Could not retrieve global autovacuum settings.")
         
-        # This replace call fixes the newline rendering issue
         adoc_content.append(global_formatted.replace('\\n', '\n'))
         structured_data["global_autovacuum_settings"] = {"status": "success", "data": global_raw}
 
         # --- Tables with Custom Overrides ---
         adoc_content.append("\n==== Tables with Custom Autovacuum Settings")
-        # This simpler query is more robust and avoids the previous error
-        overrides_query = """
-            SELECT
-                n.nspname as schema_name,
-                c.relname as table_name,
-                array_to_string(c.reloptions, ', ') as custom_settings
-            FROM pg_class c
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE c.relkind IN ('r', 'm')
-              AND c.reloptions IS NOT NULL
-              AND array_to_string(c.reloptions, ', ') LIKE '%%autovacuum%%'
-            ORDER BY n.nspname, c.relname;
-        """
+        overrides_query = get_autovacuum_overrides_query()
         overrides_formatted, overrides_raw = connector.execute_query(overrides_query, return_raw=True)
         
         if "[ERROR]" in overrides_formatted:

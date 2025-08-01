@@ -1,3 +1,7 @@
+def get_weight():
+    """Returns the importance score for this module."""
+    return 8
+
 def run_table_metrics(connector, settings):
     """
     Analyzes key table-level metrics, focusing on bloat estimation and scan efficiency to identify performance bottlenecks.

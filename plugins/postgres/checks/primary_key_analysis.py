@@ -1,4 +1,4 @@
-from plugins.postgres.utils.postgresql_version_compatibility import (
+from plugins.postgres.utils.qrylib.primary_key_exhaustion_checks import (
     get_pk_exhaustion_summary_query,
     get_pk_exhaustion_details_query
 )

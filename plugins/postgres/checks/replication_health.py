@@ -1,8 +1,12 @@
-from plugins.postgres.utils.postgresql_version_compatibility import (
+from plugins.postgres.utils.qrylib.replication_health import (
     get_physical_replication_query,
     get_replication_slots_query,
     get_subscription_stats_query
 )
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 4 
 
 def run_replication_health(connector, settings):
     """

@@ -1,5 +1,9 @@
 from plugins.postgres.utils.qrylib.object_inventory import get_object_inventory_query
 
+def get_weight():
+    """Returns the importance score for this module."""
+    return 5
+
 def run_object_inventory(connector, settings=None):
     """
     Collects a comprehensive inventory of all database objects to track

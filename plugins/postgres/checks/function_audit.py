@@ -5,6 +5,10 @@ from plugins.postgres.utils.qrylib.function_audit import (
     get_function_volatility_query
 )
 
+def get_weight():
+    """Returns the importance score for this module."""
+    return 5
+
 def run_function_audit(connector, settings):
     """
     Audits database functions for security risks (SECURITY DEFINER, superuser ownership),

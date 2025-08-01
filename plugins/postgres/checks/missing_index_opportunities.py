@@ -1,3 +1,9 @@
+from plugins.postgres.utils.qrylib.missing_index_opportunities import get_missing_index_opportunities_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 6
+
 def run_missing_index_opportunities(connector, settings):
     """
     Identifies tables with a high number of sequential scans, suggesting
@@ -6,29 +12,15 @@ def run_missing_index_opportunities(connector, settings):
     adoc_content = ["=== Missing Index Opportunities", "Identifies tables that are frequently read using inefficient sequential scans. Adding indexes to support the query patterns on these tables can dramatically improve performance.\n"]
     structured_data = {}
 
-    # This query finds tables that are frequently scanned sequentially and are of a significant size.
-    missing_idx_query = """
-    SELECT
-        schemaname AS schema_name,
-        relname AS table_name,
-        seq_scan AS sequential_scans,
-        pg_size_pretty(pg_relation_size(relid)) AS table_size,
-        n_live_tup AS live_rows
-    FROM pg_stat_user_tables
-    WHERE seq_scan > 1000 AND n_live_tup > 10000 -- Scanned > 1000 times and > 10,000 rows
-    ORDER BY seq_scan DESC
-    LIMIT %(limit)s;
-    """
-
     try:
+        query = get_missing_index_opportunities_query()
+        params = {'limit': settings.get('row_limit', 10)}
+
         if settings.get('show_qry') == 'true':
             adoc_content.append("Missing index opportunities query:")
-            adoc_content.append("[,sql]\n----")
-            adoc_content.append(missing_idx_query % {'limit': settings.get('row_limit', 10)})
-            adoc_content.append("----")
+            adoc_content.append(f"[,sql]\n----\n{query % params}\n----")
 
-        params = {'limit': settings.get('row_limit', 10)}
-        formatted_result, raw_result = connector.execute_query(missing_idx_query, params=params, return_raw=True)
+        formatted_result, raw_result = connector.execute_query(query, params=params, return_raw=True)
 
         if "[ERROR]" in formatted_result:
             adoc_content.append(formatted_result)
@@ -44,7 +36,7 @@ def run_missing_index_opportunities(connector, settings):
     except Exception as e:
         error_msg = f"Failed during missing index analysis: {e}"
         adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
-        structured_data["missing_indexes"] = {"status": "error", "details": error_msg}
+        structured_data["missing_indexes"] = {"status": "error", "details": str(e)}
 
     adoc_content.append("\n[TIP]\n====\nTo find which queries are causing sequential scans on a specific table, you can filter `pg_stat_statements` for that table name. Once you identify a query, use `EXPLAIN` to confirm that an index on the `WHERE` clause columns would be beneficial.\n====\n")
 

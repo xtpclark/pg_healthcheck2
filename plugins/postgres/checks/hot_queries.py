@@ -1,4 +1,9 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_pg_stat_statements_query
+from plugins.postgres.utils.qrylib.hot_queries import get_hot_queries_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    # Performance tuning is an important activity.
+    return 6
 
 def run_hot_queries(connector, settings):
     """
@@ -9,44 +14,26 @@ def run_hot_queries(connector, settings):
     structured_data = {}
 
     try:
-        # Check if pg_stat_statements is enabled using the connector
+        # Pre-check: Ensure pg_stat_statements is available
         if not connector.has_pgstat:
             adoc_content.append("[NOTE]\n====\n`pg_stat_statements` extension is not enabled. Analysis cannot be performed.\n====\n")
             structured_data["hot_queries"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
             return "\n".join(adoc_content), structured_data
-            
-        version_info = connector.version_info
-        if version_info.get('major_version', 0) < 13:
-            raise ValueError(f"PostgreSQL version {version_info.get('version_string', 'Unknown')} is not supported.")
+        
+        # Pre-check: This analysis is most relevant on newer PG versions
+        if connector.version_info.get('major_version', 0) < 13:
+            adoc_content.append("[NOTE]\n====\nThis specific analysis is intended for PostgreSQL 13+ and has been skipped.\n====\n")
+            structured_data["hot_queries"] = {"status": "skipped", "reason": "Unsupported PostgreSQL version."}
+            return "\n".join(adoc_content), structured_data
 
-        # Determine the correct column name for execution time based on PG version
-        time_column = 'total_exec_time' if version_info.get('is_pg14_or_newer') else 'total_time'
-        mean_time_column = 'mean_exec_time' if version_info.get('is_pg14_or_newer') else 'mean_time'
-
-        # Construct the query correctly without the extra ORDER BY from the helper
-        hot_queries_query = f"""
-            SELECT
-                query,
-                calls,
-                {time_column},
-                {mean_time_column},
-                rows,
-                shared_blks_hit,
-                shared_blks_read
-            FROM pg_stat_statements
-            WHERE calls > 0
-            ORDER BY shared_blks_hit DESC
-            LIMIT %(limit)s;
-        """
+        query = get_hot_queries_query(connector)
+        params = {'limit': settings.get('row_limit', 10)}
         
         if settings.get('show_qry') == 'true':
             adoc_content.append("Hot queries query:")
-            adoc_content.append("[,sql]\n----")
-            adoc_content.append(hot_queries_query % {'limit': settings.get('row_limit', 10)})
-            adoc_content.append("----")
+            adoc_content.append(f"[,sql]\n----\n{query % params}\n----")
 
-        params_for_query = {'limit': settings.get('row_limit', 10)}
-        formatted_result, raw_result = connector.execute_query(hot_queries_query, params=params_for_query, return_raw=True)
+        formatted_result, raw_result = connector.execute_query(query, params=params, return_raw=True)
         
         if "[ERROR]" in formatted_result:
             adoc_content.append(formatted_result)
@@ -61,7 +48,7 @@ def run_hot_queries(connector, settings):
     except Exception as e:
         error_msg = f"Failed during hot queries analysis: {e}"
         adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
-        structured_data["hot_queries"] = {"status": "error", "details": error_msg}
+        structured_data["hot_queries"] = {"status": "error", "details": str(e)}
 
     adoc_content.append("\n[TIP]\n====\nQueries with high `shared_blks_hit` are your most frequently accessed data paths. Ensure these queries have optimal indexes and that `shared_buffers` is adequately sized to keep this 'hot' data in memory, minimizing disk I/O.\n====\n")
     
