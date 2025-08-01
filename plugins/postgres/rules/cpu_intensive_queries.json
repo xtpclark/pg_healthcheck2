@@ -1,0 +1,26 @@
+{
+  "high_mean_execution_time": {
+    "metric_keywords": [
+      "top_queries_by_time"
+    ],
+    "data_conditions": [
+      {
+        "key": "calls",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "(float(data.get('mean_exec_time', 0) or data.get('mean_time', 0)) > 1000) and int(data.get('calls', 0)) > 10",
+        "level": "high",
+        "score": 7,
+        "reasoning": "A query has a high average execution time of { (float(data.get('mean_exec_time', 0) or data.get('mean_time', 0))) :.2f} ms over {data.get('calls')} calls. This indicates a consistent performance bottleneck that is likely contributing to high CPU load.",
+        "recommendations": [
+          "Use `EXPLAIN (ANALYZE, BUFFERS)` on the identified query to analyze its execution plan and identify slow operations.",
+          "Consider adding indexes to columns used in `WHERE` clauses, `JOIN` conditions, or `ORDER BY` clauses to improve query performance.",
+          "Rewrite the query to be more efficient if an optimal index strategy is not possible."
+        ]
+      }
+    ]
+  }
+}

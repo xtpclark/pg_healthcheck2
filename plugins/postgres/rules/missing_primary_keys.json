@@ -1,0 +1,29 @@
+{
+  "table_missing_primary_key": {
+    "metric_keywords": [
+      "no_pk_tables"
+    ],
+    "data_conditions": [
+      {
+        "key": "schema_name",
+        "exists": true
+      },
+      {
+        "key": "table_name",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "high",
+        "score": 7,
+        "reasoning": "The table '{data.get('schema_name')}.{data.get('table_name')}' is missing a Primary Key. This can lead to duplicate data, poor performance, and issues with logical replication.",
+        "recommendations": [
+          "Define a Primary Key for this table using `ALTER TABLE` to enforce row uniqueness and improve data integrity.",
+          "If no single column or set of columns provides a natural key, consider adding a new `bigint` identity column or a `uuid` column to serve as the primary key."
+        ]
+      }
+    ]
+  }
+}

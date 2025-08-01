@@ -1,0 +1,36 @@
+{
+  "high_table_bloat": {
+    "metric_keywords": [
+      "table_health_metrics"
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('bloat_pct', 0) or 0) > 20",
+        "level": "high",
+        "score": 6,
+        "reasoning": "The table '{data.get('schema_name')}.{data.get('table_name')}' has an estimated bloat of {data.get('bloat_pct')}%. High bloat wastes disk space and can significantly slow down queries.",
+        "recommendations": [
+          "Reclaim wasted space by running `VACUUM FULL` on the table, but be aware this takes an exclusive lock.",
+          "For an online solution that doesn't block application activity, consider using the `pg_repack` extension."
+        ]
+      }
+    ]
+  },
+  "low_index_scan_percentage": {
+    "metric_keywords": [
+      "table_health_metrics"
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('idx_scan_pct', 100) or 100) < 50 and int(data.get('seq_scan', 0) or 0) > 1000",
+        "level": "high",
+        "score": 7,
+        "reasoning": "The table '{data.get('schema_name')}.{data.get('table_name')}' has a low index scan rate of {data.get('idx_scan_pct')}% despite a high number of sequential scans ({data.get('seq_scan')}). This indicates that queries are not using existing indexes effectively.",
+        "recommendations": [
+          "Analyze the queries accessing this table to see if new indexes are needed for their `WHERE` clauses.",
+          "Use `pg_stat_statements` to identify the specific queries causing the sequential scans."
+        ]
+      }
+    ]
+  }
+}

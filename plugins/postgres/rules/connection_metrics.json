@@ -1,0 +1,46 @@
+{
+  "high_connection_usage": {
+    "metric_keywords": [
+      "total_connections_and_limits"
+    ],
+    "data_conditions": [
+      { "key": "total_connections", "exists": true },
+      { "key": "max_connections", "exists": true }
+    ],
+    "rules": [
+      {
+        "expression": "(int(data.get('total_connections', 0)) * 100.0 / int(data.get('max_connections', 1))) > 80",
+        "level": "high",
+        "score": 6,
+        "reasoning": "Connection usage is at { (int(data.get('total_connections', 0)) * 100.0 / int(data.get('max_connections', 1))):.1f}% of the `max_connections` limit ({data.get('max_connections')}). This poses a risk of connection exhaustion, which could block new application connections.",
+        "recommendations": [
+          "If high usage is expected, consider increasing `max_connections` in `postgresql.conf` and restarting the database. Note that each connection consumes memory.",
+          "Investigate the source of connections using the 'Connections by User and Database' report.",
+          "Ensure your application uses a connection pooler to manage connections efficiently."
+        ]
+      }
+    ]
+  },
+  "idle_in_transaction_connections": {
+    "metric_keywords": [
+      "connection_states"
+    ],
+    "data_conditions": [
+      { "key": "state", "exists": true },
+      { "key": "count", "exists": true }
+    ],
+    "rules": [
+      {
+        "expression": "data.get('state') == 'idle in transaction' and int(data.get('count', 0)) > 5",
+        "level": "high",
+        "score": 7,
+        "reasoning": "There are {data.get('count')} connections in the 'idle in transaction' state. These connections hold open transactions and can retain locks, preventing VACUUM from cleaning up dead rows and leading to table bloat.",
+        "recommendations": [
+          "Investigate the application logic to find and fix workflows where transactions are not explicitly closed with a `COMMIT` or `ROLLBACK`.",
+          "Check for long-running application processes that might hold transactions open unnecessarily.",
+          "Consider setting `idle_in_transaction_session_timeout` to automatically terminate these problematic connections."
+        ]
+      }
+    ]
+  }
+}

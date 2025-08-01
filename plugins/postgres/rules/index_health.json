@@ -1,0 +1,53 @@
+{
+  "unused_index_found": {
+    "metric_keywords": [
+      "unused_indexes"
+    ],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "medium",
+        "score": 4,
+        "reasoning": "The index '{data.get('index_name')}' on table '{data.get('table_name')}' has very low usage ({data.get('index_scans')} scans) and consumes {data.get('index_size')} of space. It adds overhead to write operations without providing significant read performance benefits.",
+        "recommendations": [
+          "IMPORTANT: Before dropping, verify this index is not used on any read replicas, as their usage is not tracked on the primary.",
+          "If the index is confirmed to be unused across all instances, drop it using `DROP INDEX CONCURRENTLY` to reclaim space and reduce write overhead."
+        ]
+      }
+    ]
+  },
+  "duplicate_index_found": {
+    "metric_keywords": [
+      "duplicate_indexes"
+    ],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "high",
+        "score": 6,
+        "reasoning": "The table '{data.get('table_name')}' has functionally duplicate indexes: {data.get('redundant_indexes')}. This provides no performance benefit and doubles the write overhead and storage space required.",
+        "recommendations": [
+          "Carefully analyze the redundant indexes and drop one of them from each group to improve write performance and save space.",
+          "Use the `DROP INDEX CONCURRENTLY` command to avoid locking the table."
+        ]
+      }
+    ]
+  },
+  "invalid_index_found": {
+    "metric_keywords": [
+      "invalid_indexes"
+    ],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "high",
+        "score": 7,
+        "reasoning": "The index '{data.get('index_name')}' on table '{data.get('table_name')}' is marked as invalid. It is completely unusable by the query planner and consumes disk space.",
+        "recommendations": [
+          "Rebuild the index using `REINDEX INDEX CONCURRENTLY \\'{data.get('index_name')}\\';` to make it valid and usable.",
+          "If the index is no longer needed, drop it using `DROP INDEX CONCURRENTLY`."
+        ]
+      }
+    ]
+  }
+}

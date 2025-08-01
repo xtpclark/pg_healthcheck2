@@ -1,0 +1,40 @@
+{
+  "high_call_count_query": {
+    "metric_keywords": [
+      "top_by_calls"
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('calls', 0)) > 10000",
+        "level": "high",
+        "score": 6,
+        "reasoning": "A query was executed {data.get('calls')} times. An extremely high call count can indicate an 'N+1 query' problem, where an application repeatedly runs a query inside a loop instead of fetching all data at once.",
+        "recommendations": [
+          "Review the application code that generates this query to see if it can be rewritten to fetch data in batches or with a single, more comprehensive query.",
+          "Optimizing N+1 problems can dramatically reduce database load and improve application performance."
+        ]
+      }
+    ]
+  },
+  "high_io_wait_time_query": {
+    "metric_keywords": [
+      "top_by_io"
+    ],
+    "data_conditions": [
+        { "key": "total_io_time", "exists": true }
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('total_io_time', 0)) > 5000",
+        "level": "high",
+        "score": 7,
+        "reasoning": "A query spent over { (float(data.get('total_io_time', 0)) / 1000):.2f} seconds waiting for I/O (disk reads/writes). This indicates the query is not being served efficiently from memory.",
+        "recommendations": [
+          "Use `EXPLAIN (ANALYZE, BUFFERS)` on the query to analyze its execution plan and buffer usage.",
+          "High I/O is often caused by missing indexes. Ensure appropriate indexes exist for the query's `WHERE` clauses and `JOIN` conditions.",
+          "Consider increasing `shared_buffers` if the database's cache hit ratio is low."
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "data_checksums_disabled": {
+    "metric_keywords": [
+      "data_checksums_status"
+    ],
+    "data_conditions": [
+      {
+        "key": "data.checksums_enabled",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "data.get('checksums_enabled') == False",
+        "level": "critical",
+        "score": 8,
+        "reasoning": "Data checksums are disabled, creating a severe risk of silent data corruption from disk or I/O errors. This can lead to permanent data loss and prevent successful database recovery.",
+        "recommendations": [
+          "Enable data checksums during cluster initialization (`initdb --checksums`) for all new production databases.",
+          "For existing clusters, plan a maintenance window to use the `pg_checksums` utility to enable checksums. This requires the cluster to be shut down.",
+          "For cloud-managed databases (like RDS), enable this feature via the instance or cluster parameter group and restart the instance. Note that this often requires creating a new instance from a snapshot."
+        ]
+      }
+    ]
+  }
+}

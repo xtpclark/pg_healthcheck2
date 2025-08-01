@@ -1,0 +1,29 @@
+{
+  "unindexed_foreign_key": {
+    "metric_keywords": [
+      "missing_fk_indexes_details"
+    ],
+    "data_conditions": [
+      {
+        "key": "child_table",
+        "exists": true
+      },
+      {
+        "key": "foreign_key_name",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "high",
+        "score": 7,
+        "reasoning": "The foreign key '{data.get('foreign_key_name')}' on table '{data.get('child_table')}' is missing a required index. This causes table scans during parent table UPDATEs/DELETEs, leading to severe write amplification and lock contention.",
+        "recommendations": [
+          "Create an index on the foreign key column(s) of the child table to resolve the performance risk. The check provides a recommended `CREATE INDEX CONCURRENTLY` statement.",
+          "Always create indexes on foreign key columns to ensure efficient enforcement of referential integrity."
+        ]
+      }
+    ]
+  }
+}

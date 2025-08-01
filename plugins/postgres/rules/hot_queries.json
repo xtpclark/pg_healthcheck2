@@ -1,0 +1,29 @@
+{
+  "highly_cached_query": {
+    "metric_keywords": [
+      "hot_queries"
+    ],
+    "data_conditions": [
+      {
+        "key": "shared_blks_hit",
+        "exists": true
+      },
+      {
+        "key": "calls",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('shared_blks_hit', 0)) > 1000000 and int(data.get('calls', 0)) > 100",
+        "level": "info",
+        "score": 2,
+        "reasoning": "A query has an extremely high number of buffer hits ({data.get('shared_blks_hit')}), indicating it is a 'hot' and critical data access path for your application.",
+        "recommendations": [
+          "Review the execution plan for this query to ensure it is highly optimized, as it is frequently executed.",
+          "Confirm that your `shared_buffers` configuration is sufficient to keep this hot data set in memory to avoid disk I/O."
+        ]
+      }
+    ]
+  }
+}
