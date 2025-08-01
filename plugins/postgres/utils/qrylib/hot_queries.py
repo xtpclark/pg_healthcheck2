@@ -16,7 +16,8 @@ def get_hot_queries_query(connector):
     # The `limit` parameter is supplied by the calling check module.
     return f"""
         SELECT
-            query,
+            substring(regexp_replace(query, '\\s+', ' ', 'g') for 120) AS query, -- MODIFIED
+            -- query,
             calls,
             {time_column},
             {mean_time_column},

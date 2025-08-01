@@ -24,8 +24,9 @@ REPORT_SECTIONS = [
         'actions': [
             {'type': 'module', 'module': 'plugins.postgres.checks.postgres_overview', 'function': 'run_postgres_overview'},
             {'type': 'module', 'module': 'plugins.postgres.checks.table_object_counts', 'function': 'run_table_object_counts'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.database_object_inventory', 'function': 'run_database_object_inventory'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.database_object_inventory', 'function': 'run_database_object_inventory_query'},
             {'type': 'module', 'module': 'plugins.postgres.checks.extensions_update_check', 'function': 'run_extensions_update_check'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.transaction_wraparound', 'function': 'run_transaction_wraparound'},
         ]
     },
 
@@ -42,10 +43,10 @@ REPORT_SECTIONS = [
     {
         'title': 'Core Configuration Health',
         'actions': [
-            {'type': 'module', 'module': 'plugins.postgres.checks.autovacuum_config', 'function': 'run_autovacuum_config'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.bgwriter', 'function': 'run_bgwriter'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.checkpoint', 'function': 'run_checkpoint'},
             {'type': 'module', 'module': 'plugins.postgres.checks.pg_stat_statements_config', 'function': 'run_pg_stat_statements_config'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.autovacuum_config', 'function': 'run_autovacuum_config'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.bgwriter', 'function': 'run_bgwriter_query'},
+# Very similar to bgwriter output           {'type': 'module', 'module': 'plugins.postgres.checks.checkpoint', 'function': 'run_checkpoint_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.suggested_config_values', 'function': 'run_suggested_config_values'},
         ]
     },
@@ -73,16 +74,24 @@ REPORT_SECTIONS = [
     {
         'title': 'Performance Deep Dive',
         'actions': [
-            {'type': 'module', 'module': 'plugins.postgres.checks.query_analysis', 'function': 'run_query_analysis'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.cpu_intensive_queries', 'function': 'run_cpu_intensive_queries'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.top_queries_by_execution_time', 'function': 'run_top_queries_by_execution_time'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.top_write_queries', 'function': 'run_top_write_queries'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.hot_queries', 'function': 'run_hot_queries'},
+
+
+            {'type': 'module', 'module': 'plugins.postgres.checks.deep_query_analysis', 'function': 'run_deep_query_analysis'},
+#            {'type': 'module', 'module': 'plugins.postgres.checks.query_analysis', 'function': 'run_query_analysis'},
+#            {'type': 'module', 'module': 'plugins.postgres.checks.top_io_queries', 'function': 'run_top_io_queries'},
+#            {'type': 'module', 'module': 'plugins.postgres.checks.top_queries_by_execution_time', 'function': 'run_top_queries_by_execution_time'},
+#            {'type': 'module', 'module': 'plugins.postgres.checks.top_queries_by_mean_time', 'function': 'run_top_queries_by_mean_time'},
+#            {'type': 'module', 'module': 'plugins.postgres.checks.top_write_queries', 'function': 'run_top_write_queries'},
+#           {'type': 'module', 'module': 'plugins.postgres.checks.hot_queries', 'function': 'run_hot_queries'},
             {'type': 'module', 'module': 'plugins.postgres.checks.long_running_queries', 'function': 'run_long_running_queries'},
             {'type': 'module', 'module': 'plugins.postgres.checks.current_lock_waits', 'function': 'run_current_lock_waits'},
             {'type': 'module', 'module': 'plugins.postgres.checks.temp_files_analysis', 'function': 'run_temp_files_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.cache_analysis', 'function': 'run_cache_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.monitoring_metrics', 'function': 'run_monitoring_metrics'},
+#           This module is not detecting pg_stat_statements.
+#           {'type': 'module', 'module': 'plugins.postgres.checks.cpu_intensive_queries', 'function': 'run_cpu_intensive_queries'},
+
+
         ]
     },
 
@@ -90,8 +99,9 @@ REPORT_SECTIONS = [
     {
         'title': 'Table and Index Health',
         'actions': [
+            {'type': 'module', 'module': 'plugins.postgres.checks.vacuum_analysis', 'function': 'run_vacuum_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.table_health_analysis', 'function': 'run_table_health_analysis'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.index_health_analysis', 'function': 'run_index_health_analysis'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.index_bloat_analysis',  'function': 'run_index_bloat_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.missing_index_opportunities', 'function': 'run_missing_index_opportunities'},
             {'type': 'module', 'module': 'plugins.postgres.checks.missing_primary_keys', 'function': 'run_missing_primary_keys'},
             {'type': 'module', 'module': 'plugins.postgres.checks.foreign_key_audit', 'function': 'run_foreign_key_audit'},
