@@ -9,9 +9,9 @@ def get_database_wraparound_query(connector):
     return """
         SELECT
             d.datname,
-            age(d.datfrozenxid) as oldest_xid_age,
+            age(d.datfrozenxid)::bigint as oldest_xid_age, -- MODIFIED: Cast age() to bigint
             current_setting('autovacuum_freeze_max_age')::float8 as freeze_max_age,
-            round(100 * age(d.datfrozenxid) / current_setting('autovacuum_freeze_max_age')::float8) as percent_towards_wraparound
+            round(100 * age(d.datfrozenxid)::bigint / current_setting('autovacuum_freeze_max_age')::float8) as percent_towards_wraparound -- MODIFIED
         FROM pg_database d
         ORDER BY age(d.datfrozenxid) DESC;
     """
@@ -25,8 +25,8 @@ def get_table_wraparound_query(connector):
     return """
         SELECT
             c.oid::regclass as table_name,
-            greatest(age(c.relfrozenxid), age(t.relfrozenxid)) as xid_age,
-            round(100 * greatest(age(c.relfrozenxid), age(t.relfrozenxid)) / current_setting('autovacuum_freeze_max_age')::float8) as percent_towards_wraparound
+            greatest(age(c.relfrozenxid)::bigint, age(t.relfrozenxid)::bigint) as xid_age, -- MODIFIED: Cast age() results to bigint
+            round(100 * greatest(age(c.relfrozenxid)::bigint, age(t.relfrozenxid)::bigint) / current_setting('autovacuum_freeze_max_age')::float8) as percent_towards_wraparound -- MODIFIED
         FROM pg_class c
         LEFT JOIN pg_class t ON c.reltoastrelid = t.oid
         WHERE c.relkind IN ('r', 'm')
