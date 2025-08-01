@@ -1,4 +1,8 @@
-from plugins.postgres.utils.postgresql_version_compatibility import get_pg_stat_statements_query
+from plugins.postgres.utils.qrylib.pg_stat_statements import get_pg_stat_statements_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 3
 
 def run_top_queries_by_execution_time(connector, settings):
     """
@@ -14,11 +18,8 @@ def run_top_queries_by_execution_time(connector, settings):
             structured_data["top_queries"] = {"status": "not_applicable", "reason": "pg_stat_statements not enabled."}
             return "\n".join(adoc_content), structured_data
         
-        # Get version info from the connector
-        version_info = connector.version_info
-        if version_info.get('major_version', 0) < 13:
-            raise ValueError(f"PostgreSQL version {version_info.get('version_string', 'Unknown')} is not supported.")
-
+        # MODIFIED: Removed the explicit version check. The query library already handles this.
+        
         # Pass the entire connector to the utility function
         top_queries_query = get_pg_stat_statements_query(connector, 'standard') + " LIMIT %(limit)s;"
 
@@ -46,3 +47,6 @@ def run_top_queries_by_execution_time(connector, settings):
     adoc_content.append("\n[TIP]\n====\nQueries with high `total_exec_time` are the primary contributors to database load. Focus optimization efforts here first. Use `EXPLAIN (ANALYZE, BUFFERS)` on these queries to understand their execution plans and identify opportunities for indexing or rewriting.\n====\n")
     
     return "\n".join(adoc_content), structured_data
+
+
+

@@ -1,0 +1,18 @@
+{
+  "high_io_wait_queries": {
+    "metric_keywords": ["top_io_queries"],
+    "rules": [
+      {
+        "expression": "float(data.get('total_io_time', 0)) > 10000",
+        "level": "high",
+        "score": 8,
+        "reasoning": "The query starting with '{data.get('short_query')}' has a very high total I/O time of {data.get('total_io_time')} ms, indicating a significant performance bottleneck.",
+        "recommendations": [
+          "Use 'EXPLAIN (ANALYZE, BUFFERS)' on the full query to inspect its disk usage and I/O operations.",
+          "Ensure appropriate indexes exist for the tables and columns used in the query's WHERE clause.",
+          "Consider if the underlying hardware (disks) is a performance bottleneck."
+        ]
+      }
+    ]
+  }
+}

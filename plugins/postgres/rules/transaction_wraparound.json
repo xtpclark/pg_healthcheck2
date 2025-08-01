@@ -1,0 +1,37 @@
+{
+  "database_nearing_wraparound": {
+    "metric_keywords": [
+      "database_wraparound_risk"
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('percent_towards_wraparound', 0)) > 75",
+        "level": "critical",
+        "score": 10,
+        "reasoning": "The database '{data.get('datname')}' is {data.get('percent_towards_wraparound')}% of the way to transaction ID wraparound. If this reaches 100%, the database will shut down to prevent data loss.",
+        "recommendations": [
+          "IMMEDIATE ACTION REQUIRED: Manually run `VACUUM FREEZE` on the tables in this database that have the highest `xid_age` (identified in the 'Top Tables' report) to advance the database's `datfrozenxid`.",
+          "Ensure that autovacuum is enabled and running frequently enough to process all tables.",
+          "Investigate any long-running transactions that may be preventing autovacuum from freezing old tuples."
+        ]
+      }
+    ]
+  },
+  "table_high_xid_age": {
+    "metric_keywords": [
+      "table_wraparound_risk"
+    ],
+    "rules": [
+      {
+        "expression": "float(data.get('percent_towards_wraparound', 0)) > 50",
+        "level": "high",
+        "score": 8,
+        "reasoning": "The table '{data.get('table_name')}' has a high transaction ID age and is a primary contributor to wraparound risk for its database.",
+        "recommendations": [
+          "This table should be targeted for an aggressive `VACUUM` or `VACUUM FREEZE` operation to advance its `relfrozenxid`.",
+          "Review the autovacuum settings for this specific table to ensure it is being vacuumed frequently enough."
+        ]
+      }
+    ]
+  }
+}

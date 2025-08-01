@@ -1,5 +1,10 @@
-# No longer need to import custom functions for versioning
-# from plugins.postgres.utils.postgresql_version_compatibility import get_postgresql_version, get_long_running_query
+# pg_healthcheck2/plugins/postgres/checks/long_running_queries.py
+
+from plugins.postgres.utils.qrylib.long_running_queries import get_long_running_queries_query
+
+def get_weight():
+    """Returns the importance score for this module."""
+    return 5
 
 def run_long_running_queries(connector, settings):
     """
@@ -9,37 +14,18 @@ def run_long_running_queries(connector, settings):
     structured_data = {}
 
     try:
-        version_info = connector.version_info
-        # The wait_event columns were added in PostgreSQL 9.6, but checking for 10+ is safer and covers most modern systems.
-        wait_event_column = "wait_event_type, wait_event" if version_info.get('major_version', 0) >= 10 else "'N/A' AS wait_event_type, 'N/A' AS wait_event"
-        
-        # FIX: Removed the erroneous backslash before the triple quotes
-        long_running_query = f"""
-            SELECT
-                pid,
-                usename,
-                application_name,
-                client_addr,
-                state,
-                {wait_event_column},
-                age(clock_timestamp(), query_start) AS duration,
-                query
-            FROM pg_stat_activity
-            WHERE state <> 'idle'
-              AND (backend_type = 'client backend' OR backend_type IS NULL)
-              AND age(clock_timestamp(), query_start) > (%(long_running_query_seconds)s * interval '1 second')
-            ORDER BY duration DESC;
-        """
+        # Get the version-aware query from the qrylib helper
+        query = get_long_running_queries_query(connector)
         
         params_for_query = {'long_running_query_seconds': settings.get('long_running_query_seconds', 60)}
 
         if settings.get('show_qry') == 'true':
             adoc_content.append("Long-running queries query:")
             adoc_content.append("[,sql]\n----")
-            adoc_content.append(long_running_query % params_for_query)
+            adoc_content.append(query % params_for_query)
             adoc_content.append("----")
         
-        formatted_result, raw_result = connector.execute_query(long_running_query, params=params_for_query, return_raw=True)
+        formatted_result, raw_result = connector.execute_query(query, params=params_for_query, return_raw=True)
         
         if "[ERROR]" in formatted_result:
             adoc_content.append(formatted_result)

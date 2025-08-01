@@ -1,0 +1,20 @@
+{
+  "high_sequential_scans": {
+    "metric_keywords": [
+      "missing_indexes"
+    ],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "high",
+        "score": 6,
+        "reasoning": "The table '{data.get('schema_name')}.{data.get('table_name')}' has been scanned sequentially {data.get('sequential_scans')} times. Frequent sequential scans on large tables indicate missing indexes, leading to significant performance degradation.",
+        "recommendations": [
+          "Analyze the queries that access this table to identify common filtering and join columns in `WHERE` clauses.",
+          "Create B-Tree indexes on the identified columns to improve query performance and reduce I/O.",
+          "Use `pg_stat_statements` to help pinpoint the exact queries responsible for the high scan count."
+        ]
+      }
+    ]
+  }
+}

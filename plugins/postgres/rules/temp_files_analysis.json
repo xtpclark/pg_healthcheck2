@@ -1,22 +1,18 @@
 {
-  "excessive_temp_file_usage": {
+  "query_spills_to_disk": {
     "metric_keywords": [
       "temp_files"
     ],
-    "data_conditions": [
-      {
-        "key": "total_temp_written",
-        "exists": true
-      }
-    ],
     "rules": [
       {
-        "expression": "float(data.get('total_temp_written', '0 MB').split(' ')[0]) > 1024 and 'GB' in data.get('total_temp_written', '0 MB')",
-        "level": "high",
-        "score": 4,
-        "reasoning": "A query wrote over 1 GB of temporary files ({data.get('total_temp_written')}), indicating significant memory pressure.",
+        "expression": "True",
+        "level": "medium",
+        "score": 5,
+        "reasoning": "The query '{data.get('query')}' created temporary files on disk, writing {data.get('total_temp_written')}. This indicates that the operation could not fit in `work_mem`, leading to slower performance due to disk I/O.",
         "recommendations": [
-          "Queries that spill to disk are often bottlenecked by memory. Increase 'work_mem' for the session, or analyze the query's execution plan to find opportunities for optimization, such as adding indexes."
+          "Analyze the query using `EXPLAIN ANALYZE` to understand the cause of the disk sort, hash, or aggregation.",
+          "Consider increasing the `work_mem` session parameter for this specific query, or globally if memory allows and other queries would also benefit.",
+          "Investigate if adding or improving an index could provide a pre-sorted data path, avoiding the need for a large in-memory sort."
         ]
       }
     ]
