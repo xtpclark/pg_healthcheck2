@@ -18,11 +18,28 @@ def run_foreign_key_audit(connector, settings):
     structured_data = {}
     params = {'limit': settings.get('row_limit', 10)}
 
-    # --- 1. Get the High-Level Summary ---
+    # --- 1. Get and Display the High-Level Summary ---
     try:
         summary_query = get_fk_summary_query(connector)
         _, summary_raw = connector.execute_query(summary_query, return_raw=True)
-        structured_data["foreign_key_summary"] = {"status": "success", "data": summary_raw[0] if summary_raw else {}}
+        summary_data = summary_raw[0] if summary_raw else {}
+        structured_data["foreign_key_summary"] = {"status": "success", "data": summary_data}
+        
+        # MODIFIED: Add summary table to the AsciiDoc report
+        total_fk = summary_data.get('total_fk_count', 0)
+        unindexed_fk = summary_data.get('unindexed_fk_count', 0)
+        
+        summary_table = [
+            "\n==== Foreign Key Summary",
+            '[cols="2,1",options="header"]',
+            "|===",
+            "| Metric | Count",
+            f"| Total Foreign Keys | {total_fk}",
+            f"| Unindexed Foreign Keys | {unindexed_fk}",
+            "|==="
+        ]
+        adoc_content.extend(summary_table)
+
     except Exception as e:
         adoc_content.append(f"\n[ERROR]\n====\nCould not retrieve foreign key summary: {e}\n====\n")
         structured_data["foreign_key_summary"] = {"status": "error", "details": str(e)}
@@ -54,7 +71,10 @@ def run_foreign_key_audit(connector, settings):
         sql_to_run = []
         for fk_info in missing_fk_indexes_raw:
             child_table = fk_info.get('child_table', '')
-            fk_cols = fk_info.get('fk_col_names', [])
+            fk_cols_str = fk_info.get('fk_col_names', '') # The column now comes as a string
+            
+            # The column is now a string like '{col1,col2}', we need to parse it
+            fk_cols = [col.strip() for col in fk_cols_str.strip('{}').split(',')]
             
             if child_table and fk_cols:
                 sanitized_cols = '_'.join(re.sub(r'[^a-zA-Z0-9_]+', '', col) for col in fk_cols)

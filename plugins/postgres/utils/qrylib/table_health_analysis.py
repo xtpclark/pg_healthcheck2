@@ -30,9 +30,11 @@ def get_table_health_query():
             FROM (
                 SELECT
                     c.oid AS tblid,
-                    c.relpages * 8192 AS real_size,
+                    -- MODIFIED: Cast relpages to bigint to prevent integer overflow
+                    c.relpages::bigint * 8192 AS real_size,
                     (SELECT setting FROM pg_settings WHERE name = 'block_size')::numeric AS bs,
-                    CASE WHEN c.reltoastrelid = 0 THEN 0 ELSE c.relpages * 8192 * (1 - (c.reltuples / NULLIF(c.relpages * (((SELECT setting FROM pg_settings WHERE name = 'block_size')::numeric - 24) / 8192), 0))) END AS extra_size,
+                    -- MODIFIED: Cast relpages to bigint here as well
+                    CASE WHEN c.reltoastrelid = 0 THEN 0 ELSE c.relpages::bigint * 8192 * (1 - (c.reltuples / NULLIF(c.relpages * (((SELECT setting FROM pg_settings WHERE name = 'block_size')::numeric - 24) / 8192), 0))) END AS extra_size,
                     CASE WHEN c.reltoastrelid = 0 THEN 0 ELSE 1 - (c.reltuples / NULLIF(c.relpages * (((SELECT setting FROM pg_settings WHERE name = 'block_size')::numeric - 24) / 8192), 0)) END AS extra_ratio,
                     CASE
                         WHEN array_to_string(c.reloptions, ',') ~ 'fillfactor'

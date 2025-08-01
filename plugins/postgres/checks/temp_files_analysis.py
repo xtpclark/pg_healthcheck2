@@ -43,6 +43,6 @@ def run_temp_files_analysis(connector, settings):
         adoc_content.append(f"[ERROR]\n====\n{error_msg}\n====\n")
         structured_data["temp_files"] = {"status": "error", "details": str(e)}
 
-    adoc_content.append("\n[TIP]\n====\nTo reduce temporary file usage, consider:\n1. **Increase `work_mem`**: Allocate more memory for sorts and hashes.\n2. **Optimize Queries**: Use `EXPLAIN ANALYZE` to identify index opportunities.\n3. **Restructure Queries**: Simplify complex queries with CTEs or subqueries.\n====\n")
+    adoc_content.append("\n[TIP]\n====\nTo reduce temporary file usage, consider:\n\n1. **Increase `work_mem`**: Allocate more memory for sorts and hashes.\n2. **Optimize Queries**: Use `EXPLAIN ANALYZE` to identify index opportunities.\n3. **Restructure Queries**: Simplify complex queries with CTEs or subqueries.\n====\n")
 
     return "\n".join(adoc_content), structured_data
