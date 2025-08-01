@@ -25,7 +25,6 @@ def run_foreign_key_audit(connector, settings):
         summary_data = summary_raw[0] if summary_raw else {}
         structured_data["foreign_key_summary"] = {"status": "success", "data": summary_data}
         
-        # MODIFIED: Add summary table to the AsciiDoc report
         total_fk = summary_data.get('total_fk_count', 0)
         unindexed_fk = summary_data.get('unindexed_fk_count', 0)
         
@@ -71,10 +70,9 @@ def run_foreign_key_audit(connector, settings):
         sql_to_run = []
         for fk_info in missing_fk_indexes_raw:
             child_table = fk_info.get('child_table', '')
-            fk_cols_str = fk_info.get('fk_col_names', '') # The column now comes as a string
             
-            # The column is now a string like '{col1,col2}', we need to parse it
-            fk_cols = [col.strip() for col in fk_cols_str.strip('{}').split(',')]
+            # MODIFIED: The value is already a list, so we get it directly.
+            fk_cols = fk_info.get('fk_col_names', [])
             
             if child_table and fk_cols:
                 sanitized_cols = '_'.join(re.sub(r'[^a-zA-Z0-9_]+', '', col) for col in fk_cols)
