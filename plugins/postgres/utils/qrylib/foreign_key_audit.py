@@ -27,8 +27,8 @@ def get_missing_fk_indexes_query(connector):
                 SELECT 1
                 FROM pg_index i
                 WHERE i.indrelid = fk.conrelid
-                -- Ensure the leading columns of the index match the foreign key columns
-                AND (i.indkey::int[] @> fk.conkey::int[] AND i.indkey::int[] <@ fk.conkey::int[])
+                -- This logic checks that an index starts with the FK columns
+                AND (i.indkey::int[])[1:array_length(fk.conkey, 1)] = fk.conkey::int[]
             )
         ORDER BY
             child_table, foreign_key_name
@@ -44,13 +44,12 @@ def get_fk_summary_query(connector):
             SELECT
                 c.conrelid,
                 c.conkey,
-                -- Check for the existence of any index where the leading columns
-                -- match the foreign key columns in the same order.
                 EXISTS (
                     SELECT 1
                     FROM pg_index i
                     WHERE i.indrelid = c.conrelid
-                      AND (i.indkey::text[])[0:array_length(c.conkey, 1)] = c.conkey::text[]
+                      -- This logic correctly checks that an index starts with the FK columns
+                      AND (i.indkey::int[])[1:array_length(c.conkey, 1)] = c.conkey::int[]
                 ) AS has_valid_index
             FROM pg_constraint c
             WHERE c.contype = 'f'
