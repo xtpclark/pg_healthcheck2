@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-AI Developer Assistant for the Health Check Framework.
+AI Developer Agent for the Health Check Framework.
 
-This script provides an interactive command-line interface to generate
-prompts for scaffolding new plugins or adding new checks. It can either
-display the prompt for manual use or execute it directly against a
-configured AI service to generate a ready-to-use shell script.
+This script acts as a conversational agent that understands natural language
+requests to scaffold and generate code for the framework. It formulates a plan
+of action and executes it directly on the filesystem.
 """
 import argparse
 from pathlib import Path
@@ -17,12 +16,6 @@ import sys
 import jinja2
 
 # --- Helper Functions ---
-
-def get_input(prompt, default=None):
-    """Gets user input with an optional default value and strips whitespace."""
-    if default:
-        return (input(f"{prompt} [{default}]: ").strip() or default)
-    return input(f"{prompt}: ").strip()
 
 def render_prompt(template_name, context):
     """Loads and renders a Jinja2 prompt template."""
@@ -49,7 +42,7 @@ def load_config(config_path):
 
 # --- AI Execution Logic ---
 
-def execute_ai_prompt(prompt, settings):
+def execute_ai_prompt(prompt, settings, model_override=None):
     """Sends the generated prompt to the configured AI service."""
     if not settings:
         print("❌ AI settings not loaded. Cannot execute.")
@@ -57,17 +50,14 @@ def execute_ai_prompt(prompt, settings):
 
     ai_provider = settings.get('ai_provider', 'openai')
     API_ENDPOINT = settings.get('ai_endpoint')
-    AI_MODEL = settings.get('ai_model')
+    AI_MODEL = model_override or settings.get('ai_model')
     API_KEY = settings.get('ai_api_key')
 
     if not all([API_ENDPOINT, AI_MODEL, API_KEY]):
         print("❌ AI configuration (`ai_endpoint`, `ai_model`, `ai_api_key`) is incomplete in your config file.")
         return None
 
-    print(f"\n--- Executing AI Code Generation ---")
-    print(f"  - Provider: {ai_provider}")
-    print(f"  - Model: {AI_MODEL}")
-    
+    print(f"  - Contacting AI ({AI_MODEL})...")
     headers = {'Content-Type': 'application/json'}
     payload = {}
 
@@ -91,135 +81,213 @@ def execute_ai_prompt(prompt, settings):
             return result['candidates'][0]['content']['parts'][0]['text']
         else:
             return result['choices'][0]['message']['content']
-
     except Exception as e:
         print(f"❌ An error occurred during the AI request: {e}")
         return None
 
-# --- Main Functions for Sub-commands ---
+# --- Core Agent Logic ---
 
-def handle_prompt_workflow(prompt, settings):
-    """Handles the interactive part of the workflow after a prompt is generated."""
-    while True:
-        choice = input("\nChoose an action: [P]rint prompt, [E]xecute with AI, [Q]uit: ").lower()
-        if choice == 'p':
-            print("\n" + "="*80)
-            print("✅ Prompt Generated! Copy everything below and paste it into your AI assistant.")
-            print("="*80 + "\n")
-            print(prompt)
-            break
-        elif choice == 'e':
-            generated_script = execute_ai_prompt(prompt, settings)
-            if generated_script:
-                # Clean up potential markdown code fences from the AI response
-                if generated_script.strip().startswith("```bash"):
-                    generated_script = generated_script.strip()[7:-4]
-                elif generated_script.strip().startswith("```"):
-                     generated_script = generated_script.strip()[3:-3]
+def execute_operations(operations):
+    """
+    Parses a list of JSON operations from the AI and executes them.
+    """
+    if not operations:
+        print("⚠️ AI did not provide any operations to execute.")
+        return
 
-                print("\n" + "="*80)
-                print("✅ AI Generation Complete! Copy the shell script below and run it in your terminal.")
-                print("="*80 + "\n")
-                print(generated_script.strip())
-            break
-        elif choice == 'q':
-            print("Aborted.")
-            break
-        else:
-            print("Invalid choice, please try again.")
+    print("\n--- Executing Plan ---")
+    for op in operations:
+        action = op.get("action")
+        path = op.get("path")
+        
+        try:
+            if action == "create_directory":
+                print(f"  - Creating directory: {path}")
+                Path(path).mkdir(parents=True, exist_ok=True)
+            elif action == "create_file":
+                print(f"  - Writing file: {path}")
+                content = op.get("content", "")
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                Path(path).write_text(content, encoding='utf-8')
+            else:
+                print(f"⚠️ Unknown action '{action}' requested by AI. Skipping.")
+        except Exception as e:
+            print(f"❌ Failed to execute action '{action}' on '{path}': {e}")
+            return
+    print("✅ Plan executed successfully.")
 
+def clean_ai_json_response(response_text):
+    """Cleans markdown fences and extracts the JSON object."""
+    if "```json" in response_text:
+        return response_text.split("```json")[1].split("```")[0].strip()
+    return response_text.strip()
+    
+def execute_plan_from_ai(plan_response_raw):
+    """Parses and executes a plan from a raw AI response."""
+    if not plan_response_raw:
+        print("❌ AI failed to generate an execution plan.")
+        return
 
-def scaffold_plugin(settings):
-    """Guides the user through creating a prompt to scaffold a new plugin."""
-    print("\n--- Scaffolding a New Health Check Plugin ---")
-    print("Please provide the following details about the new technology.")
+    try:
+        plan_json = json.loads(clean_ai_json_response(plan_response_raw))
+        operations = plan_json.get("operations")
+        post_message = plan_json.get("post_message")
+        
+        execute_operations(operations)
+        
+        if post_message:
+            print("\n" + "="*50 + "\n📝 AI Message:\n" + post_message + "\n" + "="*50)
+            
+    except (json.JSONDecodeError, AttributeError) as e:
+        print(f"❌ Failed to parse AI's execution plan. Error: {e}\nRaw Response: {plan_response_raw}")
+        return
 
-    details = {
-        'technology_name': get_input("Technology Name (e.g., Cassandra, MySQL)"),
-        'lowercase_name': get_input("Lowercase name for code (e.g., cassandra, mysql)"),
-        'connection_library': get_input("Main Python connection library (e.g., cassandra-driver)"),
-        'connection_class': get_input("Primary connection class/function (e.g., cassandra.cluster.Cluster)"),
-        'connection_param': get_input("Key connection parameter (e.g., contact_points)"),
-        'version_query': get_input("Example 'Get Version' query/command", "SELECT 'version'"),
-    }
+def recognize_intent_and_dispatch(user_query, settings):
+    """
+    Takes the user's query, uses the AI to recognize the intent and entities,
+    and then dispatches to the correct handler function.
+    """
+    print(f"\n🤔 Understanding your request: \"{user_query}\"")
+    
+    intent_prompt = render_prompt("intent_recognizer_prompt.adoc", {"user_query": user_query})
+    intent_response_raw = execute_ai_prompt(intent_prompt, settings)
+    
+    if not intent_response_raw:
+        print("❌ Could not get a response from the AI for intent recognition.")
+        return
+        
+    try:
+        intent_json = json.loads(clean_ai_json_response(intent_response_raw))
+        intent = intent_json.get("intent")
+        entities = intent_json.get("entities")
+        
+        print(f"  - Intent recognized: '{intent}'")
+    except (json.JSONDecodeError, AttributeError) as e:
+        print(f"❌ Failed to parse AI's intent response. Error: {e}")
+        print(f"Raw Response: {intent_response_raw}")
+        return
 
-    prompt = render_prompt("plugin_scaffold_prompt.adoc", details)
-    handle_prompt_workflow(prompt, settings)
-
-
-def add_check(settings):
-    """Guides the user through creating a prompt to add a new check."""
-    print("\n--- Adding a New Check to an Existing Plugin (Scaffolder) ---")
-    print("Please provide the following details about the new check.")
-
-    details = {
-        'plugin_name': get_input("Lowercase name of the existing plugin (e.g., kafka, postgres)"),
-        'check_filename': get_input("New check filename (e.g., topic_health_check.py)"),
-        'check_function_name': get_input("New check function name (e.g., run_topic_health_check)"),
-        'check_description': get_input("Brief description of what this check does"),
-        'check_query': get_input("Example query/command for the check", "SELECT 'example'"),
-        'report_title': get_input("Title for this check in the final report", "New Check Title"),
+    # Dispatch to the correct handler based on intent
+    handler_map = {
+        "generate-check": handle_generate_check,
+        "generate-rule": handle_generate_rule,
+        "scaffold-plugin": handle_scaffold_plugin,
+        "add-report": handle_add_report,
+        "add-check": handle_add_check,
+        "plan_comprehensive_checks": handle_plan_comprehensive_checks
     }
     
-    prompt = render_prompt("add_check_prompt.adoc", details)
-    handle_prompt_workflow(prompt, settings)
+    handler = handler_map.get(intent)
+    if handler:
+        handler(entities, settings)
+    else:
+        print(f"⚠️  Sorry, I don't know how to handle the intent '{intent}'.")
 
-def generate_check(settings):
-    """Guides the user through a natural language prompt to generate a new check."""
-    print("\n--- Generating a New Check in an Existing Plugin (AI Generator) ---")
-    print("Describe the check you want to create in plain English.")
+def generic_handler(task_name, prompt_template, entities, settings):
+    """A generic handler to reduce code duplication."""
+    print(f"\n💡 {task_name}...")
+    action_prompt = render_prompt(prompt_template, entities)
+    plan_response_raw = execute_ai_prompt(action_prompt, settings)
+    execute_plan_from_ai(plan_response_raw)
 
-    details = {
-        'plugin_name': get_input("Lowercase name of the existing plugin (e.g., kafka, postgres)"),
-        'natural_language_request': get_input("Describe the check (e.g., 'Check for Kafka topics with a low replication factor')")
-    }
+def handle_generate_check(entities, settings):
+    generic_handler("Generating new check", "generate_check_prompt.adoc", entities, settings)
+
+def handle_generate_rule(entities, settings):
+    generic_handler("Generating new JSON rule", "generate_rule_prompt.adoc", entities, settings)
+
+def handle_scaffold_plugin(entities, settings):
+    generic_handler("Scaffolding new plugin", "plugin_scaffold_prompt.adoc", entities, settings)
     
-    prompt = render_prompt("generate_check_prompt.adoc", details)
-    handle_prompt_workflow(prompt, settings)
+def handle_add_report(entities, settings):
+    generic_handler("Adding new report", "add_report_prompt.adoc", entities, settings)
 
-def add_report(settings):
-    """Guides the user through creating a prompt to add a new report definition."""
-    print("\n--- Adding a New Report Definition to an Existing Plugin ---")
-    print("Please provide the following details for the new report.")
+def handle_add_check(entities, settings):
+    generic_handler("Adding new boilerplate check", "add_check_prompt.adoc", entities, settings)
 
-    details = {
-        'plugin_name': get_input("Lowercase name of the existing plugin (e.g., postgres)"),
-        'report_filename': get_input("New report filename (e.g., security_report.py)"),
-        'report_function_name': get_input("New report definition function name (e.g., get_security_report_definition)"),
-    }
+def handle_plan_comprehensive_checks(entities, settings):
+    """Handles the multi-step planner/executor workflow."""
+    print("\n💡 Formulating a comprehensive plan...")
     
-    prompt = render_prompt("add_report_prompt.adoc", details)
-    handle_prompt_workflow(prompt, settings)
+    # Step 1: Call the planner prompt
+    planner_prompt = render_prompt("planner_prompt.adoc", entities)
+    plan_response_raw = execute_ai_prompt(planner_prompt, settings)
 
+    if not plan_response_raw:
+        print("❌ AI failed to generate a plan.")
+        return
+
+    try:
+        plan_json = json.loads(clean_ai_json_response(plan_response_raw))
+        tasks = plan_json.get("plan", [])
+        if not tasks:
+            print("⚠️ AI returned an empty plan.")
+            return
+
+        # Step 2: Present the plan for user confirmation
+        print("\n🤖 I have formulated a plan to create the following solutions:")
+        for i, task in enumerate(tasks, 1):
+            print(f"   {i}. {task}")
+
+        # Step 3: Interactive Execution Loop
+        mode = 'ask' # Modes: 'ask', 'all'
+        for i, task in enumerate(tasks, 1):
+            print("\n" + "-"*50)
+            print(f"Next up: \"{task}\" ({i}/{len(tasks)})")
+
+            if mode != 'all':
+                choice = input("Generate this solution? (Y)es / (n)o / (a)ll / (q)uit > ").lower().strip()
+                if choice == 'q':
+                    print("Aborting plan execution.")
+                    return
+                elif choice == 'n':
+                    print("Skipping...")
+                    continue
+                elif choice == 'a':
+                    mode = 'all'
+            
+            # Use the existing `generate-check` intent to execute each task
+            tech_name = entities.get("technology_name", "").lower()
+            execution_query = f"add a {tech_name} check for {task}"
+            recognize_intent_and_dispatch(execution_query, settings)
+
+        print("\n✅ Comprehensive plan executed successfully.")
+
+    except (json.JSONDecodeError, AttributeError) as e:
+        print(f"❌ Failed to parse AI's execution plan. Error: {e}\nRaw Response: {plan_response_raw}")
+        return
+
+# --- Main Entry Point ---
 
 def main():
-    """Main entry point with command-line argument parsing."""
-    parser = argparse.ArgumentParser(description='AI Developer Assistant for Health Check Plugins.')
+    """Main entry point with a new conversational interface."""
+    parser = argparse.ArgumentParser(description='AI Developer Agent for Health Check Plugins.')
+    parser.add_argument('query', nargs='?', default=None, help='Your development request in natural language.')
     parser.add_argument('--config', default='config/config.yaml', help='Path to the main configuration file')
-    subparsers = parser.add_subparsers(dest='command', required=True, help='Available commands')
-
-    # --- Scaffolding Commands ---
-    parser_scaffold = subparsers.add_parser('scaffold-plugin', help='Scaffold a new plugin skeleton from detailed prompts.')
-    parser_scaffold.set_defaults(func=scaffold_plugin)
-
-    parser_add = subparsers.add_parser('add-check', help='Scaffold a new check in an existing plugin from detailed prompts.')
-    parser_add.set_defaults(func=add_check)
-
-    parser_add_report = subparsers.add_parser('add-report', help='Scaffold a new report definition in an existing plugin.')
-    parser_add_report.set_defaults(func=add_report)
-    
-    # --- Generative Commands ---
-    parser_generate_check = subparsers.add_parser('generate-check', help='Generate a new check from a natural language description.')
-    parser_generate_check.set_defaults(func=generate_check)
-
-
     args = parser.parse_args()
-    
-    # Load the main configuration to get AI settings
+
     settings = load_config(args.config)
-    
-    # Call the selected function, passing in the settings
-    args.func(settings)
+    if not settings:
+        print("Please ensure your config/config.yaml is set up correctly.")
+        return
+
+    if args.query:
+        recognize_intent_and_dispatch(args.query, settings)
+    else:
+        print("🤖 AI Developer Agent is ready. What would you like to do?")
+        print("   (e.g., 'generate a comprehensive set of postgres health checks')")
+        print("   Type 'quit' or 'exit' to end the session.")
+        while True:
+            try:
+                user_input = input("> ")
+                if user_input.lower() in ['quit', 'exit']:
+                    print("Goodbye!")
+                    break
+                if user_input:
+                    recognize_intent_and_dispatch(user_input, settings)
+            except KeyboardInterrupt:
+                print("\nGoodbye!")
+                break
 
 if __name__ == '__main__':
     main()

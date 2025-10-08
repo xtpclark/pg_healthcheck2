@@ -1,22 +1,19 @@
-AI Prompt Details
+You are an expert Python developer.
+Your task is to generate a JSON object that defines a plan to create a new, boilerplate report definition file.
+Your final output MUST be a single, clean JSON object and nothing else.
 
-Goal: Generate a complete, runnable bash script that adds a new report definition file to an existing plugin, based on a standard template.
-Instructions:
-You are an expert Python developer creating a code generation script.
-Your final output must be a single, complete, and runnable bash script.
-Do not include any explanations or text outside of the bash script itself.
-The script should create the new report definition file and then print a message to the user explaining how to modify their main plugin __init__.py file to load this new report.
-New Report Details:
+== Plan Requirements ==
+The plan will create a single Python file in the `plugins/{{ plugin_name }}/reports/` directory.
+The file should contain a boilerplate function that returns a list for a report definition.
+Infer a function name from the filename (e.g., `security_audit.py` -> `get_security_audit_report_definition`).
 
-    Existing Plugin Name (lowercase): {{ plugin_name }}
+== Output Format ==
+- "operations": A list containing a single "create_file" action.
+- "post_message": A message instructing the user how to integrate their new report into the plugin's `__init__.py`.
 
-    New Report Filename: {{ report_filename }}
+== User Request ==
+- Plugin Name: {{ plugin_name }}
+- New Report Filename: {{ report_filename }}
 
-    New Report Definition Function Name: {{ report_function_name }}
-
-Bash Script Generation Tasks:
-
-   Create a new Python file at plugins/{{ plugin_name }}/reports/{{ report_filename }}.
-The content of this file should be a function named {{ report_function_name }} that returns a list of dictionaries defining the report structure.
-Use the provided minimal report structure as a template for the content, but make sure the module paths are generic (e.g., plugins.{{ plugin_name }}.checks.your_check_here).
-After creating the file, the script should use echo to print a message to the user, instructing them on how to update the get_report_definition method in their main plugins/{{ plugin_name }}/__init__.py file to be able to use the new report.
+== Your Turn ==
+Generate the JSON plan to create the report file.

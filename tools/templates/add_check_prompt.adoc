@@ -1,44 +1,23 @@
-== AI Prompt Details
+You are an expert Python developer and project scaffolder.
+Your task is to generate a JSON object that defines a plan to create a single, boilerplate check module file.
+Your final output MUST be a single, clean JSON object and nothing else.
 
-Goal::
-Generate a complete, runnable bash script that scaffolds a new, boilerplate check module for an existing plugin.
+== Plan Requirements ==
+The plan will create a single Python file in `plugins/{{ plugin_name }}/checks/{{ check_filename }}`.
+The file content will be a boilerplate function named `{{ check_function_name }}`.
+This function must adhere to the framework's architecture:
+- Accepts `connector` and `settings` as arguments.
+- Returns `adoc_content` (string) and `structured_data` (dict).
+- Includes a `try...except` block.
 
-Instructions::
-You are an expert Python developer creating a project scaffolder. Your final output must be a single, complete, and runnable bash script. Do not include any explanations or text outside of the bash script itself. The script will create a new Python file with a boilerplate check function based on the user's specific inputs.
+== Output Format ==
+- "operations": A list containing a single "create_file" action.
+- "post_message": A message showing the user the exact dictionary to add to a report definition to use this new check.
 
-=== New Check Details
+== User Request ==
+- Plugin Name: {{ plugin_name }}
+- New Check Filename: {{ check_filename }}
+- New Check Function Name: {{ check_function_name }}
 
-[horizontal]
-Existing Plugin Name (lowercase):: {{ plugin_name }}
-New Check Filename:: {{ check_filename }}
-New Check Function Name:: {{ check_function_name }}
-Brief Description:: {{ check_description }}
-Example Query/Command:: {{ check_query }}
-Title in Report:: {{ report_title }}
-
-=== Bash Script Generation Tasks
-
-    Create the Check File: Create the new Python file at plugins/{{ plugin_name }}/checks/{{ check_filename }}.
-
-    Generate Python Code: The content of the file must be the complete Python code for the function {{ check_function_name }}. This function must:
-
-        Implement the full dual-output contract (adoc_content, structured_data).
-
-        Include a try...except block for robustness.
-
-        Use the provided example query: {{ check_query }}.
-
-        Have a clear docstring explaining its purpose.
-
-        Format the output into a basic AsciiDoc string using the title: {{ report_title }}.
-
-        Format the output into the required structured_data dictionary.
-
-    Final Message: After creating the file, echo a message to the user showing them the exact Python dictionary snippet they need to add to an actions list within a report definition file to run their new check.
-
-=== Example of the correct final message format:
-
-echo "To include this check in a report, add the following dictionary to an 'actions' list:"
-echo ""
-echo "    {'type': 'module', 'module': 'plugins.{{ plugin_name }}.checks.{{ check_filename[:-3] }}', 'function': '{{ check_function_name }}'}"
-echo ""
+== Your Turn ==
+Generate the JSON plan to create the boilerplate check file.
