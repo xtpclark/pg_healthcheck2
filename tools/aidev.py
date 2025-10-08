@@ -149,13 +149,11 @@ def execute_operations(operations, settings):
         return False
     print("\n--- Executing File Creation Plan ---")
     for op in operations:
-        # --- NEW: Hardened defensive check ---
         action = op.get("action")
-        path_str = op.get("path") or op.get("target_file") 
+        path_str = op.get("path") or op.get("target_file")
         if not all([action, path_str]):
             print(f"⚠️  Skipping malformed operation in AI plan: {op}")
             continue
-        # --- End of new check ---
 
         path = Path(path_str)
         try:
@@ -170,6 +168,9 @@ def execute_operations(operations, settings):
                 
                 if path.suffix == '.py':
                     validate_and_correct_code(path, settings)
+            elif action == "create_directory":
+                print(f"  - Creating directory: {path}")
+                path.mkdir(parents=True, exist_ok=True)
             else:
                 print(f"⚠️ Unknown action '{action}' requested. Skipping.")
         except Exception as e:
@@ -272,8 +273,17 @@ def handle_generate_check(entities, settings):
     generic_handler("Generating new check", "generate_check_prompt.adoc", entities, settings)
 def handle_generate_rule(entities, settings):
     generic_handler("Generating new JSON rule", "generate_rule_prompt.adoc", entities, settings)
+
 def handle_scaffold_plugin(entities, settings):
     generic_handler("Scaffolding new plugin", "plugin_scaffold_prompt.adoc", entities, settings)
+
+def handle_scaffold_plugin(entities, settings):
+    """Prepares variables and calls the generic handler for scaffolding."""
+    tech_name = entities.get("technology_name", "UnknownPlugin")
+    entities['technology_name_lowercase'] = tech_name.lower().replace(' ', '').replace('-', '')
+    entities['TechnologyNameCamelCase'] = tech_name.replace(' ', '').replace('-', '').title()
+    generic_handler("Scaffolding new plugin", "plugin_scaffold_prompt.adoc", entities, settings)
+
 def handle_add_report(entities, settings):
     generic_handler("Adding new report", "add_report_prompt.adoc", entities, settings)
 def handle_add_check(entities, settings):
