@@ -1,0 +1,16 @@
+{
+  "check_module": "data_parts_health",
+  "rules": [
+    {
+      "id": "unmerged-parts-warning",
+      "description": "Warn if unmerged or outdated data parts are detected",
+      "condition": {
+        "key": "data_parts_health.data.unmerged_parts",
+        "operator": "length_greater_than",
+        "value": 0
+      },
+      "severity": "warning",
+      "message": "Unmerged or outdated data parts detected. This may impact data consistency or performance."
+    }
+  ]
+}

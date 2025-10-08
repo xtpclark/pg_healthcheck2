@@ -1,0 +1,12 @@
+{
+  "name": "High Memory Usage Queries Check",
+  "description": "Evaluates queries consuming high memory in ClickHouse.",
+  "rules": [
+    {
+      "condition": "len(structured_data['high_memory_queries']['data']) > 0",
+      "severity": "high",
+      "message": "High memory usage queries detected. Review and optimize the identified queries.",
+      "recommendation": "Optimize queries or adjust memory limits to prevent performance issues."
+    }
+  ]
+}

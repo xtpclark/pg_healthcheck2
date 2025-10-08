@@ -1,0 +1,26 @@
+{
+    "rules": [
+        {
+            "id": "memory-usage-high",
+            "description": "Memory usage is critically high (>90%)",
+            "condition": {
+                "check": "memory_usage",
+                "path": "memory_usage.data.used_memory",
+                "operator": ">",
+                "value": "expr: memory_usage.data.max_memory * 0.9"
+            },
+            "severity": "critical"
+        },
+        {
+            "id": "memory-fragmentation-high",
+            "description": "Memory fragmentation ratio is high (>1.5)",
+            "condition": {
+                "check": "memory_usage",
+                "path": "fragmentation_ratio.data.ratio",
+                "operator": ">",
+                "value": 1.5
+            },
+            "severity": "warning"
+        }
+    ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "Persistence Settings Check",
+  "description": "Evaluates the configuration and status of RDB and AOF persistence mechanisms to ensure data durability.",
+  "rules": [
+    {
+      "condition": "structured_data['persistence_settings']['status'] == 'success' and structured_data['recommendations']['status'] == 'critical'",
+      "action": "alert",
+      "message": "Critical: Neither RDB nor AOF persistence is enabled. Data will be lost on restart.",
+      "severity": 9
+    },
+    {
+      "condition": "structured_data['persistence_settings']['status'] == 'success' and structured_data['recommendations']['status'] == 'warning'",
+      "action": "warn",
+      "message": "Warning: AOF is not enabled. Data changes between RDB snapshots may be lost on crash.",
+      "severity": 5
+    },
+    {
+      "condition": "structured_data['persistence_settings']['status'] == 'error'",
+      "action": "alert",
+      "message": "Error: Failed to retrieve persistence settings or status.",
+      "severity": 7
+    }
+  ]
+}

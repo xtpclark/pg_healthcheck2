@@ -1,0 +1,26 @@
+{
+  "rules": [
+    {
+      "id": "valkey-replication-link-down",
+      "description": "Master link is down for a replica",
+      "condition": {
+        "key": "replication_status.data.master_link_status",
+        "operator": "eq",
+        "value": "down"
+      },
+      "severity": "critical",
+      "message": "The link to the master is down. Replication is not occurring. Investigate connectivity or configuration issues immediately."
+    },
+    {
+      "id": "valkey-replication-high-lag",
+      "description": "High replication lag detected",
+      "condition": {
+        "key": "replication_status.data",
+        "operator": "custom",
+        "value": "lambda data: any(int(data.get(f'slave{i}_repl_offset', 0)) - int(data.get('master_repl_offset', 0)) > 1000 for i in range(int(data.get('connected_slaves', 0)))) if data.get('role') == 'master' else (int(data.get('master_repl_offset', 0)) - int(data.get('slave_repl_offset', 0)) > 1000 if data.get('role') == 'slave' else False)"
+      },
+      "severity": "warning",
+      "message": "High replication lag detected. Consider investigating network or performance issues."
+    }
+  ]
+}
