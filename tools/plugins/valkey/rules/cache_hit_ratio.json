@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "cache_hit_ratio": {
+      "thresholds": {
+        "low_hit_ratio": {
+          "value": 70,
+          "condition": "<",
+          "severity": "warning",
+          "message": "Cache hit ratio is below 70%. Consider optimizing your caching strategy."
+        }
+      },
+      "data_path": "cache_hit_ratio.data.hit_ratio_percent"
+    }
+  }
+}

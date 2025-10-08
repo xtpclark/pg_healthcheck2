@@ -1,0 +1,12 @@
+{
+  "check_module": "keyspace_stats",
+  "rules": [
+    {
+      "id": "KS001",
+      "description": "High number of keys in keyspace",
+      "condition": "structured_data['keyspace_stats']['status'] == 'success' and sum(int(stats.get('keys', '0')) for stats in structured_data['keyspace_stats']['data'].values()) > 1000000",
+      "severity": "warning",
+      "recommendation": "Consider partitioning data or implementing key expiration policies to manage keyspace size."
+    }
+  ]
+}

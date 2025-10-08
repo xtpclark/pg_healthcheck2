@@ -1,0 +1,16 @@
+{
+  "rules": [
+    {
+      "id": "valkey-connected-clients-high",
+      "description": "Warn if connected clients are close to the maximum limit",
+      "condition": {
+        "check": "connected_clients",
+        "path": "client_connections.data.connected_clients",
+        "operator": ">=",
+        "value": "max_clients * 0.9"
+      },
+      "severity": "warning",
+      "message": "The number of connected clients is approaching the maximum limit."
+    }
+  ]
+}
