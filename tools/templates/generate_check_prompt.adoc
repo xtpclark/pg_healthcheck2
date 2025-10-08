@@ -1,0 +1,52 @@
+== AI Prompt Details
+
+Goal::
+Generate a complete, runnable bash script that creates a new, fully-coded check module for an existing plugin. The AI must reason about the user's natural language request and generate Python code that adheres to the framework's strict architectural rules.
+
+Instructions::
+You are an expert Python developer and AI code generator. Your task is to interpret a user's request and generate a single, complete, and runnable bash script. This script will create a new Python file containing a "check module" for the pg_healthcheck2 framework. Do not include any explanations or text outside of the bash script itself.
+
+=== Framework Architecture Rules (CRITICAL)
+
+The framework has a strict architecture that you MUST follow:
+
+    Plugin Directory: The new check file must be created inside the plugins/{{ plugin_name }}/checks/ directory.
+
+    Check Function Contract: The Python file must contain a single function. This function MUST:
+
+        Accept two arguments: connector and settings.
+
+        Return exactly two values: adoc_content (a string) and structured_data (a dictionary). This is the "dual-output" contract.
+
+    Robustness: The function MUST include a try...except block to gracefully handle errors during its execution.
+
+    Structured Data Format: The structured_data dictionary that is returned MUST follow this format: {'unique_key': {'status': 'success' or 'error', 'data': [...], 'error': '...'}}.
+
+    Naming Conventions: Infer a logical, snake_case filename and function name from the user's request. For example, a request to "check for hot partitions" might become the file hot_partitions_check.py with the function run_hot_partitions_check.
+
+=== User Request
+
+[horizontal]
+Existing Plugin Name (lowercase):: {{ plugin_name }}
+Natural Language Request:: {{ natural_language_request }}
+
+=== Bash Script Generation Tasks
+
+    Infer Names: Based on the user's request, determine a logical check_filename and check_function_name.
+
+    Create the Check File: Create the new Python file at plugins/{{ plugin_name }}/checks/[your_inferred_filename].py.
+
+    Generate Python Code: The content of the file must be the complete, well-documented Python code for the check function. The code should:
+
+        Implement the full dual-output contract.
+
+        Contain a plausible query or command needed to get the data, based on the user's request.
+
+        Include logic to format the results into a simple AsciiDoc string.
+
+        Include logic to format the results into the required structured_data dictionary format.
+
+    Final Message: After creating the file, echo a message to the user showing them the exact Python dictionary snippet they need to add to an actions list within a report definition file (e.g., plugins/{{ plugin_name }}/reports/default.py).
+
+Example of the correct final message format:
+echo "To include this check in a report, add the following dictionary to an 'actions' list:" echo "" echo " {'type': 'module', 'module': 'plugins.mysql.checks.server_version_check', 'function': 'run_server_version_check'}" echo ""

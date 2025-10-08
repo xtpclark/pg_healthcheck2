@@ -1,0 +1,95 @@
+= AI Developer Assistant (aidev.py)
+:toc: left
+:toclevels: 2
+:sectnums:
+
+This document is the guide for using the `aidev.py` script, an interactive command-line tool designed to accelerate the development of plugins for the pg_healthcheck2 framework.
+
+== Overview
+The AI Developer Assistant is a tool that leverages Generative AI to automate the creation of boilerplate code for new plugins and their components. It acts as an interactive wizard that gathers necessary information from you, formats it into a sophisticated prompt, and can either:
+
+a. Print the prompt for you to copy and use in a web-based AI interface.
+b. Execute the prompt directly against the AI service configured in your main `config/config.yaml` file, returning a ready-to-run shell script.
+
+The primary goal is to handle the repetitive aspects of creating correctly structured files, allowing you to focus on the expert logic of the checks themselves.
+
+== Core Concepts
+The assistant operates in two primary modes:
+
+Scaffolding:: Used for creating components with a precise, pre-defined structure. You provide specific details (like filenames and function names), and the tool generates a boilerplate skeleton. This is reliable and predictable.
+Generation:: Used for creating components from a high-level, natural language request. You provide an English description of what you want to check, and the AI reasons about the framework's architecture to generate the complete code. This is faster and more intuitive.
+
+== Usage
+All commands should be run from the root of the project directory.
+
+.General syntax
+[source,bash]
+----
+python3 tools/aidev.py [command]
+----
+
+.To see all available commands
+[source,bash]
+----
+python3 tools/aidev.py --help
+----
+
+The tool will always prompt you for the necessary information for each command. After gathering the details, you will be asked to either `[P]rint` the prompt or `[E]xecute` it.
+
+== Command Examples
+
+=== Creating a New Plugin (scaffold-plugin)
+This command scaffolds the entire directory structure and all necessary boilerplate files for a brand-new plugin.
+
+. Run the command:
++
+[source,bash]
+----
+python3 tools/aidev.py scaffold-plugin
+----
+. Answer the prompts: The tool will ask for the technology name, connection library, class names, etc.
+. Execute: The AI will return a bash script. When you run this script, it will create the entire `plugins/your_plugin_name/` directory structure.
+
+=== Adding a New Check Module
+You can add a new check in two ways.
+
+==== Scaffolding a Check (add-check)
+Use this when you know the specific details of your check and want a predictable boilerplate file.
+
+. Run the command:
++
+[source,bash]
+----
+python3 tools/aidev.py add-check
+----
+. Answer the prompts: Provide the plugin name, the desired filename (e.g., `topic_health_check.py`), the function name, and an example query.
+
+==== Generating a Check (generate-check)
+Use this when you have a clear idea of what you want to check and want the AI to handle the implementation details.
+
+. Run the command:
++
+[source,bash]
+----
+python3 tools/aidev.py generate-check
+----
+. Answer the prompts: Provide the target plugin name and a plain English description of your goal.
++
+.Example Interaction
+....
+Lowercase name of the existing plugin: mysql
+Describe the check: check for any databases that are using a non-utf8mb4 character set
+....
+. Execute: The AI will infer the best file/function names and generate a fully coded check module that attempts to solve the request.
+
+=== Adding a New Report Definition (add-report)
+Use this command to create a new report "blueprint" file, which you can then customize to include the specific checks you want.
+
+. Run the command:
++
+[source,bash]
+----
+python3 tools/aidev.py add-report
+----
+. Answer the prompts: Provide the plugin name and a name for your new report file (e.g., `security_audit_report.py`).
+. Execute: The AI will generate a script to create the new report file. It will also provide instructions on how to modify your plugin's `__init__.py` to make this new report selectable by the main application.

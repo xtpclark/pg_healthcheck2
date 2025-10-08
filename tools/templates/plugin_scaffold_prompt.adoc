@@ -1,0 +1,49 @@
+AI Prompt Details
+
+Goal: Generate a complete, runnable bash script that scaffolds a new plugin skeleton for the pg_healthcheck2 framework.
+Instructions:
+You are an expert Python developer creating a project scaffolder.
+Your final output must be a single, complete, and runnable bash script.
+Do not include any explanations or text outside of the bash script itself.
+Use mkdir -p to create the necessary directory structure. Use cat << 'EOF' > [filepath] to write the content of each Python or AsciiDoc file.
+Plugin Details:
+
+    Technology Name: {{ technology_name }}
+
+    Lowercase Name (for code): {{ lowercase_name }}
+
+    Main Python Connection Library: {{ connection_library }}
+
+    Primary Admin/Connection Class: {{ connection_class }}
+
+    Key Connection Parameter: {{ connection_param }}
+
+    Example "Get Version" Query/Command: {{ version_query }}
+
+Bash Script Generation Tasks:
+Generate a bash script that creates the following directory structure and files:
+
+    plugins/{{ lowercase_name }}/
+
+    plugins/{{ lowercase_name }}/__init__.py
+
+    plugins/{{ lowercase_name }}/connector.py
+
+    plugins/{{ lowercase_name }}/checks/
+
+    plugins/{{ lowercase_name }}/checks/overview_check.py
+
+    plugins/{{ lowercase_name }}/reports/
+
+    plugins/{{ lowercase_name }}/reports/default.py
+
+    plugins/{{ lowercase_name }}/docs/
+
+    plugins/{{ lowercase_name }}/docs/README.adoc
+
+    plugins/{{ lowercase_name }}/rules/
+
+ 
+   plugins/{{ lowercase_name }}/templates/prompts/
+
+   plugins/{{ lowercase_name }}/templates/report_parts/
