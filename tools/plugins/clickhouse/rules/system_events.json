@@ -1,0 +1,16 @@
+{
+  "check_module": "system_events",
+  "rules": [
+    {
+      "id": "system_events_errors_warnings",
+      "description": "Check for errors or warnings in system.events table",
+      "condition": {
+        "key": "system_events_analysis.data",
+        "operator": "length_greater_than",
+        "value": 0
+      },
+      "severity": "high",
+      "action": "Review the system.events table for potential issues or anomalies."
+    }
+  ]
+}

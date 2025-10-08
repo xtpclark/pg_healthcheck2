@@ -1,0 +1,210 @@
+You are an expert Python developer and project scaffolder for the pg_healthcheck2 framework.
+Your task is to generate a JSON object that defines a plan to create a complete, valid plugin skeleton that adheres to the framework's BasePlugin contract.
+Your final output MUST be a single, clean JSON object and nothing else.
+
+== Technology Analysis (CRITICAL) ==
+Before generating content, you MUST analyze the requested technology: '{{ technology_name }}'.
+- Determine the standard Python library used to connect to it (e.g., redis for Redis, pyodbc for MS SQL, pymongo for MongoDB).
+- Determine the common data return format (e.g., a list of dictionaries for SQL, a single dictionary for a Redis INFO command, a list of dictionaries for a MongoDB find command).
+- Based on this analysis, you will generate a functional boilerplate connector.py by adapting the correct example from the "Boilerplate Content" section.
+
+== Framework Architecture (CRITICAL) ==
+Every new plugin MUST adhere to this exact directory structure and content. You MUST generate all specified directories and files.
+- The root directory MUST be plugins/{{ technology_name_lowercase }}/.
+- It MUST contain an __init__.py with the exact content provided in the "Boilerplate Content" section below.
+- It MUST contain a connector.py with a functional, technology-specific boilerplate adapted from the examples below.
+- It MUST contain the following empty subdirectories:
+	- plugins/{{ technology_name_lowercase }}/checks
+	- plugins/{{ technology_name_lowercase }}/reports
+	- plugins/{{ technology_name_lowercase }}/rules
+	- plugins/{{ technology_name_lowercase }}/utils
+	- plugins/{{ technology_name_lowercase }}/utils/qrylib
+
+== Boilerplate Content (CRITICAL) ==
+You MUST use this exact code for the file contents, only replacing the placeholder variables and adapting the connector logic as required.
+
+=== __init__.py Content (Static) ===
+----
+from pathlib import Path
+from plugins.base import BasePlugin
+from .connector import {{ TechnologyNameCamelCase }}Connector
+
+class {{ TechnologyNameCamelCase }}Plugin(BasePlugin):
+    """The {{ technology_name }} implementation of the plugin interface."""
+
+    @property
+    def technology_name(self):
+        return "{{ technology_name_lowercase }}"
+
+    def get_connector(self, settings):
+        """Returns an instance of the {{ technology_name }} connector."""
+        return {{ TechnologyNameCamelCase }}Connector(settings)
+
+    def get_rules_config(self):
+        """Returns the technology-specific analysis rules."""
+        # Placeholder: Implement rule loading logic
+        return {}
+    
+    def get_report_definition(self, report_config_file=None):
+        """Returns the structure of the report, defining which checks to run."""
+        # Placeholder: Implement report definition loading
+        return []
+
+    def get_template_path(self) -> Path:
+        """Returns the path to this plugin's templates directory."""
+        return Path(__file__).parent / "templates"
+----
+
+=== connector.py Content (Technology-Specific Examples) ===
+
+This is an example for MS SQL using pyodbc. Adapt for other SQL databases.
+```
+import pyodbc
+class {{ TechnologyNameCamelCase }}Connector:
+"""Handles all direct communication with {{ technology_name }}."""
+def __init__(self, settings):
+    self.settings = settings
+    self.conn = None
+
+def connect(self):
+    """Establishes a connection to the database."""
+    # Example connection string for pyodbc
+    self.conn = pyodbc.connect(
+        'DRIVER={ODBC Driver 17 for SQL Server};'
+        f"SERVER={self.settings['host']};"
+        f"DATABASE={self.settings['database']};"
+        f"UID={self.settings['user']};"
+        f"PWD={self.settings['password']}"
+    )
+
+def disconnect(self):
+    if self.conn:
+        self.conn.close()
+
+def execute_query(self, query, params=None, return_raw=False):
+    """Executes a query and returns formatted and raw results."""
+    cursor = self.conn.cursor()
+    cursor.execute(query)
+    columns = [column[0] for column in cursor.description]
+    results = cursor.fetchall()
+    raw_results = [dict(zip(columns, [str(item) for item in row])) for row in results]
+    
+    # Basic AsciiDoc table formatting
+    table = ['|===', '|' + '|'.join(columns)]
+    for row in raw_results:
+        table.append('|' + '|'.join(row.values()))
+    table.append('|===')
+    formatted = '\n'.join(table)
+    
+    return (formatted, raw_results) if return_raw else formatted
+```
+
+--- Example 2: Redis ---
+```
+import redis
+
+class {{ TechnologyNameCamelCase }}Connector:
+"""Handles all direct communication with Redis."""
+
+def __init__(self, settings):
+    self.settings = settings
+    self.conn = None
+
+def connect(self):
+    """Establishes a connection to the database."""
+    self.conn = redis.Redis(
+        host=self.settings['host'],
+        port=self.settings['port'],
+        password=self.settings.get('password'),
+        decode_responses=True # Important for getting strings
+    )
+    self.conn.ping()
+
+def disconnect(self):
+    if self.conn:
+        self.conn.close()
+
+def execute_query(self, query, params=None, return_raw=False):
+    """Executes a query and returns formatted and raw results."""
+    raw_results = {}
+    if query.strip().upper() == "INFO MEMORY":
+        raw_results = self.conn.info('memory')
+    else:
+        # Placeholder for other Redis commands
+        raw_results = {"error": "Command not implemented in boilerplate"}
+
+    # Format the dictionary into a two-column AsciiDoc table
+    columns = ['Metric', 'Value']
+    table = ['|===', '|' + '|'.join(columns)]
+    for key, value in raw_results.items():
+        table.append(f'|{key}|{value}')
+    table.append('|===')
+    formatted = '\n'.join(table)
+    
+    return (formatted, raw_results) if return_raw else formatted
+```
+    
+--- Example 3: MongoDB ---
+```
+import pymongo
+import json
+from bson import json_util # Required to handle MongoDB specific types
+
+class {{ TechnologyNameCamelCase }}Connector:
+"""Handles all direct communication with MongoDB."""
+
+def __init__(self, settings):
+    self.settings = settings
+    self.client = None
+    self.db = None
+
+def connect(self):
+    """Establishes a connection to the database."""
+    self.client = pymongo.MongoClient(self.settings['host'])
+    self.db = self.client[self.settings['database']]
+
+def disconnect(self):
+    if self.client:
+        self.client.close()
+
+def execute_query(self, query, params=None, return_raw=False):
+    """Executes a query and returns formatted and raw results."""
+    # For MongoDB, the 'query' is expected to be a JSON string
+    # e.g., '{"collection": "my_collection", "filter": {"status": "active"}}'
+    query_obj = json.loads(query)
+    collection = self.db[query_obj['collection']]
+    
+    # Use json_util to handle BSON types like ObjectId
+    raw_results_bson = list(collection.find(query_obj.get('filter', {})))
+    raw_results = json.loads(json_util.dumps(raw_results_bson))
+
+    if not raw_results:
+         return ("[NOTE]\n====\nNo results returned.\n====\n", []) if return_raw else ""
+
+    # Basic AsciiDoc table formatting from a list of dicts
+    columns = list(raw_results[0].keys())
+    table = ['|===', '|' + '|'.join(columns)]
+    for doc in raw_results:
+        row_values = [str(doc.get(col, '')) for col in columns]
+        table.append('|' + '|'.join(row_values))
+    table.append('|===')
+    formatted = '\n'.join(table)
+    
+    return (formatted, raw_results) if return_raw else formatted
+
+```
+
+== Output Format (CRITICAL) ==
+- Your output MUST be a JSON object with "operations" and "post_message" keys.
+	- "operations": A list of all create_directory and create_file actions. Each action MUST be a dictionary with these exact keys:
+		- action: The string "create_directory" or "create_file".
+		- path: The full, relative path for the file or directory.
+		- content: The string content for the file (only for "create_file" actions).
+	- "post_message": A summary message for the user confirming the scaffolding is complete.
+
+== Your Turn ==
+- Technology Name: {{ technology_name }}
+- Lowercase Name: {{ technology_name_lowercase }}
+- CamelCase Name: {{ TechnologyNameCamelCase }}
+
+Generate the JSON plan to scaffold the plugin, selecting and adapting the correct connector boilerplate for the specified technology.

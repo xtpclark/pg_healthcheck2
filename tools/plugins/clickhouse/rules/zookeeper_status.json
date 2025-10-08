@@ -1,0 +1,23 @@
+{
+    "check": "zookeeper_status",
+    "rules": [
+        {
+            "section": "zookeeper_status",
+            "condition": "status == 'success'",
+            "message": "ZooKeeper connections are active and healthy.",
+            "severity": "info"
+        },
+        {
+            "section": "zookeeper_status",
+            "condition": "status == 'warning'",
+            "message": "ZooKeeper data is unavailable. Replication may not be configured or there is a connectivity issue.",
+            "severity": "warning"
+        },
+        {
+            "section": "zookeeper_status",
+            "condition": "status == 'error'",
+            "message": "Failed to retrieve ZooKeeper status. Replication coordination may be impacted.",
+            "severity": "critical"
+        }
+    ]
+}
