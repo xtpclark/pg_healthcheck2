@@ -6,6 +6,7 @@ This script acts as a conversational agent that understands natural language
 requests to scaffold, generate, and integrate code for the framework. It also
 validates and self-corrects the code it produces.
 """
+import os
 import argparse
 from pathlib import Path
 import yaml
@@ -14,7 +15,19 @@ import requests
 import time
 import sys
 import jinja2
+from datetime import datetime, timedelta
+import logging
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler(f'logs/aidev_{datetime.now():%Y%m%d_%H%M%S}.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+	
 # --- Pyflakes import for self-correction ---
 try:
     from pyflakes.api import check as pyflakes_check
@@ -101,83 +114,110 @@ def clean_ai_response(response_text, response_type="json"):
         return response_text.split("*AI JSON Response:*")[1].strip()
     return response_text.strip()
 
-def validate_and_correct_code(file_path, settings):
-    """Lints a Python file and triggers a self-correction loop if errors are found."""
-    if not pyflakes_check:
-        print("  - [WARN] Pyflakes not found, skipping code validation.")
-        return
-
-    print(f"  - Validating syntax for: {file_path}")
-    try:
-        code_to_check = Path(file_path).read_text(encoding='utf-8')
+def validate_and_correct_code(file_path, settings, max_attempts=3):
+    """Validates and corrects code with retry limits and rollback."""
+    original_code = Path(file_path).read_text(encoding='utf-8')
+    current_code = original_code
+    
+    for attempt in range(max_attempts):
         reporter = PyflakesReporter()
-        pyflakes_check(code_to_check, str(file_path), reporter)
-
-        if reporter.errors:
-            print(f"  - [WARN] Found {len(reporter.errors)} issues. Attempting self-correction...")
-            error_string = "\n".join(reporter.errors)
-            
-            corrector_prompt = render_prompt("code_corrector_prompt.adoc", {
-                "original_code": code_to_check,
-                "linter_errors": error_string
-            })
-
-            corrected_code_raw = execute_ai_prompt(corrector_prompt, settings)
-            if not corrected_code_raw:
-                raise ValueError("AI failed to provide a correction.")
-
-            corrected_code = clean_ai_response(corrected_code_raw, "python")
-            Path(file_path).write_text(corrected_code, encoding='utf-8')
-            print("  - ✅ Self-correction applied successfully. Re-validating...")
-            
-            final_reporter = PyflakesReporter()
-            pyflakes_check(corrected_code, str(file_path), final_reporter)
-            if final_reporter.errors:
-                print(f"  - [ERROR] Self-correction failed. {len(final_reporter.errors)} issues remain.")
+        pyflakes_check(current_code, str(file_path), reporter)
+        
+        if not reporter.errors:
+            # Success! Write if we corrected it
+            if attempt > 0:
+                Path(file_path).write_text(current_code, encoding='utf-8')
+                print(f"  - ✅ Code validated after {attempt} correction(s)")
             else:
-                print("  - ✅ Code is now valid.")
-        else:
-            print("  - ✅ Code is valid.")
-
-    except Exception as e:
-        print(f"❌ An error occurred during code validation: {e}")
+                print("  - ✅ Code is valid")
+            return True
+        
+        # Still has errors
+        if attempt == max_attempts - 1:
+            # Final attempt failed - rollback to original
+            print(f"  - ❌ Self-correction failed after {max_attempts} attempts. Rolling back.")
+            Path(file_path).write_text(original_code, encoding='utf-8')
+            return False
+        
+        # Try to correct
+        print(f"  - Attempt {attempt + 1}/{max_attempts}: Found {len(reporter.errors)} issues. Correcting...")
+        error_string = "\n".join(reporter.errors)
+        
+        corrector_prompt = render_prompt("code_corrector_prompt.adoc", {
+            "original_code": current_code,
+            "linter_errors": error_string
+        })
+        
+        corrected_code_raw = execute_ai_prompt(corrector_prompt, settings)
+        if not corrected_code_raw:
+            print("  - ⚠️ AI failed to provide correction. Rolling back.")
+            Path(file_path).write_text(original_code, encoding='utf-8')
+            return False
+        
+        current_code = clean_ai_response(corrected_code_raw, "python")
+    
+    return False
 
 def execute_operations(operations, settings):
-    """Parses and executes file creation operations, with validation."""
+    """Executes operations with rollback on failure."""
     if not operations:
         print("⚠️ AI did not provide any file operations to execute.")
         return False
+    
     print("\n--- Executing File Creation Plan ---")
-    for op in operations:
-        action = op.get("action")
-        path_str = op.get("path") or op.get("target_file")
-        if not all([action, path_str]):
-            print(f"⚠️  Skipping malformed operation in AI plan: {op}")
-            continue
-
-        path = Path(path_str)
-        try:
+    created_paths = []
+    
+    # Change to project root for file operations
+    original_dir = Path.cwd()
+    project_root = Path(__file__).parent.parent
+    os.chdir(project_root)
+    
+    try:
+        for op in operations:
+            action = op.get("action")
+            path_str = op.get("path") or op.get("target_file")
+            if not all([action, path_str]):
+                print(f"⚠️ Skipping malformed operation: {op}")
+                continue
+            path = Path(path_str)
             if action == "create_file":
                 print(f"  - Writing file: {path}")
                 content = op.get("content", "")
                 if isinstance(content, list):
                     content = "\n".join(str(line) for line in content)
-
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding='utf-8')
-                
+                created_paths.append(path)
+                # Validate Python files
                 if path.suffix == '.py':
-                    validate_and_correct_code(path, settings)
+                    if not validate_and_correct_code(path, settings):
+                        raise ValueError(f"Failed to validate: {path}")
             elif action == "create_directory":
                 print(f"  - Creating directory: {path}")
                 path.mkdir(parents=True, exist_ok=True)
+                created_paths.append(path)
             else:
-                print(f"⚠️ Unknown action '{action}' requested. Skipping.")
-        except Exception as e:
-            print(f"❌ Failed to execute action '{action}' on '{path}': {e}")
-            return False
-    print("✅ File creation plan executed successfully.")
-    return True
+                print(f"⚠️ Unknown action '{action}'. Skipping.")
+        print("✅ File creation plan executed successfully.")
+        return True
+    except Exception as e:
+        print(f"\n❌ Operation failed: {e}")
+        print("🔄 Rolling back all changes...")
+        for path in reversed(created_paths):
+            try:
+                if path.is_file():
+                    path.unlink()
+                    print(f"  - Removed file: {path}")
+                elif path.is_dir() and not any(path.iterdir()):
+                    path.rmdir()
+                    print(f"  - Removed empty directory: {path}")
+            except Exception as cleanup_error:
+                print(f"  - ⚠️ Could not remove {path}: {cleanup_error}")
+        print("❌ All changes rolled back.")
+        return False
+    finally:
+        # Always return to original directory
+        os.chdir(original_dir)
 
 def handle_code_integration(integration_step, settings):
     """Performs the Read-Modify-Write operation, creating a stub file if needed."""
@@ -236,6 +276,19 @@ def execute_plan_from_ai(plan_response_raw, settings):
         print(f"❌ Failed to process AI's execution plan. Error: {e}\nRaw Response: {plan_response_raw}")
         return
 
+def sanitize_user_input(user_query):
+    """Basic input validation."""
+    if len(user_query) > 1000:
+        raise ValueError("Query too long (max 1000 characters)")
+    
+    # Check for obvious injection patterns
+    dangerous = ['rm -rf', 'DROP TABLE', '; --', '$(', '`']
+    for pattern in dangerous:
+        if pattern in user_query:
+            raise ValueError(f"Query contains suspicious pattern: {pattern}")
+    
+    return user_query.strip()
+
 def recognize_intent_and_dispatch(user_query, settings):
     """Dispatches user query to the correct handler."""
     print(f"\n🤔 Understanding your request: \"{user_query}\"")
@@ -271,12 +324,10 @@ def generic_handler(task_name, prompt_template, entities, settings):
 
 def handle_generate_check(entities, settings):
     generic_handler("Generating new check", "generate_check_prompt.adoc", entities, settings)
+
 def handle_generate_rule(entities, settings):
     generic_handler("Generating new JSON rule", "generate_rule_prompt.adoc", entities, settings)
-
-def handle_scaffold_plugin(entities, settings):
-    generic_handler("Scaffolding new plugin", "plugin_scaffold_prompt.adoc", entities, settings)
-
+	
 def handle_scaffold_plugin(entities, settings):
     """Prepares variables and calls the generic handler for scaffolding."""
     tech_name = entities.get("technology_name", "UnknownPlugin")
@@ -286,6 +337,7 @@ def handle_scaffold_plugin(entities, settings):
 
 def handle_add_report(entities, settings):
     generic_handler("Adding new report", "add_report_prompt.adoc", entities, settings)
+
 def handle_add_check(entities, settings):
     generic_handler("Adding new boilerplate check", "add_check_prompt.adoc", entities, settings)
 
