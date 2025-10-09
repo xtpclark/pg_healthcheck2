@@ -1,0 +1,14 @@
+# AI Configuration (used by both main healthcheck and aidev.py)
+ai_provider: openai  # or 'google, grok, arbitrary'
+ai_endpoint: https://your_ai_endpoint.com/  # https://your-corporate-llm-proxy.com/
+ai_model: gpt-4.1 # grok-3
+ai_api_key: ${AI_API_KEY}  # Or hardcode if not using env vars
+ai_temperature: 0.7
+ai_max_output_tokens: 8192  # Higher for code generation
+ai_timeout: 300  # 5 minutes
+
+# Corporate Proxy Settings (optional)
+ai_user: your-username
+ai_user_header: X-User-ID  # Custom header name if required
+ssl_cert_path: /opt/homebrew/etc/openssl@3/certs/../cert.pem  # Optional, OSX option shown...
+ai_ssl_verify: true  # Set to false to disable SSL verification (not recommended)

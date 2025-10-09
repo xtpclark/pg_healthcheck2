@@ -207,6 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 config/config.yaml
+tools/config/config.yaml
 adoc_out/*
 /adoc_out/
 *.py.bak*
