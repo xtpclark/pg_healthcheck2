@@ -6,6 +6,7 @@ This script acts as a conversational agent that understands natural language
 requests to scaffold, generate, and integrate code for the framework. It also
 validates and self-corrects the code it produces.
 """
+
 import os
 import argparse
 from pathlib import Path
