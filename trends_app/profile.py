@@ -355,17 +355,22 @@ def view_report(report_type, report_id):
         if conn: conn.close()
 
 
-@bp.route('/save-report/<int:report_id>', methods=['POST'])
+@bp.route('/save-report/<string:report_type>/<int:report_id>', methods=['POST'])
 @login_required
-def save_report(report_id):
-    """Saves an edited report back to the database."""
+def save_report(report_type, report_id):
+    """Saves an edited report back to the database with versioning."""
     if not current_user.has_privilege('EditReports'):
         return jsonify({"status": "error", "message": "Permission denied."}), 403
 
     data = request.get_json()
     new_content = data.get('content')
+    change_summary = data.get('description', '')
+    
     if new_content is None:
         return jsonify({"status": "error", "message": "No content provided."}), 400
+
+    if report_type not in ['generated', 'uploaded']:
+        return jsonify({"status": "error", "message": "Invalid report type."}), 400
 
     config = load_trends_config()
     db_settings = config.get('database')
@@ -373,20 +378,65 @@ def save_report(report_id):
     try:
         conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
-        # Encrypt the new content and update the record, ensuring the user owns it
-        cursor.execute(
-            """
-            UPDATE generated_ai_reports
-            SET report_content = pgp_sym_encrypt(%s, get_encryption_key())
-            WHERE id = %s AND generated_by_user_id = %s;
-            """,
-            (new_content, report_id, current_user.id)
-        )
-        conn.commit()
-        if cursor.rowcount == 0:
+        
+        # Determine the correct table and columns
+        if report_type == 'generated':
+            table_name = 'generated_ai_reports'
+            content_column = 'report_content'
+            user_column = 'generated_by_user_id'
+            version_fk_column = 'generated_report_id'
+        else:  # uploaded
+            table_name = 'uploaded_reports'
+            content_column = 'encrypted_report_content'
+            user_column = 'uploaded_by_user_id'
+            version_fk_column = 'uploaded_report_id'
+        
+        # Get current content
+        cursor.execute(f"""
+            SELECT {content_column}
+            FROM {table_name}
+            WHERE id = %s AND {user_column} = %s;
+        """, (report_id, current_user.id))
+        
+        result = cursor.fetchone()
+        if not result:
             return jsonify({"status": "error", "message": "Report not found or permission denied."}), 404
         
-        return jsonify({"status": "success", "message": "Report saved successfully."})
+        current_content_encrypted = result[0]
+        
+        # Save current content as a version (version_number will be auto-set by trigger)
+        if report_type == 'generated':
+            cursor.execute("""
+                INSERT INTO report_versions 
+                (generated_report_id, edited_by_user_id, encrypted_report_content, change_summary, auto_cleanup)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING version_number;
+            """, (report_id, current_user.id, current_content_encrypted, 
+                  change_summary or 'Auto-save before edit', True))
+        else:
+            cursor.execute("""
+                INSERT INTO report_versions 
+                (uploaded_report_id, edited_by_user_id, encrypted_report_content, change_summary, auto_cleanup)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING version_number;
+            """, (report_id, current_user.id, current_content_encrypted, 
+                  change_summary or 'Auto-save before edit', True))
+        
+        version_number = cursor.fetchone()[0]
+        
+        # Update the main table with new content
+        cursor.execute(f"""
+            UPDATE {table_name}
+            SET {content_column} = pgp_sym_encrypt(%s, get_encryption_key())
+            WHERE id = %s AND {user_column} = %s;
+        """, (new_content, report_id, current_user.id))
+        
+        conn.commit()
+        return jsonify({
+            "status": "success", 
+            "message": f"Report saved successfully. Version {version_number} created.",
+            "version": version_number
+        })
 
     except psycopg2.Error as e:
         if conn: conn.rollback()
@@ -395,7 +445,225 @@ def save_report(report_id):
     finally:
         if conn: conn.close()
 
-# --- REMOVED conflicting /view-slides route. The real logic is in main.py ---
+
+@bp.route('/report-versions/<string:report_type>/<int:report_id>')
+@login_required
+def get_report_versions(report_type, report_id):
+    """Get version history for a report."""
+    if report_type not in ['generated', 'uploaded']:
+        return jsonify({"error": "Invalid report type"}), 400
+    
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        
+        # Verify user owns the report
+        if report_type == 'generated':
+            cursor.execute(
+                "SELECT 1 FROM generated_ai_reports WHERE id = %s AND generated_by_user_id = %s;",
+                (report_id, current_user.id)
+            )
+            fk_column = 'generated_report_id'
+        else:
+            cursor.execute(
+                "SELECT 1 FROM uploaded_reports WHERE id = %s AND uploaded_by_user_id = %s;",
+                (report_id, current_user.id)
+            )
+            fk_column = 'uploaded_report_id'
+        
+        if not cursor.fetchone():
+            return jsonify({"error": "Report not found or permission denied"}), 404
+        
+        # Get version history - use version_timestamp instead of created_at
+        cursor.execute(f"""
+            SELECT rv.version_number, rv.version_timestamp, rv.change_summary, rv.is_pinned,
+                   u.username
+            FROM report_versions rv
+            LEFT JOIN users u ON rv.edited_by_user_id = u.id
+            WHERE rv.{fk_column} = %s
+            ORDER BY rv.version_number DESC;
+        """, (report_id,))
+        
+        versions = []
+        for row in cursor.fetchall():
+            versions.append({
+                "version": row[0],
+                "created_at": row[1].strftime('%Y-%m-%d %H:%M:%S'),  # This displays version_timestamp
+                "description": row[2] or "No description",
+                "is_pinned": row[3],
+                "username": row[4] or "Unknown"
+            })
+        
+        return jsonify({"versions": versions})
+        
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error getting versions: {e}")
+        return jsonify({"error": "Database error"}), 500
+    finally:
+        if conn: conn.close()
+
+
+@bp.route('/restore-version/<string:report_type>/<int:report_id>/<int:version_number>', methods=['POST'])
+@login_required
+def restore_version(report_type, report_id, version_number):
+    """Restore a report to a previous version."""
+    if not current_user.has_privilege('EditReports'):
+        return jsonify({"status": "error", "message": "Permission denied."}), 403
+    
+    if report_type not in ['generated', 'uploaded']:
+        return jsonify({"status": "error", "message": "Invalid report type."}), 400
+    
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        
+        # Determine FK column
+        if report_type == 'generated':
+            fk_column = 'generated_report_id'
+            table_name = 'generated_ai_reports'
+            content_column = 'report_content'
+            user_column = 'generated_by_user_id'
+        else:
+            fk_column = 'uploaded_report_id'
+            table_name = 'uploaded_reports'
+            content_column = 'encrypted_report_content'
+            user_column = 'uploaded_by_user_id'
+        
+        # Get the version content
+        cursor.execute(f"""
+            SELECT encrypted_report_content 
+            FROM report_versions
+            WHERE {fk_column} = %s AND version_number = %s;
+        """, (report_id, version_number))
+        
+        version_data = cursor.fetchone()
+        if not version_data:
+            return jsonify({"status": "error", "message": "Version not found"}), 404
+        
+        version_content_encrypted = version_data[0]
+        
+        # Decrypt the version content
+        cursor.execute(
+            "SELECT pgp_sym_decrypt(%s::bytea, get_encryption_key());",
+            (version_content_encrypted,)
+        )
+        decrypted_content = cursor.fetchone()[0]
+        
+        # Get current content to save as a version
+        cursor.execute(f"""
+            SELECT {content_column}
+            FROM {table_name} 
+            WHERE id = %s AND {user_column} = %s;
+        """, (report_id, current_user.id))
+        
+        result = cursor.fetchone()
+        if not result:
+            return jsonify({"status": "error", "message": "Report not found or permission denied"}), 404
+        
+        current_content_encrypted = result[0]
+        
+        # Save current content as a version before restoring
+        if report_type == 'generated':
+            cursor.execute("""
+                INSERT INTO report_versions 
+                (generated_report_id, edited_by_user_id, encrypted_report_content, change_summary, auto_cleanup)
+                VALUES (%s, %s, %s, %s, %s);
+            """, (report_id, current_user.id, current_content_encrypted,
+                  f"Auto-save before restoring to version {version_number}", True))
+        else:
+            cursor.execute("""
+                INSERT INTO report_versions 
+                (uploaded_report_id, edited_by_user_id, encrypted_report_content, change_summary, auto_cleanup)
+                VALUES (%s, %s, %s, %s, %s);
+            """, (report_id, current_user.id, current_content_encrypted,
+                  f"Auto-save before restoring to version {version_number}", True))
+        
+        # Restore the version
+        cursor.execute(f"""
+            UPDATE {table_name}
+            SET {content_column} = pgp_sym_encrypt(%s, get_encryption_key())
+            WHERE id = %s AND {user_column} = %s;
+        """, (decrypted_content, report_id, current_user.id))
+        
+        conn.commit()
+        return jsonify({
+            "status": "success",
+            "message": f"Restored to version {version_number}",
+            "content": decrypted_content
+        })
+        
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        current_app.logger.error(f"Database error restoring version: {e}")
+        return jsonify({"status": "error", "message": "Database error"}), 500
+    finally:
+        if conn: conn.close()
+
+
+@bp.route('/pin-version/<string:report_type>/<int:report_id>/<int:version_number>', methods=['POST'])
+@login_required
+def pin_version(report_type, report_id, version_number):
+    """Pin a version to prevent it from being auto-deleted."""
+    if report_type not in ['generated', 'uploaded']:
+        return jsonify({"status": "error", "message": "Invalid report type."}), 400
+    
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        
+        # Determine FK column and verify ownership
+        if report_type == 'generated':
+            fk_column = 'generated_report_id'
+            cursor.execute(
+                "SELECT 1 FROM generated_ai_reports WHERE id = %s AND generated_by_user_id = %s;",
+                (report_id, current_user.id)
+            )
+        else:
+            fk_column = 'uploaded_report_id'
+            cursor.execute(
+                "SELECT 1 FROM uploaded_reports WHERE id = %s AND uploaded_by_user_id = %s;",
+                (report_id, current_user.id)
+            )
+        
+        if not cursor.fetchone():
+            return jsonify({"status": "error", "message": "Permission denied"}), 403
+        
+        # Toggle pin status
+        cursor.execute(f"""
+            UPDATE report_versions
+            SET is_pinned = NOT is_pinned
+            WHERE {fk_column} = %s AND version_number = %s
+            RETURNING is_pinned;
+        """, (report_id, version_number))
+        
+        result = cursor.fetchone()
+        if not result:
+            return jsonify({"status": "error", "message": "Version not found"}), 404
+        
+        is_pinned = result[0]
+        conn.commit()
+        
+        return jsonify({
+            "status": "success",
+            "is_pinned": is_pinned,
+            "message": f"Version {'pinned' if is_pinned else 'unpinned'} successfully"
+        })
+        
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        current_app.logger.error(f"Database error pinning version: {e}")
+        return jsonify({"status": "error", "message": "Database error"}), 500
+    finally:
+        if conn: conn.close()
 
 @bp.route('/prompt-templates')
 @login_required

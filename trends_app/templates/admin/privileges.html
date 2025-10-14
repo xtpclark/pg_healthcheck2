@@ -1,103 +1,102 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Manage Privileges</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
-<div class="container mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>Manage Privileges</h1>
-        <a href="{{ url_for('admin.list_users') }}" class="btn btn-secondary">Back to Users</a>
-    </div>
+{% extends "base.html" %}
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        {% for category, message in messages %}
-          <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }} alert-dismissible fade show" role="alert">
-            {{ message }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-          </div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
+{% block title %}Manage Privileges - Health Check Trends{% endblock %}
 
-    <div class="row">
-        <!-- Form for Creating/Editing Privileges -->
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h5 id="form-title">Create New Privilege</h5>
-                </div>
-                <div class="card-body">
-                    <form id="privilege-form" method="POST" action="{{ url_for('admin.upsert_privilege') }}">
-                        <div class="mb-3">
-                            <label for="name" class="form-label">Privilege Name</label>
-                            <input type="text" class="form-control" id="name" name="name" required>
-                            <small class="form-text text-muted">A short, unique name (e.g., AdministerUsers).</small>
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+    <h2 class="text-lg font-semibold text-slate-900">Manage Privileges</h2>
+    <a href="{{ url_for('admin.list_users') }}" class="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-sm hover:bg-slate-50 transition-colors">
+        Back to Users
+    </a>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <!-- Form -->
+    <div class="lg:col-span-1">
+        <div class="bg-white border border-slate-200">
+            <div class="px-4 py-2.5 border-b border-slate-200 bg-slate-50">
+                <h3 id="form-title" class="text-sm font-semibold text-slate-900">Create New Privilege</h3>
+            </div>
+            <div class="p-4">
+                <form id="privilege-form" method="POST" action="{{ url_for('admin.upsert_privilege') }}">
+                    <div class="space-y-3">
+                        <div>
+                            <label for="name" class="block text-xs font-medium text-slate-700 mb-1">Privilege Name</label>
+                            <input type="text" id="name" name="name" required
+                                   class="w-full px-2.5 py-1.5 text-sm border border-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                            <p class="text-xs text-slate-500 mt-1">e.g., AdministerUsers</p>
                         </div>
-                        <div class="mb-3">
-                            <label for="module" class="form-label">Module</label>
-                            <input type="text" class="form-control" id="module" name="module" required>
-                            <small class="form-text text-muted">The application area this privilege applies to (e.g., Admin, Reporting).</small>
+                        <div>
+                            <label for="module" class="block text-xs font-medium text-slate-700 mb-1">Module</label>
+                            <input type="text" id="module" name="module" required
+                                   class="w-full px-2.5 py-1.5 text-sm border border-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                            <p class="text-xs text-slate-500 mt-1">e.g., Admin, Reporting</p>
                         </div>
-                        <div class="mb-3">
-                            <label for="description" class="form-label">Description</label>
-                            <textarea class="form-control" id="description" name="description" rows="3" required></textarea>
+                        <div>
+                            <label for="description" class="block text-xs font-medium text-slate-700 mb-1">Description</label>
+                            <textarea id="description" name="description" rows="3" required
+                                      class="w-full px-2.5 py-1.5 text-sm border border-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"></textarea>
                         </div>
-                        <button type="submit" class="btn btn-primary">Save Privilege</button>
-                        <button type="button" class="btn btn-secondary" id="cancel-edit" style="display: none;">Cancel Edit</button>
-                    </form>
-                </div>
+                    </div>
+                    <div class="flex gap-2 mt-4">
+                        <button type="submit" class="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">
+                            Save Privilege
+                        </button>
+                        <button type="button" id="cancel-edit" style="display: none;" 
+                                class="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-sm hover:bg-slate-50 transition-colors">
+                            Cancel Edit
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
+    </div>
 
-        <!-- Table of Existing Privileges -->
-        <div class="col-md-8">
-            <div class="card">
-                <div class="card-header">
-                    <h5>Existing Privileges</h5>
-                </div>
-                <div class="card-body">
-                    <table class="table table-striped table-hover">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Module</th>
-                                <th>Description</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for priv in privileges %}
-                            <tr>
-                                <td>{{ priv.name }}</td>
-                                <td>{{ priv.module }}</td>
-                                <td>{{ priv.description }}</td>
-                                <td>
-                                    <button class="btn btn-sm btn-outline-primary edit-btn"
-                                            data-name="{{ priv.name }}"
-                                            data-module="{{ priv.module }}"
-                                            data-description="{{ priv.description }}">
-                                        Edit
-                                    </button>
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="4" class="text-center">No privileges found.</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
+    <!-- Table -->
+    <div class="lg:col-span-2">
+        <div class="bg-white border border-slate-200">
+            <div class="px-4 py-2.5 border-b border-slate-200 bg-slate-50">
+                <h3 class="text-sm font-semibold text-slate-900">Existing Privileges</h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                            <th class="px-4 py-2.5 text-left text-xs font-semibold text-slate-700">Name</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-semibold text-slate-700">Module</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-semibold text-slate-700">Description</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-semibold text-slate-700">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        {% for priv in privileges %}
+                        <tr class="hover:bg-slate-50">
+                            <td class="px-4 py-2.5 text-slate-900">{{ priv.name }}</td>
+                            <td class="px-4 py-2.5 text-slate-700">{{ priv.module }}</td>
+                            <td class="px-4 py-2.5 text-slate-700">{{ priv.description }}</td>
+                            <td class="px-4 py-2.5">
+                                <button class="edit-btn px-2 py-1 text-xs border border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors"
+                                        data-name="{{ priv.name }}"
+                                        data-module="{{ priv.module }}"
+                                        data-description="{{ priv.description }}">
+                                    Edit
+                                </button>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="px-4 py-8 text-center text-slate-500">No privileges found.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 </div>
+{% endblock %}
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% block extra_scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         const form = document.getElementById('privilege-form');
@@ -107,29 +106,22 @@
         const descriptionInput = document.getElementById('description');
         const cancelBtn = document.getElementById('cancel-edit');
 
-        // Handle clicking the "Edit" button on any privilege
         document.querySelectorAll('.edit-btn').forEach(button => {
             button.addEventListener('click', function () {
-                // Get the data from the button's data attributes
                 const name = this.dataset.name;
                 const module = this.dataset.module;
                 const description = this.dataset.description;
 
-                // Populate the form for editing
                 formTitle.textContent = 'Edit Privilege';
                 nameInput.value = name;
                 moduleInput.value = module;
                 descriptionInput.value = description;
-                
-                // When editing, the name (which acts as the key) should not be changed.
-                nameInput.readOnly = true; 
-                
+                nameInput.readOnly = true;
                 cancelBtn.style.display = 'inline-block';
-                window.scrollTo(0, 0); // Scroll to the top to see the form
+                window.scrollTo(0, 0);
             });
         });
 
-        // Handle clicking the "Cancel Edit" button
         cancelBtn.addEventListener('click', function () {
             form.reset();
             formTitle.textContent = 'Create New Privilege';
@@ -138,5 +130,4 @@
         });
     });
 </script>
-</body>
-</html>
+{% endblock %}
