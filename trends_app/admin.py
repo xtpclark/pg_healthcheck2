@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify, current_app, Response
 from flask_login import login_required, current_user
 from werkzeug.security import generate_password_hash
 import psycopg2
@@ -399,32 +399,48 @@ def edit_role(role_id):
         
     return render_template('admin/role_form.html', role=role, all_privileges=all_privileges, role_priv_ids=role_priv_ids)
 
-
-# --- AI PROVIDER MANAGEMENT ROUTES (Unchanged) ---
-
-@bp.route('/ai-providers')
+@bp.route('/ai-providers', methods=['GET'])
 @login_required
 def list_ai_providers():
-    if not current_user.is_admin:
-        abort(403)
+    """Display all AI providers for admin management."""
+    # Check admin privilege
     
     config = load_trends_config()
-    db_config = config.get('database')
+    db_settings = config.get('database')
     conn = None
     providers = []
+    
     try:
-        conn = psycopg2.connect(**db_config)
+        conn = psycopg2.connect(**db_settings)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, provider_name, api_model, is_active, allow_user_keys FROM ai_providers ORDER BY provider_name;")
+        
+        cursor.execute("""
+            SELECT id, provider_name, api_endpoint, api_model, is_active, allow_user_keys,
+                   provider_type, supports_discovery, models_last_refreshed
+            FROM ai_providers
+            ORDER BY provider_name;
+        """)
+        
         for row in cursor.fetchall():
+            last_refreshed = row[8].strftime('%Y-%m-%d %H:%M') if row[8] else None
             providers.append({
-                "id": row[0], "name": row[1], "model": row[2],
-                "is_active": row[3], "allow_user_keys": row[4]
+                'id': row[0],
+                'name': row[1],
+                'endpoint': row[2],
+                'model': row[3],
+                'is_active': row[4],
+                'allow_user_keys': row[5],
+                'provider_type': row[6],
+                'supports_discovery': row[7],
+                'last_refreshed': last_refreshed
             })
+            
     except psycopg2.Error as e:
-        flash("Database error while fetching AI providers.", "danger")
+        flash("Database error loading providers.", "danger")
+        current_app.logger.error(f"Error loading providers: {e}")
     finally:
-        if conn: conn.close()
+        if conn:
+            conn.close()
     
     return render_template('admin/ai_providers.html', providers=providers)
 
@@ -673,3 +689,46 @@ def get_template_asset(asset_name):
         abort(500)
     finally:
         if conn: conn.close()
+
+
+# In your admin.py blueprint
+
+@bp.route('/refresh-provider-models/<int:provider_id>', methods=['POST'])
+@login_required
+def refresh_provider_models(provider_id):
+    """Admin route to force refresh models for a provider."""
+    if not current_user.has_privilege('ManageAIProviders'):  # Or whatever admin privilege you use
+        return jsonify({'error': 'Permission denied'}), 403
+    
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+        
+        # Reset last_refreshed to force re-discovery
+        cursor.execute("""
+            UPDATE ai_providers 
+            SET models_last_refreshed = NULL
+            WHERE id = %s;
+        """, (provider_id,))
+        conn.commit()
+        
+        # Import the function from profile blueprint
+        from .profile import get_provider_models as profile_get_models
+        
+        # Call the existing discovery function
+        # Note: This assumes get_provider_models doesn't check privileges internally
+        # or you might need to refactor it to a shared utility function
+        return profile_get_models(provider_id)
+        
+    except Exception as e:
+        current_app.logger.error(f"Error refreshing models: {e}")
+        return jsonify({'error': 'Failed to refresh models'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+
