@@ -1,0 +1,8 @@
+{
+  "check_name": "node_info",
+  "description": "Retrieves basic Cassandra node information including version, addresses, and cluster details.",
+  "metric_keywords": ["node", "info", "version", "cluster", "address"],
+  "weight": 3,
+  "severity": "low",
+  "tags": ["informational", "configuration"]
+}
