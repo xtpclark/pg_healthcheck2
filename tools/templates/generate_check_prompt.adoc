@@ -470,24 +470,334 @@ structured_data = {
 
 === JSON Rule File (Optional)
 
-Generate if the check produces evaluatable data:
+Generate if the check produces evaluatable data requiring severity assessment.
 
 *Path:* `plugins/{plugin_name}/rules/check_name.json`
+
+*Structure:* Uses `metric_keywords` to identify which metrics from the check's structured_data should be evaluated.
+
+==== Rule Schema
 
 [source,json]
 ----
 {
-  "rule_id": "{plugin_name}_check_name",
-  "description": "Brief description",
-  "severity": "warning",
-  "condition": "section_name.count > threshold",
-  "threshold": {
-    "warning": 1,
-    "critical": 5
-  },
-  "recommendation": "Action to take"
+  "rule_identifier": {
+    "metric_keywords": [
+      "section_name_from_structured_data"
+    ],
+    "data_conditions": [
+      {
+        "key": "required_field_name",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "Python expression as string",
+        "level": "critical|high|medium|low|info",
+        "score": 1-10,
+        "reasoning": "Human-readable explanation with {data.get('field')} references",
+        "recommendations": [
+          "Actionable step 1",
+          "Actionable step 2"
+        ]
+      }
+    ]
+  }
 }
 ----
+
+==== Field Definitions
+
+*Top-Level Key (rule_identifier):*
+- Unique identifier for this rule set (e.g., "unindexed_foreign_key", "connection_usage")
+- Use descriptive snake_case names
+
+*metric_keywords* (array, required):
+- List of keys from the check's structured_data dictionary
+- These determine which data this rule evaluates
+- Can specify multiple keywords if rule applies to multiple sections
+- Example: `["missing_fk_indexes_details"]` or `["connection", "connection_pool_stats"]`
+
+*data_conditions* (array, optional):
+- Pre-flight checks before evaluating rules
+- Each condition has `key` (field name) and `exists` (boolean)
+- If any condition fails, rules are not evaluated
+- Use to ensure required fields are present in data
+- **Can be omitted** if no pre-conditions needed
+
+*rules* (array, required):
+- List of evaluation rules, checked in order
+- First matching rule wins (rule evaluation stops)
+- Multiple rules allow progressive severity based on thresholds
+
+*expression* (string, required):
+- Python expression evaluated against the data
+- Must return boolean (True/False)
+- Available in scope: `data` (the metric data), `settings` (config dict)
+- Use `data.get('field', default)` for safe field access
+- Use `settings.get('config_key', default)` to check configuration
+- Examples:
+  - `"True"` - Always triggers if data exists
+  - `"data.get('count', 0) > 10"` - Simple threshold
+  - `"float(data.get('usage_pct', 0)) > 90"` - Type conversion
+  - `"not settings.get('using_pooler', False) and data.get('count', 0) > 100"` - Config check + threshold
+  - `"int(data.get('total', 0)) > 100 and (float(data.get('value', 0)) / int(data.get('total', 1))) > 0.20"` - Complex calculation
+
+*level* (string, required):
+- Severity level: `"critical"`, `"high"`, `"medium"`, `"low"`, `"info"`
+- Determines alert priority and visibility
+
+*score* (integer, required):
+- Numeric weight from 1-10
+- Affects report ordering and priority
+- General guidelines:
+  - 9-10: Critical (data loss, service down)
+  - 7-8: High (performance degradation, resource exhaustion)
+  - 5-6: Medium (suboptimal configuration, preventive)
+  - 3-4: Low (informational, minor issues)
+  - 1-2: Info (statistics, version info)
+
+*reasoning* (string, required):
+- Human-readable explanation of why the rule triggered
+- Use f-string style references: `{data.get('field_name')}`
+- Will be formatted at runtime with actual data values
+- Example: `"Table '{data.get('table_name')}' has {data.get('bloat_pct')}% bloat"`
+
+*recommendations* (array, required):
+- List of actionable steps to resolve the issue
+- Each item should be specific and practical
+- Can include SQL commands, configuration changes, or procedures
+
+==== Real-World Examples
+
+*Example 1: Simple "Always Alert" Rule*
+
+When the check filters data to only problematic items, use `expression: "True"`:
+
+[source,json]
+----
+{
+  "unindexed_foreign_key": {
+    "metric_keywords": [
+      "missing_fk_indexes_details"
+    ],
+    "data_conditions": [
+      {
+        "key": "child_table",
+        "exists": true
+      },
+      {
+        "key": "foreign_key_name",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "high",
+        "score": 7,
+        "reasoning": "The foreign key '{data.get('foreign_key_name')}' on table '{data.get('child_table')}' is missing a required index. This causes table scans during parent table UPDATEs/DELETEs, leading to severe write amplification and lock contention.",
+        "recommendations": [
+          "Create an index on the foreign key column(s) of the child table to resolve the performance risk. The check provides a recommended `CREATE INDEX CONCURRENTLY` statement.",
+          "Always create indexes on foreign key columns to ensure efficient enforcement of referential integrity."
+        ]
+      }
+    ]
+  }
+}
+----
+
+*Example 2: Multi-Threshold with Settings Check*
+
+Progressive severity levels based on percentage thresholds and configuration:
+
+[source,json]
+----
+{
+  "connection_usage": {
+    "metric_keywords": [
+      "connection"
+    ],
+    "data_conditions": [
+      {
+        "key": "total_connections",
+        "exists": true
+      },
+      {
+        "key": "max_connections",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "not settings.get('using_connection_pooler', False) and (int(data['total_connections']) / int(data['max_connections'])) * 100 > 90",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "Connection usage at {(int(data['total_connections']) / int(data['max_connections'])) * 100:.1f}% of maximum",
+        "recommendations": [
+          "Immediate action required: Connection pool near capacity"
+        ]
+      },
+      {
+        "expression": "not settings.get('using_connection_pooler', False) and (int(data['total_connections']) / int(data['max_connections'])) * 100 > 75",
+        "level": "high",
+        "score": 4,
+        "reasoning": "Connection usage at {(int(data['total_connections']) / int(data['max_connections'])) * 100:.1f}% of maximum",
+        "recommendations": [
+          "Monitor connection usage and consider connection pooling"
+        ]
+      }
+    ]
+  }
+}
+----
+
+*Example 3: Complex Calculation with String Parsing*
+
+When data requires parsing and unit conversion:
+
+[source,json]
+----
+{
+  "inefficient_temp_file_usage": {
+    "metric_keywords": [
+      "temp_files_analysis_temp_files"
+    ],
+    "data_conditions": [
+      {
+        "key": "total_temp_written",
+        "exists": true
+      },
+      {
+        "key": "calls",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('calls', 0)) > 100 and (float(data.get('total_temp_written', '0 KB').split(' ')[0]) * (1024**2 if 'GB' in data.get('total_temp_written', '') else 1024 if 'MB' in data.get('total_temp_written', '') else 1) / int(data['calls'])) > 10 * 1024",
+        "level": "critical",
+        "score": 5,
+        "reasoning": "A query is writing an average of {(float(data.get('total_temp_written', '0 KB').split(' ')[0]) * (1024**2 if 'GB' in data.get('total_temp_written', '') else 1024 if 'MB' in data.get('total_temp_written', '') else 1) / int(data['calls'])) / 1024:.2f} MB of temporary files per execution.",
+        "recommendations": [
+          "This query is consistently spilling large amounts of data to disk. This is a strong indicator that 'work_mem' is severely undersized for this query's needs. Use EXPLAIN (ANALYZE, BUFFERS) to confirm the source of the temp file usage and consider increasing 'work_mem'."
+        ]
+      },
+      {
+        "expression": "int(data.get('calls', 0)) > 100 and (float(data.get('total_temp_written', '0 KB').split(' ')[0]) * (1024**2 if 'GB' in data.get('total_temp_written', '') else 1024 if 'MB' in data.get('total_temp_written', '') else 1) / int(data['calls'])) > 1 * 1024",
+        "level": "high",
+        "score": 4,
+        "reasoning": "A query is writing an average of {(float(data.get('total_temp_written', '0 KB').split(' ')[0]) * (1024**2 if 'GB' in data.get('total_temp_written', '') else 1024 if 'MB' in data.get('total_temp_written', '') else 1) / int(data['calls'])) / 1024:.2f} MB of temporary files per execution.",
+        "recommendations": [
+          "This query is frequently spilling to disk. Analyze the query plan for indexing opportunities or consider a moderate increase to 'work_mem' to improve its performance."
+        ]
+      }
+    ]
+  }
+}
+----
+
+*Example 4: Binary State Check*
+
+Single-condition critical alert:
+
+[source,json]
+----
+{
+  "data_checksums_disabled": {
+    "metric_keywords": [
+      "data_checksums_status"
+    ],
+    "data_conditions": [
+      {
+        "key": "checksums_enabled",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "data.get('checksums_enabled') == False",
+        "level": "critical",
+        "score": 8,
+        "reasoning": "Data checksums are disabled, creating a severe risk of silent data corruption from disk or I/O errors. This can lead to permanent data loss and prevent successful database recovery.",
+        "recommendations": [
+          "Enable data checksums during cluster initialization (`initdb --checksums`) for all new production databases.",
+          "For existing clusters, plan a maintenance window to use the `pg_checksums` utility to enable checksums. This requires the cluster to be shut down.",
+          "For cloud-managed databases (like RDS), enable this feature via the instance or cluster parameter group and restart the instance. Note that this often requires creating a new instance from a snapshot."
+        ]
+      }
+    ]
+  }
+}
+----
+
+*Example 5: Percentage with Minimum Count Guard*
+
+Prevents false positives from low sample sizes:
+
+[source,json]
+----
+{
+  "frequent_requested_checkpoints": {
+    "metric_keywords": [
+      "checkpoint_stats"
+    ],
+    "rules": [
+      {
+        "expression": "int(data.get('total_checkpoints', 0)) > 100 and (int(data.get('checkpoints_req', 0)) * 100.0 / int(data.get('total_checkpoints', 1))) > 20",
+        "level": "high",
+        "score": 7,
+        "reasoning": "A high percentage ({(int(data.get('checkpoints_req', 0)) * 100.0 / int(data.get('total_checkpoints', 1))):.1f}%) of checkpoints are being requested by the system, not based on time. This indicates the WAL is filling up too quickly, which can cause I/O storms and inconsistent performance.",
+        "recommendations": [
+          "Increase the `max_wal_size` parameter in `postgresql.conf` to allow more room for WAL logs between checkpoints. This will smooth out I/O performance, especially during periods of high write activity.",
+          "Monitor the `pg_stat_bgwriter` (or `pg_stat_checkpointer` on PG17+) view to track the ratio of timed vs. requested checkpoints after making changes."
+        ]
+      }
+    ]
+  }
+}
+----
+
+*Example 6: No Data Conditions (Optional Field)*
+
+When pre-conditions aren't necessary:
+
+[source,json]
+----
+{
+  "high_sequential_scans": {
+    "metric_keywords": [
+      "missing_indexes"
+    ],
+    "rules": [
+      {
+        "expression": "True",
+        "level": "high",
+        "score": 6,
+        "reasoning": "The table '{data.get('schema_name')}.{data.get('table_name')}' has been scanned sequentially {data.get('sequential_scans')} times. Frequent sequential scans on large tables indicate missing indexes, leading to significant performance degradation.",
+        "recommendations": [
+          "Analyze the queries that access this table to identify common filtering and join columns in `WHERE` clauses.",
+          "Create B-Tree indexes on the identified columns to improve query performance and reduce I/O.",
+          "Use `pg_stat_statements` to help pinpoint the exact queries responsible for the high scan count."
+        ]
+      }
+    ]
+  }
+}
+----
+
+==== Key Points
+
+- **`metric_keywords`** must match keys returned by the check's structured_data
+- **`data_conditions`** are optional - omit if no pre-checks needed
+- **`expression`** is evaluated as Python code - use safe `data.get()` access
+- **`rules`** are evaluated in order - first matching rule wins
+- **`reasoning`** uses `{data.get('field')}` syntax (formatted as f-string at runtime)
+- **Multiple rules** allow for different severity levels based on thresholds
+- **Settings access** via `settings.get('key', default)` in expressions
+- **Type conversion** may be needed: `int()`, `float()`, `str()`
+- **Division by zero protection** using `data.get('denominator', 1)` with default 1
 
 === Unit Test File (Required)
 
@@ -561,206 +871,6 @@ if __name__ == '__main__':
 ✅ `'module': 'plugins.postgres.checks.check_name'`
 ❌ NOT: `'module': 'check_name'`
 
-== Complete Examples
-
-=== Example 1: SQL Database (Generic Pattern)
-
-*Request:* Add a check for high connection count in PostgreSQL
-
-*Response Structure:*
-[source,json]
-----
-{
-  "operations": [
-    {
-      "action": "create_file",
-      "path": "plugins/postgres/checks/check_high_connections.py",
-      "content": "from plugins.postgres.utils.qrylib.connection_queries import get_connection_count_query\n\ndef get_weight():\n    return 6\n\ndef run_high_connections(connector, settings):\n    adoc_content = [\"=== Connection Pool Analysis\", \"\"]\n    structured_data = {}\n    threshold = settings.get('connection_threshold', 80)\n    \n    try:\n        query = get_connection_count_query(connector)\n        formatted, raw = connector.execute_query(query, return_raw=True)\n        \n        if raw:\n            active_count = raw[0].get('active_connections', 0)\n            if active_count > threshold:\n                adoc_content.append(f\"[WARNING]\\n====\\nActive connections ({active_count}) exceed threshold ({threshold})\\n====\\n\")\n            else:\n                adoc_content.append(\"[NOTE]\\n====\\nConnection count is within normal limits\\n====\\n\")\n            adoc_content.append(formatted)\n            structured_data[\"connections\"] = {\"status\": \"success\", \"data\": raw}\n    except Exception as e:\n        adoc_content.append(f\"[ERROR]\\n====\\n{e}\\n====\\n\")\n        structured_data[\"connections\"] = {\"status\": \"error\", \"details\": str(e)}\n    \n    return \"\\n\".join(adoc_content), structured_data"
-    },
-    {
-      "action": "create_file",
-      "path": "plugins/postgres/utils/qrylib/connection_queries.py",
-      "content": "def get_connection_count_query(connector):\n    return \"\"\"\n    SELECT \n        COUNT(*) FILTER (WHERE state = 'active') as active_connections,\n        COUNT(*) as total_connections\n    FROM pg_stat_activity;\n    \"\"\""
-    },
-    {
-      "action": "create_file",
-      "path": "tests/postgres/checks/test_check_high_connections.py",
-      "content": "[Standard test template]"
-    }
-  ],
-  "integration_step": {
-    "target_file_hint": "plugins/postgres/reports/default.py",
-    "instruction": "Add to 'Connection Management' section",
-    "code_snippet_to_add": "{'type': 'module', 'module': 'plugins.postgres.checks.check_high_connections', 'function': 'run_high_connections'}"
-  }
-}
-----
-
-=== Example 2: Key-Value Store (Valkey/Redis)
-
-*Request:* Add a check for memory usage in Valkey
-
-*Response Structure:*
-[source,json]
-----
-{
-  "operations": [
-    {
-      "action": "create_file",
-      "path": "plugins/valkey/checks/check_memory_usage.py",
-      "content": "from plugins.valkey.utils.qrylib.memory_commands import get_memory_info_command\n\ndef get_weight():\n    return 7\n\ndef run_memory_usage(connector, settings):\n    adoc_content = [\"=== Memory Usage Analysis\", \"\"]\n    structured_data = {}\n    threshold_percent = settings.get('memory_threshold_percent', 80)\n    \n    try:\n        command = get_memory_info_command(connector)\n        formatted, raw = connector.execute_query(command, return_raw=True)\n        \n        if raw:\n            used_memory = int(raw.get('used_memory', 0))\n            max_memory = int(raw.get('maxmemory', 0))\n            \n            if max_memory > 0:\n                usage_percent = (used_memory / max_memory) * 100\n                if usage_percent > threshold_percent:\n                    adoc_content.append(f\"[WARNING]\\n====\\nMemory usage at {usage_percent:.1f}% of maximum\\n====\\n\")\n                else:\n                    adoc_content.append(f\"[NOTE]\\n====\\nMemory usage at {usage_percent:.1f}%\\n====\\n\")\n            \n            adoc_content.append(formatted)\n            structured_data[\"memory\"] = {\"status\": \"success\", \"data\": raw}\n    except Exception as e:\n        adoc_content.append(f\"[ERROR]\\n====\\n{e}\\n====\\n\")\n        structured_data[\"memory\"] = {\"status\": \"error\", \"details\": str(e)}\n    \n    return \"\\n\".join(adoc_content), structured_data"
-    },
-    {
-      "action": "create_file",
-      "path": "plugins/valkey/utils/qrylib/memory_commands.py",
-      "content": "def get_memory_info_command(connector):\n    \"\"\"Returns Valkey command for memory information.\"\"\"\n    return \"INFO MEMORY\""
-    },
-    {
-      "action": "create_file",
-      "path": "tests/valkey/checks/test_check_memory_usage.py",
-      "content": "[Standard test template]"
-    }
-  ],
-  "integration_step": {
-    "target_file_hint": "plugins/valkey/reports/default.py",
-    "instruction": "Add to 'Resource Monitoring' section",
-    "code_snippet_to_add": "{'type': 'module', 'module': 'plugins.valkey.checks.check_memory_usage', 'function': 'run_memory_usage'}"
-  }
-}
-----
-
-=== Example 3: Wide-Column Store (Cassandra)
-
-*Request:* Add a check for pending compactions in Cassandra
-
-*Response Structure:*
-[source,json]
-----
-{
-  "operations": [
-    {
-      "action": "create_file",
-      "path": "plugins/cassandra/checks/check_pending_compactions.py",
-      "content": "from plugins.cassandra.utils.qrylib.compaction_queries import get_pending_compactions_query\n\ndef get_weight():\n    return 7\n\ndef run_pending_compactions(connector, settings):\n    adoc_content = [\"=== Pending Compactions Analysis\", \"\"]\n    structured_data = {}\n    threshold = settings.get('compaction_threshold', 5)\n    \n    try:\n        query = get_pending_compactions_query(connector)\n        formatted, raw = connector.execute_query(query, return_raw=True)\n        \n        if raw:\n            pending_count = len([r for r in raw if r.get('pending_tasks', 0) > 0])\n            if pending_count > threshold:\n                adoc_content.append(f\"[WARNING]\\n====\\n{pending_count} tables have pending compactions\\n====\\n\")\n            else:\n                adoc_content.append(\"[NOTE]\\n====\\nCompaction queue is healthy\\n====\\n\")\n            adoc_content.append(formatted)\n            structured_data[\"compactions\"] = {\"status\": \"success\", \"data\": raw, \"count\": pending_count}\n    except Exception as e:\n        adoc_content.append(f\"[ERROR]\\n====\\n{e}\\n====\\n\")\n        structured_data[\"compactions\"] = {\"status\": \"error\", \"details\": str(e)}\n    \n    adoc_content.append(\"\\n==== Recommendations\")\n    adoc_content.append(\"[TIP]\\n====\\n* Monitor compaction queue regularly\\n* Consider increasing compaction throughput if consistently high\\n====\\n\")\n    \n    return \"\\n\".join(adoc_content), structured_data"
-    },
-    {
-      "action": "create_file",
-      "path": "plugins/cassandra/utils/qrylib/compaction_queries.py",
-      "content": "def get_pending_compactions_query(connector):\n    \"\"\"Returns CQL query for pending compactions.\"\"\"\n    # Note: This may need to use JMX or nodetool in practice\n    # Showing CQL approach for system tables\n    return \"\"\"\n    SELECT keyspace_name, table_name, pending_tasks\n    FROM system.compaction_in_progress\n    LIMIT 100;\n    \"\"\""
-    },
-    {
-      "action": "create_file",
-      "path": "tests/cassandra/checks/test_check_pending_compactions.py",
-      "content": "[Standard test template]"
-    }
-  ],
-  "integration_step": {
-    "target_file_hint": "plugins/cassandra/reports/default.py",
-    "instruction": "Add to 'Performance Monitoring' section",
-    "code_snippet_to_add": "{'type': 'module', 'module': 'plugins.cassandra.checks.check_pending_compactions', 'function': 'run_pending_compactions'}"
-  }
-}
-----
-
-=== Example 4: Search Engine (OpenSearch)
-
-*Request:* Add a check for cluster health in OpenSearch
-
-*Response Structure:*
-[source,json]
-----
-{
-  "operations": [
-    {
-      "action": "create_file",
-      "path": "plugins/opensearch/checks/check_cluster_health.py",
-      "content": "from plugins.opensearch.utils.qrylib.cluster_queries import get_cluster_health_query\nimport json\n\ndef get_weight():\n    return 9\n\ndef run_cluster_health(connector, settings):\n    adoc_content = [\"=== Cluster Health Status\", \"\"]\n    structured_data = {}\n    \n    try:\n        query = get_cluster_health_query(connector)\n        formatted, raw = connector.execute_query(query, return_raw=True)\n        \n        if raw:\n            status = raw.get('status', 'unknown').lower()\n            \n            if status == 'red':\n                adoc_content.append(\"[CRITICAL]\\n====\\nCluster status is RED. Data loss or unavailability detected.\\n====\\n\")\n            elif status == 'yellow':\n                adoc_content.append(\"[WARNING]\\n====\\nCluster status is YELLOW. Some replicas are unassigned.\\n====\\n\")\n            else:\n                adoc_content.append(\"[NOTE]\\n====\\nCluster status is GREEN. All shards allocated.\\n====\\n\")\n            \n            adoc_content.append(formatted)\n            structured_data[\"cluster_health\"] = {\"status\": \"success\", \"data\": raw}\n    except Exception as e:\n        adoc_content.append(f\"[ERROR]\\n====\\n{e}\\n====\\n\")\n        structured_data[\"cluster_health\"] = {\"status\": \"error\", \"details\": str(e)}\n    \n    return \"\\n\".join(adoc_content), structured_data"
-    },
-    {
-      "action": "create_file",
-      "path": "plugins/opensearch/utils/qrylib/cluster_queries.py",
-      "content": "import json\n\ndef get_cluster_health_query(connector):\n    \"\"\"Returns API endpoint for cluster health.\"\"\"\n    # OpenSearch uses REST API\n    return json.dumps({\n        \"endpoint\": \"/_cluster/health\",\n        \"method\": \"GET\"\n    })"
-    },
-    {
-      "action": "create_file",
-      "path": "tests/opensearch/checks/test_check_cluster_health.py",
-      "content": "[Standard test template]"
-    }
-  ],
-  "integration_step": {
-    "target_file_hint": "plugins/opensearch/reports/default.py",
-    "instruction": "Add to 'Cluster Status' section",
-    "code_snippet_to_add": "{'type': 'module', 'module': 'plugins.opensearch.checks.check_cluster_health', 'function': 'run_cluster_health'}"
-  }
-}
-----
-
-=== Example 5: Streaming Platform (Kafka)
-
-*Request:* Add a check for consumer lag in Kafka
-
-*Response Structure:*
-[source,json]
-----
-{
-  "operations": [
-    {
-      "action": "create_file",
-      "path": "plugins/kafka/checks/check_consumer_lag.py",
-      "content": "from plugins.kafka.utils.qrylib.consumer_queries import get_consumer_lag_query\nimport json\n\ndef get_weight():\n    return 8\n\ndef run_consumer_lag(connector, settings):\n    adoc_content = [\"=== Consumer Lag Analysis\", \"\"]\n    structured_data = {}\n    threshold = settings.get('lag_threshold', 1000)\n    \n    try:\n        query = get_consumer_lag_query(connector)\n        formatted, raw = connector.execute_query(query, return_raw=True)\n        \n        if raw:\n            high_lag_consumers = [c for c in raw if c.get('lag', 0) > threshold]\n            \n            if high_lag_consumers:\n                adoc_content.append(f\"[WARNING]\\n====\\n{len(high_lag_consumers)} consumer groups have lag exceeding {threshold}\\n====\\n\")\n            else:\n                adoc_content.append(\"[NOTE]\\n====\\nAll consumer groups are caught up\\n====\\n\")\n            \n            adoc_content.append(formatted)\n            structured_data[\"consumer_lag\"] = {\"status\": \"success\", \"data\": raw, \"high_lag_count\": len(high_lag_consumers)}\n    except Exception as e:\n        adoc_content.append(f\"[ERROR]\\n====\\n{e}\\n====\\n\")\n        structured_data[\"consumer_lag\"] = {\"status\": \"error\", \"details\": str(e)}\n    \n    adoc_content.append(\"\\n==== Recommendations\")\n    adoc_content.append(\"[TIP]\\n====\\n* Scale consumer instances if lag is persistent\\n* Investigate slow processing in lagging consumers\\n====\\n\")\n    \n    return \"\\n\".join(adoc_content), structured_data"
-    },
-    {
-      "action": "create_file",
-      "path": "plugins/kafka/utils/qrylib/consumer_queries.py",
-      "content": "import json\n\ndef get_consumer_lag_query(connector):\n    \"\"\"Returns configuration for fetching consumer lag metrics.\"\"\"\n    # Kafka uses Admin API, not traditional queries\n    return json.dumps({\n        \"metric_type\": \"consumer_lag\",\n        \"include_all_groups\": True\n    })"
-    },
-    {
-      "action": "create_file",
-      "path": "tests/kafka/checks/test_check_consumer_lag.py",
-      "content": "[Standard test template]"
-    }
-  ],
-  "integration_step": {
-    "target_file_hint": "plugins/kafka/reports/default.py",
-    "instruction": "Add to 'Consumer Monitoring' section",
-    "code_snippet_to_add": "{'type': 'module', 'module': 'plugins.kafka.checks.check_consumer_lag', 'function': 'run_consumer_lag'}"
-  }
-}
-----
-
-=== Example 6: Analytical Database (ClickHouse)
-
-*Request:* Add a check for merge performance in ClickHouse
-
-*Response Structure:*
-[source,json]
-----
-{
-  "operations": [
-    {
-      "action": "create_file",
-      "path": "plugins/clickhouse/checks/check_merge_performance.py",
-      "content": "from plugins.clickhouse.utils.qrylib.merge_queries import get_active_merges_query\n\ndef get_weight():\n    return 7\n\ndef run_merge_performance(connector, settings):\n    adoc_content = [\"=== Merge Performance Analysis\", \"\"]\n    structured_data = {}\n    threshold = settings.get('merge_threshold', 10)\n    \n    try:\n        query = get_active_merges_query(connector)\n        formatted, raw = connector.execute_query(query, return_raw=True)\n        \n        if raw:\n            active_merges = len(raw)\n            if active_merges > threshold:\n                adoc_content.append(f\"[WARNING]\\n====\\n{active_merges} active merges detected, exceeding threshold of {threshold}\\n====\\n\")\n            else:\n                adoc_content.append(f\"[NOTE]\\n====\\n{active_merges} active merges - within normal range\\n====\\n\")\n            adoc_content.append(formatted)\n            structured_data[\"merges\"] = {\"status\": \"success\", \"data\": raw, \"count\": active_merges}\n    except Exception as e:\n        adoc_content.append(f\"[ERROR]\\n====\\n{e}\\n====\\n\")\n        structured_data[\"merges\"] = {\"status\": \"error\", \"details\": str(e)}\n    \n    return \"\\n\".join(adoc_content), structured_data"
-    },
-    {
-      "action": "create_file",
-      "path": "plugins/clickhouse/utils/qrylib/merge_queries.py",
-      "content": "def get_active_merges_query(connector):\n    \"\"\"Returns query for active merges in ClickHouse.\"\"\"\n    return \"\"\"\n    SELECT \n        database,\n        table,\n        elapsed,\n        progress,\n        num_parts,\n        result_part_name\n    FROM system.merges\n    WHERE is_mutation = 0\n    ORDER BY elapsed DESC;\n    \"\"\""
-    },
-    {
-      "action": "create_file",
-      "path": "tests/clickhouse/checks/test_check_merge_performance.py",
-      "content": "[Standard test template]"
-    }
-  ],
-  "integration_step": {
-    "target_file_hint": "plugins/clickhouse/reports/default.py",
-    "instruction": "Add to 'Performance Monitoring' section",
-    "code_snippet_to_add": "{'type': 'module', 'module': 'plugins.clickhouse.checks.check_merge_performance', 'function': 'run_merge_performance'}"
-  }
-}
-----
-
 == Pre-Submission Validation Checklist
 
 Before outputting JSON, verify:
@@ -774,6 +884,7 @@ Before outputting JSON, verify:
 ✅ Admonition blocks used appropriately
 ✅ Settings-based thresholds where applicable
 ✅ Integration step has FULL module path
+✅ Rule file uses correct schema with metric_keywords
 ✅ Examples follow technology-appropriate patterns
 
 == Your Task
