@@ -6,10 +6,7 @@ The JSON object must have two keys: "intent" and "entities".
 The possible values for "intent" are:
 - "plan_comprehensive_checks"
 - "generate-check"
-- "generate-rule"
 - "scaffold-plugin"
-- "add-report"
-- "add-check"
 - "unknown"
 
 ---
@@ -35,17 +32,6 @@ AI JSON Response:
 }
 ---
 EXAMPLE 3
-User Query: "create a postgres rule for vacuum bloat"
-AI JSON Response:
-{
-  "intent": "generate-rule",
-  "entities": {
-    "plugin_name": "postgres",
-    "natural_language_request": "create a rule for vacuum bloat"
-  }
-}
----
-EXAMPLE 4
 User Query: "scaffold a new plugin for Redis"
 AI JSON Response:
 {
@@ -55,7 +41,7 @@ AI JSON Response:
   }
 }
 ---
-EXAMPLE 5
+EXAMPLE 4
 User Query: "how do I bake a cake?"
 AI JSON Response:
 {

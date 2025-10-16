@@ -1,0 +1,34 @@
+{
+  "under_replicated_partitions": {
+    "metric_keywords": ["kafka", "isr", "under_replicated", "replication", "data-loss-risk"],
+    "rules": [
+      {
+        "expression": "data.get('under_replicated_partitions', 0) > 0",
+        "level": "critical",
+        "score": 10,
+        "reasoning": "Topic '{data.get('topic')}' has {data.get('under_replicated_partitions')} under-replicated partitions. This indicates ISR shrinkage beyond acceptable limits, posing a high risk of data loss if affected brokers fail.",
+        "recommendations": [
+          "Immediately check the health and connectivity of all Kafka brokers.",
+          "Investigate and resolve any network partitions or broker failures.",
+          "Review Kafka logs for replication errors and consider increasing the min.insync.replicas configuration for critical topics."
+        ]
+      }
+    ]
+  },
+  "isr_shrinks": {
+    "metric_keywords": ["kafka", "isr", "shrinks", "replication", "instability"],
+    "rules": [
+      {
+        "expression": "data.get('isr_shrinks', 0) > 0",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Topic '{data.get('topic')}' has experienced {data.get('isr_shrinks')} ISR shrinks. This suggests intermittent replication issues that could lead to under-replication if not addressed.",
+        "recommendations": [
+          "Monitor ISR shrink events over time to detect patterns or recurring issues.",
+          "Ensure stable disk I/O and network performance on all brokers.",
+          "Tune replica.lag.time.max.ms and replica.lag.bytes configurations to reduce unnecessary shrinks."
+        ]
+      }
+    ]
+  }
+}
