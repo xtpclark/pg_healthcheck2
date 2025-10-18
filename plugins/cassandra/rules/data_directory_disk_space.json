@@ -1,0 +1,31 @@
+{
+  "high_data_disk_usage": {
+    "metric_keywords": ["cassandra", "disk", "space", "data", "directory"],
+    "rules": [
+      {
+        "expression": "data.get('use_percent', 0) > 90",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "Cassandra data directory at {data.get('use_percent')}% usage, critically low available space. This risks write failures, node instability, and potential data loss if space exhausts completely.",
+        "recommendations": [
+          "Immediately run 'nodetool clearsnapshot' to free snapshot space",
+          "Identify and remove large SSTables or temporary files",
+          "Consider decommissioning old nodes or expanding storage",
+          "Monitor with 'df -h /var/lib/cassandra' every 15 minutes"
+        ]
+      },
+      {
+        "expression": "data.get('use_percent', 0) > 80 and data.get('use_percent', 0) <= 90",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Cassandra data directory at {data.get('use_percent')}% usage, indicating high space pressure. Continued growth could lead to critical issues; proactive cleanup is advised.",
+        "recommendations": [
+          "Schedule 'nodetool cleanup' for keyspaces with old data",
+          "Review and adjust compaction strategies to optimize space",
+          "Implement automated monitoring alerts for 85% threshold",
+          "Plan storage expansion within the next week"
+        ]
+      }
+    ]
+  }
+}

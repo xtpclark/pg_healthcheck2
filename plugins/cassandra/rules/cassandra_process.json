@@ -1,0 +1,20 @@
+{
+  "cassandra_process_not_running": {
+    "metric_keywords": ["cassandra", "process", "ps", "service", "availability"],
+    "rules": [
+      {
+        "expression": "data.get('process_count', 0) == 0",
+        "level": "critical",
+        "score": 10,
+        "reasoning": "No Cassandra process detected on the node. The service is stopped or has crashed, resulting in complete unavailability of the database for reads and writes. This is a severe outage condition requiring immediate investigation and recovery.",
+        "recommendations": [
+          "Check Cassandra logs immediately: 'tail -n 100 /var/log/cassandra/system.log'",
+          "Attempt service restart: 'systemctl restart cassandra' (or equivalent for your init system)",
+          "Verify system resources: 'free -h', 'df -h', 'top' to check for OOM or disk full",
+          "Inspect Java process limits and ulimits: 'ulimit -a' and ensure heap size is appropriate",
+          "If restart fails, review cassandra.yaml for configuration errors and check firewall/network issues"
+        ]
+      }
+    ]
+  }
+}

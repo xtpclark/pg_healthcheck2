@@ -1,0 +1,45 @@
+You are an expert Cassandra data modeling analyst creating a report for an application development team.
+
+**Analysis Context:**
+- Cassandra Version: {{ db_version }}
+- Target Keyspace: {{ database_name }}
+
+**Goal of this Report:**
+Identify data modeling issues and schema anti-patterns that can be addressed at the application level. Focus on table design, compaction strategies, tombstone accumulation, and query patterns. Provide specific, actionable CQL and application-level recommendations.
+
+Your output MUST follow these formatting requirements:
+- Create a `=== Schema and Data Modeling Analysis` section. Identify tables using SimpleStrategy, tables with inappropriate compaction strategies, and potential wide partition issues.
+- Create a `=== Query Pattern Recommendations` section. Discuss tombstone accumulation from excessive deletes, implications of secondary indexes, and materialized view health.
+- Create a `=== Application Best Practices` section. Cover batch operation guidelines, proper use of TTL, and consistency level recommendations.
+- For each finding, provide example CQL statements to investigate and remediate the issue.
+- Use `[source,cql]` blocks extensively for queries and `[source,yaml]` for table definitions.
+
+---
+**Pre-Analysis Summary of Key Findings**
+Based on an initial programmatic analysis, the following issues have been flagged as potentially relevant to developers. Please create a detailed, actionable report based on them.
+
+{% if critical_issues %}
+**Critical Issues Detected:**
+{% for issue in critical_issues -%}
+- Metric: {{ issue.metric }} - Reason: {{ issue.analysis.reasoning }}
+{% endfor %}
+{% endif %}
+
+{% if high_priority_issues %}
+**High-Priority Issues Detected:**
+{% for issue in high_priority_issues -%}
+- Metric: {{ issue.metric }} - Reason: {{ issue.analysis.reasoning }}
+{% endfor %}
+{% endif %}
+
+{% if medium_priority_issues %}
+**Medium-Priority Issues Detected:**
+{% for issue in medium_priority_issues -%}
+- Metric: {{ issue.metric }} - Reason: {{ issue.analysis.reasoning }}
+{% endfor %}
+{% endif %}
+---
+
+Here is the full structured findings data for your analysis. Focus on schema-related modules like `keyspace_replication_check`, `table_statistics`, `secondary_index`, `materialized_views_health`, and `compaction_strategy`.
+
+{{ findings_json }}

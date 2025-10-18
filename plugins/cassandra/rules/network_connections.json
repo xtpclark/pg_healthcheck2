@@ -1,0 +1,20 @@
+{
+  "high_network_errors": {
+    "metric_keywords": ["cassandra", "network", "netstat", "errors", "connectivity"],
+    "rules": [
+      {
+        "expression": "data.get('total_errors', 0) > 100",
+        "level": "warning",
+        "score": 5,
+        "reasoning": "High network errors detected: {data.get('total_errors')} total errors/discards/failures. This may indicate underlying network issues that could disrupt Cassandra's inter-node gossip, reads, and writes, leading to performance degradation or availability problems.",
+        "recommendations": [
+          "Investigate network hardware: check cables, switches, and NICs for faults",
+          "Monitor network traffic with 'tcpdump' or 'wireshark' on Cassandra ports (7000, 9042)",
+          "Verify firewall rules allow Cassandra inter-node communication",
+          "Check OS network settings: ensure MTU is consistent across nodes",
+          "If errors persist, consider packet loss testing with 'ping -c 1000 <other_node>'"
+        ]
+      }
+    ]
+  }
+}

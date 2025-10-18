@@ -1,0 +1,20 @@
+{
+  "low_available_memory": {
+    "metric_keywords": ["cassandra", "memory", "usage", "system", "ram"],
+    "rules": [
+      {
+        "expression": "data.get('available_mb', 0) < 512 or data.get('available_percent', 0) < 10",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Available memory is low at {data.get('available_mb')} MB ({data.get('available_percent')}%), below thresholds of 512 MB or 10%. Low memory can cause Cassandra to thrash, increase GC pauses, and lead to node instability or OOM kills.",
+        "recommendations": [
+          "Identify memory-intensive processes with 'top -o %MEM' and terminate unnecessary ones",
+          "Tune Cassandra JVM options: reduce heap size if off-heap is underutilized, or increase if GC pressure is high",
+          "Monitor Cassandra metrics for high memory usage in memtables or caches",
+          "Consider vertical scaling: add more RAM to the node",
+          "Review application query patterns to reduce memory overhead"
+        ]
+      }
+    ]
+  }
+}

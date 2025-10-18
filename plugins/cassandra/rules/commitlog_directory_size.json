@@ -1,0 +1,20 @@
+{
+  "large_commitlog_size": {
+    "metric_keywords": ["cassandra", "commitlog", "disk", "size", "storage"],
+    "rules": [
+      {
+        "expression": "data.get('size_gb', 0) > 50",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Commitlog directory size of {data.get('size_gb', 0):.2f} GB exceeds recommended threshold of 50 GB. Large commitlog sizes indicate high write activity, potential configuration issues, or failure to rotate segments, which can lead to disk exhaustion and node instability.",
+        "recommendations": [
+          "Analyze write patterns in your application - consider batching or reducing unnecessary writes",
+          "Verify commitlog configuration in cassandra.yaml: ensure commitlog_segment_size_in_mb is appropriate (default 32MB)",
+          "Check for stuck transactions or uncommitted writes using application logs",
+          "If commitlog is on a separate disk, ensure it has sufficient space; consider moving to SSD for better performance",
+          "Run 'nodetool compactionstats' to check if compaction issues are contributing to write amplification"
+        ]
+      }
+    ]
+  }
+}
