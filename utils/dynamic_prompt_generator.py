@@ -14,27 +14,8 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 import jinja2
 from pathlib import Path
+from utils.json_utils import convert_to_json_serializable
 
-def convert_to_json_serializable(obj):
-    """Recursively convert non-JSON-serializable objects.
-
-    This function walks through nested objects (dicts, lists) and converts
-    types like Decimal, datetime, and timedelta into JSON-compatible formats
-    (float, string, seconds).
-
-    Args:
-        obj (Any): The Python object to convert.
-
-    Returns:
-        Any: A version of the object with non-serializable types converted.
-    """
-
-    if isinstance(obj, Decimal): return float(obj)
-    if isinstance(obj, datetime): return obj.isoformat()
-    if isinstance(obj, timedelta): return obj.total_seconds()
-    if isinstance(obj, dict): return {k: convert_to_json_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, list): return [convert_to_json_serializable(item) for item in obj]
-    return obj
 
 def analyze_metric_severity(metric_name, data_row, settings, all_findings, analysis_rules, rule_stats, verbose=False):
     """Analyzes a metric against rules and returns the highest severity finding.

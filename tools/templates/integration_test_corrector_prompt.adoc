@@ -156,6 +156,47 @@ def get_list_topics_query(connector):
     return json.dumps({"operation": "list_topics"})
 ----
 
+=== Example 6: Fixing Query Function Call with Missing Arguments
+
+*Error:* `get_row_count_query() missing 2 required positional arguments: 'keyspace_name' and 'table_name'`
+
+*Explanation:* This error occurs when a query function is defined with parameters (correctly), but the check module is calling it without passing those parameters.
+
+*Original Check Module:*
+----
+# in checks/table_row_counts_check.py
+from plugins.cassandra.utils.qrylib.schema_queries import get_row_count_query
+
+def run_table_row_counts_check(connector, settings):
+    # ... get keyspaces and tables ...
+    
+    for table in tables:
+        # INCORRECT: Not passing the required parameters
+        count_query = get_row_count_query(connector)
+        formatted, raw = connector.execute_query(count_query, return_raw=True)
+----
+
+*Corrected Check Module:*
+----
+# in checks/table_row_counts_check.py
+from plugins.cassandra.utils.qrylib.schema_queries import get_row_count_query
+
+def run_table_row_counts_check(connector, settings):
+    # ... get keyspaces and tables ...
+    
+    for table in tables:
+        # CORRECT: Pass all required parameters to the query function
+        count_query = get_row_count_query(connector, keyspace_name, table_name)
+        formatted, raw = connector.execute_query(count_query, return_raw=True)
+----
+
+*Query File (remains correct as-is):*
+----
+# in plugins/cassandra/utils/qrylib/schema_queries.py
+def get_row_count_query(connector, keyspace_name, table_name):
+    """Returns query to count rows in a specific table."""
+    return f"SELECT COUNT(*) FROM {keyspace_name}.{table_name};"
+----
 
 == Output Format
 

@@ -52,26 +52,68 @@ class CassandraContainer(DatabaseContainer):
     """
     Cassandra test container - works with Docker, Podman, or external server.
     
-    Configuration via environment variables:
+    Configuration priority (highest to lowest):
+    1. Environment variables
+    2. settings dict from config.yaml
+    3. Container defaults
+    
+    Environment variables:
     - CASSANDRA_TEST_HOST: External server hostname (if set, uses external server)
     - CASSANDRA_TEST_PORT: External server port (default: 9042)
     - CASSANDRA_TEST_KEYSPACE: Keyspace name (default: test_keyspace)
     - CASSANDRA_TEST_USER: Username (optional)
     - CASSANDRA_TEST_PASSWORD: Password (optional)
     - CASSANDRA_TEST_DATACENTER: Datacenter name (default: datacenter1)
+    - CASSANDRA_SSH_HOST: SSH host for nodetool access
+    - CASSANDRA_SSH_USER: SSH username
+    - CASSANDRA_SSH_KEY: SSH key file path
+    - CASSANDRA_SSH_PASSWORD: SSH password (alternative to key)
+    - CASSANDRA_SSH_TIMEOUT: SSH timeout in seconds (default: 10)
     """
     
-    def __init__(self, version: str = "4.1"):
+    def __init__(self, version: str = "4.1", settings: dict = None):
         """
         Initialize Cassandra container or external connection.
         
         Args:
             version: Cassandra version (3.11, 4.0, 4.1, 5.0)
+            settings: Optional settings dict from config.yaml
         """
         super().__init__('cassandra', version)
+        self.settings = settings or {}
         
-        # Check if using external server
+        # Check if using external server (env vars take precedence over config)
         self.external_host = os.environ.get('CASSANDRA_TEST_HOST')
+        
+        if not self.external_host:
+            # Check config file for external server
+            ext_config = self.settings.get('integration_tests', {}).get('external_servers', {}).get('cassandra', {})
+            if ext_config and ext_config.get('enabled') and ext_config.get('host'):
+                self.external_host = ext_config['host']
+                logger.info(f"Using external Cassandra server from config: {self.external_host}")
+                
+                # Populate environment variables from config if not already set
+                # This makes SSH settings available to the connector
+                if not os.environ.get('CASSANDRA_TEST_PORT'):
+                    os.environ['CASSANDRA_TEST_PORT'] = str(ext_config.get('port', 9042))
+                if not os.environ.get('CASSANDRA_TEST_KEYSPACE'):
+                    os.environ['CASSANDRA_TEST_KEYSPACE'] = ext_config.get('keyspace', 'test_keyspace')
+                if not os.environ.get('CASSANDRA_TEST_DATACENTER'):
+                    os.environ['CASSANDRA_TEST_DATACENTER'] = ext_config.get('datacenter', 'datacenter1')
+                
+                # Read SSH config from file if not in env vars
+                ssh_config = ext_config.get('ssh', {})
+                if ssh_config:
+                    if ssh_config.get('host') and not os.environ.get('CASSANDRA_SSH_HOST'):
+                        os.environ['CASSANDRA_SSH_HOST'] = ssh_config['host']
+                    if ssh_config.get('user') and not os.environ.get('CASSANDRA_SSH_USER'):
+                        os.environ['CASSANDRA_SSH_USER'] = ssh_config['user']
+                    if ssh_config.get('key_file') and not os.environ.get('CASSANDRA_SSH_KEY'):
+                        os.environ['CASSANDRA_SSH_KEY'] = ssh_config['key_file']
+                    if ssh_config.get('password') and not os.environ.get('CASSANDRA_SSH_PASSWORD'):
+                        os.environ['CASSANDRA_SSH_PASSWORD'] = ssh_config['password']
+                    if ssh_config.get('timeout') and not os.environ.get('CASSANDRA_SSH_TIMEOUT'):
+                        os.environ['CASSANDRA_SSH_TIMEOUT'] = str(ssh_config['timeout'])
         
         if self.external_host:
             # External server mode
@@ -82,6 +124,21 @@ class CassandraContainer(DatabaseContainer):
             self.user = os.environ.get('CASSANDRA_TEST_USER')
             self.password = os.environ.get('CASSANDRA_TEST_PASSWORD')
             self.datacenter = os.environ.get('CASSANDRA_TEST_DATACENTER', 'datacenter1')
+            
+            # Store SSH config for connector
+            ssh_host = os.environ.get('CASSANDRA_SSH_HOST')
+            if ssh_host:
+                self.ssh_config = {
+                    'host': ssh_host,
+                    'user': os.environ.get('CASSANDRA_SSH_USER'),
+                    'key_file': os.environ.get('CASSANDRA_SSH_KEY'),
+                    'password': os.environ.get('CASSANDRA_SSH_PASSWORD'),
+                    'timeout': int(os.environ.get('CASSANDRA_SSH_TIMEOUT', 10))
+                }
+                logger.info(f"SSH configured: {self.ssh_config['user']}@{self.ssh_config['host']}")
+            else:
+                self.ssh_config = None
+                logger.warning("No SSH configuration found - nodetool checks will not work")
             
             logger.info(f"Using external Cassandra server: {self.host}:{self.port}/{self.keyspace}")
         else:
@@ -107,6 +164,7 @@ class CassandraContainer(DatabaseContainer):
             self.user = None
             self.password = None
             self.datacenter = "datacenter1"
+            self.ssh_config = None  # No SSH in container mode
         
         self.connector = None
     
@@ -222,7 +280,7 @@ class CassandraContainer(DatabaseContainer):
             self._started = False
     
     def get_connector(self):
-        """Get Cassandra connector instance."""
+        """Get Cassandra connector instance with SSH config if available."""
         if not self._started:
             raise RuntimeError("Container not started. Call start() first.")
         
@@ -230,17 +288,36 @@ class CassandraContainer(DatabaseContainer):
             from plugins.cassandra.connector import CassandraConnector
             
             # Build connection settings dict
-            settings = {
-                'hosts': ['127.0.0.1'],  # Use 127.0.0.1 for containers
-                'port': self.port,
-                'keyspace': self.keyspace,
-                'datacenter': self.datacenter
-            }
+            if self.mode == 'external':
+                # External server - use actual host
+                settings = {
+                    'hosts': [self.host],
+                    'port': self.port,
+                    'keyspace': self.keyspace,
+                    'datacenter': self.datacenter
+                }
+            else:
+                # Container mode - use localhost
+                settings = {
+                    'hosts': ['127.0.0.1'],
+                    'port': self.port,
+                    'keyspace': self.keyspace,
+                    'datacenter': self.datacenter
+                }
             
             # Add auth if configured
             if self.user and self.password:
                 settings['user'] = self.user
                 settings['password'] = self.password
+            
+            # Add SSH settings if available (external mode only)
+            if self.mode == 'external' and self.ssh_config:
+                settings['ssh_host'] = self.ssh_config.get('host')
+                settings['ssh_user'] = self.ssh_config.get('user')
+                settings['ssh_key_file'] = self.ssh_config.get('key_file')
+                settings['ssh_password'] = self.ssh_config.get('password')
+                settings['ssh_timeout'] = self.ssh_config.get('timeout', 10)
+                logger.info(f"Connector configured with SSH: {settings['ssh_user']}@{settings['ssh_host']}")
             
             self.connector = CassandraConnector(settings)
             self.connector.connect()
@@ -259,9 +336,11 @@ class CassandraContainer(DatabaseContainer):
                 from cassandra.policies import DCAwareRoundRobinPolicy
                 from cassandra.query import dict_factory
                 
-                # Use 127.0.0.1 instead of localhost to avoid IPv6
+                # Use appropriate host based on mode
+                contact_host = self.host if self.mode == 'external' else '127.0.0.1'
+                
                 cluster = Cluster(
-                    contact_points=['127.0.0.1'],
+                    contact_points=[contact_host],
                     port=self.port,
                     load_balancing_policy=DCAwareRoundRobinPolicy(local_dc=self.datacenter),
                     connect_timeout=30,
