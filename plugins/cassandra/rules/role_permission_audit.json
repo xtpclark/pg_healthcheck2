@@ -1,0 +1,19 @@
+{
+  "non_superuser_permissions": {
+    "metric_keywords": ["cassandra", "auth", "roles", "permissions", "security"],
+    "rules": [
+      {
+        "expression": "data.get('count', 0) > 0",
+        "level": "medium",
+        "score": 5,
+        "reasoning": "Non-superuser roles have {data.get('count')} explicit permissions granted. While permissions are necessary for role functionality, ensure adherence to the principle of least privilege by auditing each GRANT statement for over-privileging.",
+        "recommendations": [
+          "List all permissions for affected roles: LIST PERMISSIONS ON ALL BY role_name;",
+          "Revoke excessive permissions: REVOKE permission_type resource_type FROM role_name;",
+          "Document the business justification for each permission granted to non-superuser roles",
+          "Implement regular permission audits as part of security compliance procedures"
+        ]
+      }
+    ]
+  }
+}

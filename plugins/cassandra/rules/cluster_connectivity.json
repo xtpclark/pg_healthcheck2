@@ -1,0 +1,31 @@
+{
+  "cluster_connectivity_issues": {
+    "metric_keywords": ["cassandra", "connectivity", "peers", "topology", "network"],
+    "rules": [
+      {
+        "expression": "data.get('issues_count', 0) > 0",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Cluster connectivity issues detected: {data.get('issues_count')} problems found in peer visibility or configuration. This can lead to inconsistent reads/writes and reduced availability during failures.",
+        "recommendations": [
+          "Verify seeds configuration in cassandra.yaml across all nodes",
+          "Test inter-node connectivity: telnet <peer_ip> 7000 and 9042",
+          "Check gossip protocol: run 'nodetool gossipinfo' on each node",
+          "Review firewall and security groups for Cassandra ports"
+        ]
+      },
+      {
+        "expression": "data.get('peer_count', 0) == 0",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "No peers detected in system.peers. If this is a multi-node cluster, it indicates severe connectivity failure or misconfiguration, risking data loss and unavailability.",
+        "recommendations": [
+          "Confirm cluster setup: if single-node, this is expected; otherwise, investigate",
+          "Restart Cassandra on affected nodes: 'systemctl restart cassandra'",
+          "Check logs: tail -f /var/log/cassandra/system.log for gossip or connection errors",
+          "Use 'nodetool status' to verify node states"
+        ]
+      }
+    ]
+  }
+}

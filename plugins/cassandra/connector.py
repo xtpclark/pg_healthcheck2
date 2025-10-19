@@ -262,24 +262,45 @@ class CassandraConnector(SSHSupportMixin):
             )
         
         try:
-            # Ensure connection is active
             self.ssh_manager.ensure_connected()
-            
-            # Execute shell command
             stdout, stderr, exit_code = self.ssh_manager.execute_command(command)
             
             if exit_code != 0 and not stdout:
                 raise RuntimeError(f"Shell command failed (exit code {exit_code}): {stderr}")
             
+            # Commands that may legitimately return empty results
+            empty_ok_commands = ['find', 'grep', 'locate', 'ls']
+            command_parts = command.split()
+            base_cmd = command_parts[0] if command_parts else ''
+            is_empty_ok = base_cmd in empty_ok_commands
+            
             if not stdout or not stdout.strip():
-                logger.warning(f"Empty output from shell command: {command}")
-                note_msg = self.formatter.format_note("No output from shell command.")
-                return (note_msg, {}) if return_raw else note_msg
+                # Only log warning if this is NOT an expected empty result
+                if not is_empty_ok:
+                    logger.warning(f"Empty output from shell command: {command}")
+                else:
+                    logger.debug(f"Empty output from {base_cmd} (expected): {command}")
+                
+                # Provide appropriate message
+                if is_empty_ok:
+                    note_msg = self.formatter.format_note(
+                        "No results found (this may be normal - e.g., no matching files)."
+                    )
+                else:
+                    note_msg = self.formatter.format_note("No output from shell command.")
+                
+                raw_data = {
+                    'command': command,
+                    'output': '',
+                    'stderr': stderr if stderr else None,
+                    'exit_code': exit_code
+                }
+                
+                return (note_msg, raw_data) if return_raw else note_msg
             
             # Format the output
             formatted_output = self.formatter.format_shell_output(command, stdout)
             
-            # Return structured data
             raw_data = {
                 'command': command,
                 'output': stdout,
@@ -288,12 +309,12 @@ class CassandraConnector(SSHSupportMixin):
             }
             
             return (formatted_output, raw_data) if return_raw else formatted_output
-
+    
         except Exception as e:
             error_msg = self.formatter.format_error(f"Shell command failed: {str(e)}")
             logger.error(error_msg, exc_info=True)
             return (error_msg, {'error': str(e)}) if return_raw else error_msg
-            
+                   
     def _execute_nodetool_command(self, command, return_raw=False):
         """
         Executes a nodetool command on a remote node via SSH.

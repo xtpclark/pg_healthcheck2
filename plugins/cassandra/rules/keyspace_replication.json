@@ -1,0 +1,19 @@
+{
+  "simple_strategy_in_use": {
+    "metric_keywords": ["cassandra", "keyspace", "replication", "configuration", "best-practice"],
+    "rules": [
+      {
+        "expression": "'SimpleStrategy' in data.get('replication', {}).get('class', '')",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Keyspace '{data.get('keyspace_name')}' uses SimpleStrategy replication. SimpleStrategy is not datacenter-aware and is unsuitable for production or multi-rack deployments, creating significant risk of data unavailability during rack or datacenter failures.",
+        "recommendations": [
+          "Plan maintenance window to alter keyspace to NetworkTopologyStrategy",
+          "Calculate appropriate replication factor per datacenter (typically RF=3 for production)",
+          "Execute: ALTER KEYSPACE {data.get('keyspace_name')} WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 3}}",
+          "Run 'nodetool repair' after altering replication to ensure data consistency"
+        ]
+      }
+    ]
+  }
+}

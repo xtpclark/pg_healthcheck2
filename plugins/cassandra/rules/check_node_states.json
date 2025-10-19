@@ -1,0 +1,19 @@
+{
+  "unhealthy_node_states": {
+    "metric_keywords": ["cassandra", "nodetool", "status", "node", "state", "availability"],
+    "rules": [
+      {
+        "expression": "data.get('status') != 'U' or data.get('state') != 'N'",
+        "level": "critical",
+        "score": 10,
+        "reasoning": "Node at {data.get('address')} is in state {data.get('status')}/{data.get('state')} instead of UN (Up/Normal), indicating potential availability risk.",
+        "recommendations": [
+          "Check logs on node {data.get('address')}: tail -n 100 /var/log/cassandra/system.log",
+          "Verify node resources: df -h, free -m, top",
+          "Test gossip protocol: nodetool gossipinfo from healthy nodes",
+          "If necessary, restart Cassandra service on the affected node"
+        ]
+      }
+    ]
+  }
+}

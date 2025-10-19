@@ -12,7 +12,57 @@ from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-
+def _parse_size_to_bytes(size_str: str) -> int:
+    """
+    Converts a size string to bytes.
+    
+    Examples:
+        "108.45 KB" -> 111052
+        "1.5 GB" -> 1610612736
+        "512 MB" -> 536870912
+        "0 bytes" -> 0
+    
+    Args:
+        size_str: Size string with unit (e.g., "108.45 KB")
+    
+    Returns:
+        int: Size in bytes
+    """
+    if not size_str or size_str.strip() == '0' or 'bytes' in size_str.lower():
+        return 0
+    
+    # Remove commas and extra spaces
+    size_str = size_str.replace(',', '').strip()
+    
+    # Split number and unit
+    parts = size_str.split()
+    if len(parts) < 2:
+        return 0
+    
+    try:
+        number = float(parts[0])
+        unit = parts[1].upper()
+        
+        # Convert to bytes
+        multipliers = {
+            'B': 1,
+            'KB': 1024,
+            'MB': 1024 ** 2,
+            'GB': 1024 ** 3,
+            'TB': 1024 ** 4,
+            'KIB': 1024,
+            'MIB': 1024 ** 2,
+            'GIB': 1024 ** 3,
+            'TIB': 1024 ** 4
+        }
+        
+        multiplier = multipliers.get(unit, 1)
+        return int(number * multiplier)
+    
+    except (ValueError, IndexError):
+        logger.warning(f"Could not parse size: {size_str}")
+        return 0
+        
 class NodetoolParser:
     """Parses Cassandra nodetool command output into structured data."""
     
@@ -33,7 +83,9 @@ class NodetoolParser:
             'compactionstats': self._parse_compactionstats,
             'gcstats': self._parse_gcstats,
             'describecluster': self._parse_describecluster,
-            'tablestats': self._parse_tablestats,           
+            'tablestats': self._parse_tablestats,       
+            'info': self._parse_info,
+            'gossipinfo': self._parse_gossipinfo,    
         }
         
         parser = parsers.get(command)
@@ -372,6 +424,171 @@ class NodetoolParser:
                     })
         
         return cluster_info
+
+    def _parse_info(self, output: str) -> Dict:
+        """
+        Parses 'nodetool info' output.
+        
+        Example output:
+            ID                     : aaa-bbb-ccc-ddd
+            Gossip active          : true
+            Thrift active          : false
+            Native Transport active: true
+            Load                   : 108.45 KB
+            Generation No          : 1234567890
+            Uptime (seconds)       : 86400
+            Heap Memory (MB)       : 512.00 / 2048.00
+            Off Heap Memory (MB)   : 256.00
+            Data Center            : datacenter1
+            Rack                   : rack1
+            Exceptions             : 0
+            Key Cache              : entries 100, size 1.5 KB, capacity 50 MB, 95 hits, 100 requests, 0.950 recent hit rate, 14400 save period in seconds
+            Row Cache              : entries 0, size 0 bytes, capacity 0 bytes, 0 hits, 0 requests, NaN recent hit rate, 0 save period in seconds
+            Counter Cache          : entries 0, size 0 bytes, capacity 25 MB, 0 hits, 0 requests, NaN recent hit rate, 7200 save period in seconds
+            Percent Repaired       : 100.0%
+            Token                  : (invoke with -T/--tokens to see all 256 tokens)
+        
+        Returns:
+            dict: Node information including load, uptime, memory, etc.
+        """
+        if not output or not output.strip():
+            logger.warning("Empty nodetool info output")
+            return {}
+        
+        info = {}
+        lines = output.strip().split('\n')
+        
+        for line in lines:
+            if ':' not in line:
+                continue
+            
+            # Split on first colon only
+            parts = line.split(':', 1)
+            if len(parts) != 2:
+                continue
+            
+            key = parts[0].strip()
+            value = parts[1].strip()
+            
+            # Parse specific fields
+            if key == 'ID':
+                info['id'] = value
+            elif key == 'Gossip active':
+                info['gossip_active'] = value.lower() == 'true'
+            elif key == 'Thrift active':
+                info['thrift_active'] = value.lower() == 'true'
+            elif key == 'Native Transport active':
+                info['native_transport_active'] = value.lower() == 'true'
+            elif key == 'Load':
+                info['load'] = value
+                info['load_bytes'] = _parse_size_to_bytes(value)
+            elif key == 'Generation No':
+                info['generation_no'] = int(value) if value.isdigit() else value
+            elif key == 'Uptime (seconds)':
+                info['uptime_seconds'] = int(value) if value.isdigit() else 0
+            elif key == 'Heap Memory (MB)':
+                # Format: "512.00 / 2048.00"
+                if '/' in value:
+                    used, total = value.split('/')
+                    info['heap_memory_mb_used'] = float(used.strip())
+                    info['heap_memory_mb_total'] = float(total.strip())
+                    info['heap_memory_percent'] = (
+                        info['heap_memory_mb_used'] / info['heap_memory_mb_total'] * 100
+                        if info['heap_memory_mb_total'] > 0 else 0
+                    )
+            elif key == 'Off Heap Memory (MB)':
+                info['off_heap_memory_mb'] = float(value)
+            elif key == 'Data Center':
+                info['datacenter'] = value
+            elif key == 'Rack':
+                info['rack'] = value
+            elif key == 'Exceptions':
+                info['exceptions'] = int(value) if value.isdigit() else 0
+            elif key == 'Percent Repaired':
+                # Remove % sign and convert to float
+                info['percent_repaired'] = float(value.rstrip('%'))
+            elif 'Cache' in key:
+                # Parse cache information (Key Cache, Row Cache, Counter Cache)
+                cache_name = key.lower().replace(' ', '_')
+                info[cache_name] = value
+        
+        return info
+
+    def _parse_gossipinfo(self, output: str) -> Dict:
+        """
+        Parses 'nodetool gossipinfo' output.
+        
+        Example output:
+            /192.168.1.10
+              generation:1234567890
+              heartbeat:98765
+              STATUS:NORMAL,-9223372036854775808
+              LOAD:108.45KB
+              SCHEMA:909ab78a-408f-34a2-872b-4ca50d2dfe2a
+              DC:datacenter1
+              RACK:rack1
+              RELEASE_VERSION:4.1.10
+              INTERNAL_IP:192.168.1.10
+              RPC_ADDRESS:192.168.1.10
+              SEVERITY:0.0
+              NET_VERSION:12
+              HOST_ID:aaa-bbb-ccc-ddd
+              TOKENS:<hidden>
+            /192.168.1.11
+              generation:1234567891
+              heartbeat:98766
+              ...
+        
+        Returns:
+            dict: Map of node IP to gossip state information
+        """
+        if not output or not output.strip():
+            logger.warning("Empty nodetool gossipinfo output")
+            return {}
+        
+        gossip_states = {}
+        current_node = None
+        
+        lines = output.strip().split('\n')
+        
+        for line in lines:
+            stripped_line = line.strip()
+            
+            # Check if this is a node IP line
+            if stripped_line.startswith('/'):
+                current_node = stripped_line.lstrip('/')
+                gossip_states[current_node] = {}
+            elif current_node and ':' in stripped_line:
+                # Parse key:value pairs
+                parts = stripped_line.split(':', 1)
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    value = parts[1].strip()
+                    
+                    # Convert to lowercase with underscores for consistency
+                    key_normalized = key.lower().replace('-', '_')
+                    
+                    # Parse specific values
+                    if key in ('generation', 'heartbeat'):
+                        gossip_states[current_node][key_normalized] = int(value) if value.isdigit() else value
+                    elif key == 'STATUS':
+                        # Format: "NORMAL,-9223372036854775808" or "LEAVING,token"
+                        status_parts = value.split(',')
+                        gossip_states[current_node]['status'] = status_parts[0]
+                        if len(status_parts) > 1:
+                            gossip_states[current_node]['status_token'] = status_parts[1]
+                    elif key == 'LOAD':
+                        gossip_states[current_node]['load'] = value
+                        gossip_states[current_node]['load_bytes'] = _parse_size_to_bytes(value)
+                    elif key == 'SEVERITY':
+                        gossip_states[current_node]['severity'] = float(value)
+                    else:
+                        gossip_states[current_node][key_normalized] = value
+        
+        return gossip_states
+
+
+
     
     def _parse_tablestats(self, output: str) -> List[Dict]:
         """

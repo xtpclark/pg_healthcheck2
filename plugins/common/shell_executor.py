@@ -109,7 +109,7 @@ class ShellExecutor:
             logger.error(error_msg, exc_info=True)
             error_data = {'error': str(e)}
             return (error_msg, error_data) if return_raw else error_msg
-    
+
     def _execute_shell(self, command: str) -> Tuple[str, Dict]:
         """
         Executes a standard shell command.
@@ -125,9 +125,26 @@ class ShellExecutor:
         if exit_code != 0 and not stdout:
             raise RuntimeError(f"Command failed with exit code {exit_code}: {stderr}")
         
+        # Commands that legitimately may return no results
+        empty_ok_commands = ['find', 'grep', 'locate', 'ls']
+        is_empty_ok = any(cmd in command.lower().split()[0] for cmd in empty_ok_commands)
+        
         if not stdout or not stdout.strip():
-            logger.warning(f"Empty output from command: {command}")
-            return "[NOTE]\n====\nNo output from command.\n====\n", {}
+            if is_empty_ok:
+                # Empty result is normal for these commands (e.g., no files found)
+                note_msg = "[NOTE]\n====\nNo results found (this may be normal - e.g., no temporary files exist).\n====\n"
+            else:
+                logger.warning(f"Empty output from command: {command}")
+                note_msg = "[NOTE]\n====\nNo output from command.\n====\n"
+            
+            raw_data = {
+                'command': command,
+                'output': '',
+                'stderr': stderr if stderr else None,
+                'exit_code': exit_code
+            }
+            
+            return note_msg, raw_data
         
         # Format output
         formatted = self.formatter.format_shell_output(command, stdout)

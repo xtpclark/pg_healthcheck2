@@ -1,0 +1,19 @@
+{
+  "high_materialized_views_count": {
+    "metric_keywords": ["cassandra", "materialized_views", "performance", "schema"],
+    "rules": [
+      {
+        "expression": "data.get('count', 0) > 10",
+        "level": "medium",
+        "score": 5,
+        "reasoning": "{data.get('count')} materialized views detected, exceeding recommended threshold of 10. Materialized views create additional write overhead on base tables, potentially impacting performance in high-throughput scenarios.",
+        "recommendations": [
+          "Audit materialized views for redundancy - consolidate or drop unused ones",
+          "Profile write latencies on base tables with views using application monitoring",
+          "Consider alternative query patterns that avoid heavy reliance on views",
+          "If views are essential, ensure base table partitions are well-distributed"
+        ]
+      }
+    ]
+  }
+}

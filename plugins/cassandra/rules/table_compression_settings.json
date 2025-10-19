@@ -1,0 +1,20 @@
+{
+  "compression_issues": {
+    "metric_keywords": ["cassandra", "table", "compression", "performance", "schema"],
+    "rules": [
+      {
+        "expression": "not data.get('compression') or 'class' not in data.get('compression', {}) or data.get('compression', {}).get('class') != 'LZ4Compressor'",
+        "level": "medium",
+        "score": 5,
+        "reasoning": "Table '{data.get('keyspace_name')}.{data.get('table_name')}' has inadequate compression settings: {data.get('compression', 'No compression')}. Compression is essential for storage efficiency and read performance in Cassandra. LZ4Compressor is the recommended choice for its balance of compression ratio and CPU overhead.",
+        "recommendations": [
+          "Enable compression: ALTER TABLE {data.get('keyspace_name')}.{data.get('table_name')} WITH compression = {{'class': 'LZ4Compressor'}};",
+          "Use chunk_length_in_kb: 64KB for optimal I/O patterns",
+          "Set crc_check_chance: 0.0 in production to reduce CPU overhead",
+          "After alteration, run 'nodetool flush' followed by monitoring compaction with 'nodetool compactionstats'",
+          "Consider workload: LZ4 for general use; Snappy for write-heavy if CPU is constrained"
+        ]
+      }
+    ]
+  }
+}
