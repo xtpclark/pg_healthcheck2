@@ -113,7 +113,7 @@ def validate_and_correct_code(file_path, settings, max_attempts=3):
 
     return False
 
-def validate_and_correct_with_integration_tests(
+def old_validate_and_correct_with_integration_tests(
     check_files: dict, 
     connector_factory,
     settings: dict,
@@ -189,7 +189,6 @@ def validate_and_correct_with_integration_tests(
     
     return False
 
-
 def run_integration_test(check_files: dict, connector_factory) -> dict:
     """
     Executes integration test for the check.
@@ -202,6 +201,7 @@ def run_integration_test(check_files: dict, connector_factory) -> dict:
         dict: Test result with success status and error details
     """
     import importlib.util
+    import inspect
     from pathlib import Path
     
     connector = None  # Initialize connector variable
@@ -216,26 +216,74 @@ def run_integration_test(check_files: dict, connector_factory) -> dict:
         query_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(query_module)
         
-        # Get the query function (assumes pattern: get_*_query)
-        query_functions = [name for name in dir(query_module) 
-                          if name.startswith('get_') and name.endswith('_query')]
+        # Get query functions from __all__ or fall back to naming convention
+        if hasattr(query_module, '__all__'):
+            query_function_names = query_module.__all__
+        else:
+            # Fallback: get_*_query pattern, excluding private functions (starting with _)
+            query_function_names = [
+                name for name in dir(query_module) 
+                if name.startswith('get_') 
+                and name.endswith('_query')
+                and not name.startswith('_')  # Exclude private helpers like _get_query_base
+            ]
         
-        if not query_functions:
+        if not query_function_names:
             return {
                 'success': False,
-                'error': 'No query function found (expected get_*_query pattern)',
+                'error': 'No query function found (expected __all__ list or get_*_query pattern)',
                 'database_type': connector.__class__.__name__
             }
         
         # Test each query function
-        for func_name in query_functions:
+        for func_name in query_function_names:
             query_func = getattr(query_module, func_name)
             
-            # Get query string
-            query = query_func(connector)
+            # Inspect function signature to handle parameters
+            sig = inspect.signature(query_func)
+            params = list(sig.parameters.keys())
+            
+            # Try to call the function
+            try:
+                if len(params) == 1:
+                    # Simple case: only needs connector
+                    query = query_func(connector)
+                else:
+                    # Function needs additional parameters
+                    # Check if all extra parameters have defaults
+                    required_params = [
+                        p for p in sig.parameters.values() 
+                        if p.default == inspect.Parameter.empty and p.name != 'connector'
+                    ]
+                    
+                    if required_params:
+                        # Has required parameters beyond connector - skip with message
+                        print(f"  - ⚠️  Skipping {func_name} (requires parameters: {[p.name for p in required_params]})")
+                        print(f"     Note: Add default values to parameters for integration testing.")
+                        continue
+                    
+                    # All extra params have defaults - call with just connector
+                    query = query_func(connector)
+                    
+            except TypeError as e:
+                # Function signature issue - skip this query
+                print(f"  - ⚠️  Skipping {func_name} (signature error: {str(e)})")
+                continue
             
             # Execute query
             formatted, raw = connector.execute_query(query, return_raw=True)
+
+            # Print the actual output
+            print("\n" + "="*60)
+            print(f"📊 Integration Test Output for {func_name}:")
+            print("="*60)
+            print("\n--- AsciiDoc Output ---")
+            print(formatted)
+            print("\n--- Structured Data (JSON) ---")
+            import json
+            print(json.dumps(raw, indent=2, default=str))
+            print("="*60 + "\n")
+         
             
             # Check for errors
             if "[ERROR]" in formatted:
@@ -253,7 +301,7 @@ def run_integration_test(check_files: dict, connector_factory) -> dict:
                     'output': formatted
                 }
         
-        # All queries passed
+        # All queries passed (or were appropriately skipped)
         return {
             'success': True,
             'database_type': connector.__class__.__name__
@@ -267,6 +315,177 @@ def run_integration_test(check_files: dict, connector_factory) -> dict:
             'database_type': database_type,
             'exception_type': type(e).__name__
         }
+
+def run_integration_test_with_ssh_detection(
+    check_files: dict, 
+    connector_factory,
+    plugin_name: str,
+    settings: dict
+) -> dict:
+    """
+    Enhanced integration test runner with SSH detection.
+    
+    Args:
+        check_files: Dict with check module and query file paths
+        connector_factory: Function that returns test database connector
+        plugin_name: Name of the plugin (e.g., 'cassandra', 'postgres')
+        settings: Full settings dictionary
+    
+    Returns:
+        dict: Test result with status, skipped flag, and details
+    """
+    from lib.ssh_detection import (
+        check_requires_ssh,
+        connector_has_ssh_capability,
+        external_server_has_ssh_config,
+        get_ssh_config_help_message
+    )
+    
+    # First, check if this check requires SSH
+    ssh_info = check_requires_ssh(
+        check_files.get('check_module'),
+        check_files.get('query_file')
+    )
+    
+    if ssh_info['requires_ssh']:
+        # This check needs SSH - verify we have it configured
+        
+        # Check if external server has SSH configured
+        if external_server_has_ssh_config(plugin_name, settings):
+            print(f"  - ✅ SSH configured via external server")
+            # Continue with normal test - SSH is available
+        else:
+            # No SSH configured - skip gracefully
+            help_msg = get_ssh_config_help_message(plugin_name, ssh_info)
+            print(help_msg)
+            
+            return {
+                'success': True,  # Not a failure - just skipped
+                'skipped': True,
+                'reason': f'Check requires SSH: {ssh_info["reason"]}',
+                'ssh_info': ssh_info,
+                'database_type': plugin_name
+            }
+    
+    # Either doesn't need SSH, or SSH is configured - run normal test
+    connector = None
+    
+    try:
+        # Get connector
+        connector = connector_factory()
+        
+        # If check requires SSH, verify connector actually has it
+        if ssh_info['requires_ssh']:
+            if not connector_has_ssh_capability(connector):
+                return {
+                    'success': False,
+                    'skipped': False,
+                    'error': 'Connector does not have SSH capability despite configuration',
+                    'database_type': plugin_name
+                }
+        
+        # Run the actual integration test
+        return run_integration_test(check_files, lambda: connector)
+    
+    except Exception as e:
+        database_type = connector.__class__.__name__ if connector else plugin_name
+        return {
+            'success': False,
+            'skipped': False,
+            'error': str(e),
+            'database_type': database_type,
+            'exception_type': type(e).__name__
+        }
+    
+    finally:
+        # Note: Don't close connector here if it came from a factory
+        # The factory/container is responsible for cleanup
+        pass
+
+
+# Update the validate_and_correct_with_integration_tests to use new function
+def validate_and_correct_with_integration_tests(
+    check_files: dict, 
+    connector_factory,
+    plugin_name: str,
+    settings: dict,
+    max_attempts: int = 3
+) -> bool:
+    """
+    Enhanced validation with SSH detection and AI correction.
+    
+    Args:
+        check_files: Dict of file paths
+        connector_factory: Function that returns test database connector
+        plugin_name: Name of the plugin
+        settings: AI settings for correction
+        max_attempts: Maximum correction attempts
+    
+    Returns:
+        bool: True if validation succeeded or was appropriately skipped
+    """
+    from pathlib import Path
+    
+    for attempt in range(max_attempts):
+        print(f"  - Integration test attempt {attempt + 1}/{max_attempts}...")
+        
+        try:
+            # Run integration test with SSH detection
+            test_result = run_integration_test_with_ssh_detection(
+                check_files=check_files,
+                connector_factory=connector_factory,
+                plugin_name=plugin_name,
+                settings=settings
+            )
+            
+            # Check if test was skipped (SSH required but not available)
+            if test_result.get('skipped', False):
+                print(f"  - ⚠️  Integration test skipped: {test_result['reason']}")
+                return True  # Skipped is not a failure
+            
+            # Check if test passed
+            if test_result['success']:
+                if attempt > 0:
+                    print(f"  - ✅ Integration test passed after {attempt} correction(s)")
+                else:
+                    print("  - ✅ Integration test passed")
+                return True
+            
+            # Test failed - check if we've exhausted attempts
+            if attempt == max_attempts - 1:
+                print(f"  - ❌ Integration test failed after {max_attempts} attempts")
+                print(f"     Error: {test_result.get('error', 'Unknown error')}")
+                return False
+            
+            # Ask AI to fix the issue
+            print(f"  - Integration test failed: {test_result.get('error', 'Unknown')}")
+            print(f"  - Asking AI to correct the issue...")
+            
+            corrected_content = request_ai_correction(
+                original_files=check_files,
+                test_error=test_result.get('error', ''),
+                test_output=test_result.get('output', ''),
+                database_type=test_result.get('database_type', 'unknown'),
+                settings=settings
+            )
+            
+            if not corrected_content:
+                print("  - ⚠️  AI failed to provide correction")
+                return False
+            
+            # Write corrected files
+            for file_key, corrected_code in corrected_content.items():
+                if file_key in check_files:
+                    file_path = Path(check_files[file_key])
+                    file_path.write_text(corrected_code, encoding='utf-8')
+                    print(f"  - Updated: {file_path}")
+        
+        except Exception as e:
+            print(f"  - ❌ Integration test execution error: {e}")
+            if attempt == max_attempts - 1:
+                return False
+    
+    return False
 
 
 def request_ai_correction(

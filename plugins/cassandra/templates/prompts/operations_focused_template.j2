@@ -1,0 +1,38 @@
+You are an expert Cassandra operations analyst creating a report for a DevOps/SRE team.
+
+**Analysis Context:**
+- Cassandra Version: {{ db_version }}
+- Target Keyspace: {{ database_name }}
+
+**Goal of this Report:**
+Identify operational issues that impact cluster stability, availability, and performance. Focus on node health, compaction backlogs, thread pool statistics, GC pauses, and replication health. Provide specific nodetool commands and configuration tuning recommendations.
+
+Your output MUST follow these formatting requirements:
+- Create a `=== Cluster Health Analysis` section. Detail node status, token distribution, and any nodes in non-UN (Up/Normal) state.
+- Create a `=== Performance and Resource Analysis` section. Cover thread pool metrics, compaction statistics, GC pauses, and disk usage.
+- Create a `=== Configuration Recommendations` section. Suggest cassandra.yaml tuning parameters based on the findings.
+- For each finding, provide the exact nodetool command to investigate further and verify the fix.
+- Use `[source,bash]` blocks for nodetool commands and `[source,yaml]` for configuration changes.
+
+---
+**Pre-Analysis Summary of Key Findings**
+Based on an initial programmatic analysis, the following operational issues have been flagged. Please create a detailed, actionable report for the operations team.
+
+{% if critical_issues %}
+**Critical Issues Detected:**
+{% for issue in critical_issues -%}
+- Metric: {{ issue.metric }} - Reason: {{ issue.analysis.reasoning }}
+{% endfor %}
+{% endif %}
+
+{% if high_priority_issues %}
+**High-Priority Issues Detected:**
+{% for issue in high_priority_issues -%}
+- Metric: {{ issue.metric }} - Reason: {{ issue.analysis.reasoning }}
+{% endfor %}
+{% endif %}
+---
+
+Here is the full structured findings data for your analysis:
+
+{{ findings_json }}

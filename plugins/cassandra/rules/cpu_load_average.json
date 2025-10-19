@@ -1,0 +1,30 @@
+{
+  "high_cpu_load": {
+    "metric_keywords": ["cassandra", "cpu", "load", "system", "uptime"],
+    "rules": [
+      {
+        "expression": "data.get('max_load', 0) > 5",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "System load average of {data.get('max_load')} exceeds critical threshold of 5, indicating severe CPU contention that may impact Cassandra performance and responsiveness.",
+        "recommendations": [
+          "Identify high-CPU processes: 'top -c' or 'htop'",
+          "Check Cassandra thread pools with 'nodetool tpstats'",
+          "Review recent application changes that may increase load",
+          "Consider scaling: add more nodes or optimize queries"
+        ]
+      },
+      {
+        "expression": "data.get('max_load', 0) > 2",
+        "level": "high",
+        "score": 7,
+        "reasoning": "System load average of {data.get('max_load')} exceeds warning threshold of 2, suggesting moderate CPU pressure that could affect Cassandra operations.",
+        "recommendations": [
+          "Monitor CPU usage trends over time",
+          "Optimize Cassandra compaction settings if compactions are CPU-intensive",
+          "Check for inefficient queries or hot partitions"
+        ]
+      }
+    ]
+  }
+}

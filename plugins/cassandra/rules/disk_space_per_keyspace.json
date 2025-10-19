@@ -1,0 +1,21 @@
+{
+  "high_disk_usage_keyspace": {
+    "metric_keywords": ["cassandra", "disk", "space", "keyspace", "storage", "capacity"],
+    "rules": [
+      {
+        "expression": "data.get('max_percent', 0) > 50",
+        "level": "high",
+        "score": 7,
+        "reasoning": "One or more keyspaces show high disk usage concentration (max: {data.get('max_percent', 0):.1f}%). High concentration in a single keyspace indicates potential data skew, uneven partitioning, or application-specific growth patterns that could lead to hotspotting, reduced performance, and capacity planning issues.",
+        "recommendations": [
+          "Analyze partition key distribution for the highest-usage keyspaces to identify hotspots.",
+          "Consider data archiving or partitioning strategies to balance load across keyspaces.",
+          "Monitor ongoing growth with regular tablestats runs and set alerts for >70% usage.",
+          "Plan cluster expansion: Add nodes or increase replication if storage pressure continues."
+        ]
+      }
+    ]
+  }
+}
+
+

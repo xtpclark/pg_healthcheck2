@@ -1,0 +1,877 @@
+= Cassandra Plugin Documentation
+:toc: left
+:toclevels: 3
+:icons: font
+
+== Overview
+
+The Cassandra plugin provides comprehensive health monitoring for Apache Cassandra clusters. It supports multiple query execution methods to gather metrics from both Cassandra internals and the underlying operating system.
+
+== Connector Capabilities
+
+The `CassandraConnector` class provides a unified interface for three distinct types of operations:
+
+[cols="1,2,1,2"]
+|===
+|Type |Description |SSH Required |Use Case
+
+|*CQL Queries*
+|Standard Cassandra Query Language
+|❌ No
+|Schema information, replication settings, keyspace/table metadata
+
+|*Nodetool Commands*
+|Cassandra operational tools via SSH
+|✅ Yes
+|Node status, compaction stats, thread pools, cluster metrics
+
+|*Shell Commands*
+|Operating system commands via SSH
+|✅ Yes
+|Disk space, memory usage, process status, log analysis
+|===
+
+=== CQL Queries
+
+CQL queries execute against Cassandra's native protocol and provide access to system tables.
+
+*Connection Requirements:*
+- Cassandra host(s) and port
+- CQL credentials (username/password)
+- Network access to Cassandra native port (default: 9042)
+
+*Query Format:*
+[source,sql]
+----
+SELECT * FROM system_schema.keyspaces;
+----
+
+*What You Can Query:*
+- `system.local` - Local node information
+- `system.peers_v2` - Peer node information (Cassandra 4.x+)
+- `system_schema.keyspaces` - Keyspace definitions and replication
+- `system_schema.tables` - Table metadata and configuration
+- `system_schema.columns` - Column definitions
+- `system_schema.indexes` - Secondary index information
+
+*Example Check:*
+[source,python]
+----
+def get_keyspaces_query(connector):
+    """Returns query for all keyspaces."""
+    return """
+    SELECT keyspace_name, replication, durable_writes
+    FROM system_schema.keyspaces;
+    """
+
+def run_keyspace_check(connector, settings):
+    query = get_keyspaces_query(connector)
+    formatted, raw = connector.execute_query(query, return_raw=True)
+    # Process results...
+----
+
+=== Nodetool Commands
+
+Nodetool commands execute via SSH and provide operational metrics not available through CQL.
+
+*Connection Requirements:*
+- SSH access to at least one Cassandra node
+- SSH credentials (username + key or password)
+- User with permissions to run nodetool commands
+
+*Configuration Example:*
+[source,yaml]
+----
+cassandra:
+  hosts:
+    - localhost
+  port: 9042
+  user: cassandra
+  password: cassandra
+  ssh_host: cassandra-node-1
+  ssh_user: ubuntu
+  ssh_key_file: /home/user/.ssh/id_rsa
+  ssh_timeout: 10
+----
+
+*Query Format:*
+[source,python]
+----
+import json
+
+def get_nodetool_status_query(connector):
+    return json.dumps({
+        "operation": "nodetool",
+        "command": "status"
+    })
+----
+
+*Available Nodetool Commands:*
+
+[cols="1,2,2"]
+|===
+|Command |Returns |Use Case
+
+|`status`
+|Node states (UN/DN), load, ownership
+|Cluster health and availability
+
+|`compactionstats`
+|Pending tasks, active compactions
+|Compaction performance monitoring
+
+|`tpstats`
+|Thread pool statistics
+|Thread pool saturation detection
+
+|`describecluster`
+|Cluster name, schema versions, topology
+|Schema consistency verification
+
+|`tablestats`
+|Per-table statistics and disk usage
+|Storage analysis per keyspace/table
+
+|`gcstats`
+|Garbage collection pause times
+|JVM performance monitoring
+
+|`proxyhistograms`
+|Read/write latency histograms
+|Latency analysis
+
+|`netstats`
+|Network streaming statistics
+|Data streaming monitoring
+
+|`info`
+|Node information summary
+|Quick node health check
+
+|`ring`
+|Token ring and node ownership
+|Token distribution analysis
+|===
+
+*Parsed Output Structure:*
+
+Each nodetool command returns structured data that's automatically parsed by the connector.
+
+*nodetool status:*
+[source,python]
+----
+[
+    {
+        'datacenter': 'datacenter1',
+        'status': 'U',           # U=Up, D=Down
+        'state': 'N',            # N=Normal, L=Leaving, J=Joining, M=Moving
+        'address': '192.168.1.10',
+        'load': '108.45 KB',
+        'tokens': 256,
+        'owns_effective_percent': 33.3,
+        'host_id': 'aaa-bbb-ccc-ddd',
+        'rack': 'rack1'
+    },
+    # ... more nodes
+]
+----
+
+*nodetool compactionstats:*
+[source,python]
+----
+{
+    'pending_tasks': 15,
+    'active_compactions': [
+        {
+            'compaction_id': 'abc123',
+            'keyspace': 'my_keyspace',
+            'table': 'my_table',
+            'completed': 50000000,
+            'total': 100000000,
+            'unit': 'bytes',
+            'type': 'Compaction'
+        }
+    ]
+}
+----
+
+*nodetool describecluster:*
+[source,python]
+----
+{
+    'name': 'Production Cluster',
+    'snitch': 'org.apache.cassandra.locator.GossipingPropertyFileSnitch',
+    'partitioner': 'org.apache.cassandra.dht.Murmur3Partitioner',
+    'schema_versions': [
+        {
+            'version': '909ab78a-408f-34a2-872b-4ca50d2dfe2a',
+            'endpoints': ['192.168.1.10', '192.168.1.11']
+        },
+        {
+            'version': 'UNREACHABLE',
+            'endpoints': ['192.168.1.12']
+        }
+    ]
+}
+----
+
+*nodetool tpstats:*
+[source,python]
+----
+[
+    {
+        'pool_name': 'ReadStage',
+        'active': 0,
+        'pending': 0,
+        'completed': 12345,
+        'blocked': 0,
+        'all_time_blocked': 0
+    },
+    {
+        'pool_name': 'MutationStage',
+        'active': 2,
+        'pending': 10,
+        'completed': 98765,
+        'blocked': 0,
+        'all_time_blocked': 5
+    }
+]
+----
+
+*Example Check:*
+[source,python]
+----
+from plugins.cassandra.utils.qrylib.qry_node_status import get_nodetool_status_query
+from plugins.common.check_helpers import require_ssh, safe_execute_query
+
+def run_node_status_check(connector, settings):
+    # Check SSH availability
+    ssh_ok, skip_msg, skip_data = require_ssh(connector, "nodetool commands")
+    if not ssh_ok:
+        return skip_msg, skip_data
+    
+    # Execute nodetool command
+    query = get_nodetool_status_query(connector)
+    success, formatted, raw = safe_execute_query(connector, query, "Nodetool status")
+    
+    if not success:
+        return formatted, {"status": "error", "data": raw}
+    
+    # Analyze parsed results
+    nodes = raw if isinstance(raw, list) else []
+    unhealthy = [n for n in nodes if n['status'] != 'U' or n['state'] != 'N']
+    # ... analysis logic
+----
+
+=== Shell Commands
+
+Shell commands execute arbitrary OS commands via SSH for system-level metrics.
+
+*Connection Requirements:*
+- SSH access to at least one Cassandra node
+- SSH credentials (username + key or password)
+- User with appropriate OS permissions
+
+*Configuration:*
+Same SSH configuration as nodetool commands (see above).
+
+*Query Format:*
+[source,python]
+----
+import json
+
+def get_disk_space_query(connector):
+    return json.dumps({
+        "operation": "shell",
+        "command": "df -h /var/lib/cassandra"
+    })
+----
+
+*Common Shell Commands:*
+
+[cols="1,2,2"]
+|===
+|Command |Returns |Use Case
+
+|`df -h`
+|Disk space usage by filesystem
+|Monitor disk capacity
+
+|`df -h /var/lib/cassandra`
+|Disk space for Cassandra data directory
+|Data directory capacity monitoring
+
+|`du -sh /var/lib/cassandra`
+|Total size of Cassandra data
+|Storage usage analysis
+
+|`free -m`
+|Memory usage (MB)
+|RAM availability monitoring
+
+|`ps aux \| grep cassandra`
+|Cassandra process information
+|Process status verification
+
+|`uptime`
+|System load averages
+|CPU load monitoring
+
+|`tail -n 1000 /var/log/cassandra/system.log`
+|Recent log entries
+|Log analysis and error detection
+
+|`find /var/lib/cassandra -name "*tmp*"`
+|Temporary files in data directory
+|Cleanup opportunity identification
+
+|`netstat -s`
+|Network statistics
+|Network performance monitoring
+
+|`iostat -x 5 1`
+|Disk I/O statistics
+|Storage performance analysis
+|===
+
+*Output Structure:*
+
+Shell commands return raw text output that must be parsed manually in your check code.
+
+[source,python]
+----
+{
+    'command': 'df -h /var/lib/cassandra',
+    'output': 'Filesystem      Size  Used Avail Use% Mounted on\n/dev/sdb1  500G 450G   50G  90% /var/lib/cassandra',
+    'stderr': None,
+    'exit_code': 0
+}
+----
+
+*Example Check:*
+[source,python]
+----
+from plugins.cassandra.utils.qrylib.qry_disk_usage import get_disk_usage_query
+from plugins.common.check_helpers import require_ssh, safe_execute_query
+
+def run_disk_usage_check(connector, settings):
+    # Check SSH availability
+    ssh_ok, skip_msg, skip_data = require_ssh(connector, "shell commands")
+    if not ssh_ok:
+        return skip_msg, skip_data
+    
+    # Execute shell command
+    query = get_disk_usage_query(connector)
+    success, formatted, raw = safe_execute_query(connector, query, "df command")
+    
+    if not success:
+        return formatted, {"status": "error", "data": raw}
+    
+    # Parse raw text output
+    output = raw.get('output', '') if isinstance(raw, dict) else str(raw)
+    lines = output.strip().split('\n')
+    
+    # Parse df output manually
+    for line in lines[1:]:  # Skip header
+        parts = line.split()
+        if len(parts) >= 6:
+            filesystem = parts[0]
+            use_pct = int(parts[4].rstrip('%'))
+            # ... analysis logic
+----
+
+== Query Type Selection Guide
+
+Use this decision tree to choose the right query type for your check:
+
+[source,text]
+----
+┌─────────────────────────────────────────────────┐
+│  What information do you need?                  │
+└──────────────────┬──────────────────────────────┘
+                   │
+                   ├─ Schema/Topology/Replication?
+                   │  └─> Use CQL
+                   │      (system_schema.*, system.local, system.peers_v2)
+                   │
+                   ├─ Cassandra operational metrics?
+                   │  └─> Use Nodetool
+                   │      (status, compactionstats, tpstats, etc.)
+                   │
+                   └─ OS-level/System metrics?
+                      └─> Use Shell
+                          (df, free, ps, tail, etc.)
+----
+
+*Examples:*
+
+[cols="2,1,3"]
+|===
+|What You Need |Use |Why
+
+|List all keyspaces
+|CQL
+|Available in `system_schema.keyspaces`
+
+|Replication factor per keyspace
+|CQL
+|Available in `system_schema.keyspaces`
+
+|Node Up/Down status
+|Nodetool
+|`nodetool status` provides real-time state
+
+|Pending compaction tasks
+|Nodetool
+|Only available via `nodetool compactionstats`
+
+|Disk space on data directory
+|Shell
+|OS-level metric, use `df -h`
+
+|Available RAM
+|Shell
+|OS-level metric, use `free -m`
+
+|Schema version consistency
+|Nodetool
+|`nodetool describecluster` shows all versions
+
+|Thread pool saturation
+|Nodetool
+|`nodetool tpstats` shows pending/blocked
+
+|Recent errors in logs
+|Shell
+|Parse `/var/log/cassandra/system.log`
+
+|JVM heap usage
+|Nodetool
+|`nodetool info` or `nodetool gcstats`
+|===
+
+== SSH Configuration
+
+Both nodetool and shell commands require SSH access to Cassandra nodes.
+
+=== Configuration Parameters
+
+[source,yaml]
+----
+cassandra:
+  # CQL connection (always required)
+  hosts:
+    - cassandra-node-1.example.com
+  port: 9042
+  user: cassandra
+  password: cassandra
+  
+  # SSH connection (required for nodetool and shell)
+  ssh_host: cassandra-node-1.example.com
+  ssh_user: ubuntu
+  ssh_key_file: /home/user/.ssh/cassandra_key
+  ssh_timeout: 10
+  
+  # Alternative: SSH with password (not recommended)
+  # ssh_password: secret_password
+----
+
+=== SSH Requirements
+
+*User Permissions:*
+- Must be able to SSH to the target node
+- Must have permissions to run `nodetool` commands (typically in `cassandra` group)
+- For shell commands, needs appropriate file read permissions
+
+*Network Requirements:*
+- SSH port (22 or custom) must be accessible
+- Firewall rules must allow SSH connections
+- SSH key must be properly configured (correct permissions: 600)
+
+*Testing SSH Access:*
+[source,bash]
+----
+# Test basic SSH access
+ssh -i /path/to/key ubuntu@cassandra-node-1.example.com
+
+# Test nodetool access
+ssh -i /path/to/key ubuntu@cassandra-node-1.example.com "nodetool status"
+
+# Test shell command access
+ssh -i /path/to/key ubuntu@cassandra-node-1.example.com "df -h /var/lib/cassandra"
+----
+
+== Available Checks
+
+The Cassandra plugin includes several pre-built checks:
+
+=== CQL-Based Checks
+
+*Keyspace Replication Check*:: Analyzes replication strategies and identifies keyspaces using SimpleStrategy (not recommended for production).
+
+=== Nodetool-Based Checks
+
+*Compaction Pending Tasks*:: Monitors compaction backlog using `nodetool compactionstats`.
+
+*Schema Version Consistency*:: Verifies all nodes agree on schema version using `nodetool describecluster`.
+
+*Disk Space per Keyspace*:: Analyzes disk usage by keyspace/table using `nodetool tablestats`.
+
+=== Shell-Based Checks
+
+*Data Directory Disk Space*:: Monitors disk capacity for Cassandra data directory using `df -h`.
+
+*Memory Usage Analysis*:: Checks available RAM and swap usage using `free -m`.
+
+*Cassandra Process Status*:: Verifies Cassandra process is running using `ps aux`.
+
+*System Log Error Analysis*:: Scans recent log entries for errors and warnings using `tail` and `grep`.
+
+== Creating New Checks
+
+=== Using the AI Generator
+
+The easiest way to create new checks is using the `aidev.py` tool:
+
+[source,bash]
+----
+# Generate a nodetool-based check
+./aidev.py "add a cassandra check for thread pool saturation using nodetool tpstats"
+
+# Generate a shell-based check
+./aidev.py "add a cassandra check for CPU load using uptime command"
+
+# Generate a CQL-based check
+./aidev.py "add a cassandra check for keyspace count from system_schema"
+----
+
+The AI generator will create:
+- ✅ Check module (`plugins/cassandra/checks/{check_name}.py`)
+- ✅ Query library (`plugins/cassandra/utils/qrylib/qry_{check_name}.py`)
+- ✅ Rule file (`plugins/cassandra/rules/{check_name}.json`)
+- ✅ Unit tests (`tests/cassandra/checks/test_{check_name}.py`)
+
+=== Manual Check Creation
+
+If you prefer to create checks manually, follow this structure:
+
+==== 1. Query Library File
+
+*File:* `plugins/cassandra/utils/qrylib/qry_your_check.py`
+
+[source,python]
+----
+"""Query functions for your check."""
+
+__all__ = [
+    'get_your_check_query'
+]
+
+import json
+
+# For CQL queries
+def get_your_check_query(connector):
+    return "SELECT * FROM system_schema.keyspaces;"
+
+# For nodetool commands
+def get_your_nodetool_query(connector):
+    return json.dumps({
+        "operation": "nodetool",
+        "command": "status"
+    })
+
+# For shell commands
+def get_your_shell_query(connector):
+    return json.dumps({
+        "operation": "shell",
+        "command": "df -h"
+    })
+----
+
+==== 2. Check Module File
+
+*File:* `plugins/cassandra/checks/your_check.py`
+
+[source,python]
+----
+from plugins.cassandra.utils.qrylib.qry_your_check import get_your_check_query
+from plugins.common.check_helpers import (
+    require_ssh,          # Only if using nodetool/shell
+    format_check_header,
+    format_recommendations,
+    safe_execute_query
+)
+
+def get_weight():
+    """Returns importance score (1-10)."""
+    return 7
+
+def run_your_check(connector, settings):
+    """
+    Performs your health check.
+    
+    Returns:
+        tuple: (asciidoc_string, structured_data_dict)
+    """
+    # Initialize
+    adoc_content = format_check_header(
+        "Your Check Title",
+        "Description of what this check does.",
+        requires_ssh=True  # Only if using nodetool/shell
+    )
+    structured_data = {}
+    
+    # Check SSH (only if using nodetool/shell)
+    ssh_ok, skip_msg, skip_data = require_ssh(connector, "operation type")
+    if not ssh_ok:
+        adoc_content.append(skip_msg)
+        structured_data["result"] = skip_data
+        return "\n".join(adoc_content), structured_data
+    
+    # Execute query
+    query = get_your_check_query(connector)
+    success, formatted, raw = safe_execute_query(connector, query, "Query description")
+    
+    if not success:
+        adoc_content.append(formatted)
+        structured_data["result"] = {"status": "error", "data": raw}
+        return "\n".join(adoc_content), structured_data
+    
+    # Analyze results
+    # ... your analysis logic ...
+    
+    # Add recommendations if needed
+    if issues_found:
+        recommendations = [
+            "Action step 1",
+            "Action step 2"
+        ]
+        adoc_content.extend(format_recommendations(recommendations))
+    
+    structured_data["result"] = {
+        "status": "success",
+        "data": raw
+    }
+    
+    return "\n".join(adoc_content), structured_data
+----
+
+==== 3. Rule File
+
+*File:* `plugins/cassandra/rules/your_check.json`
+
+[source,json]
+----
+{
+  "your_rule_name": {
+    "metric_keywords": ["cassandra", "category", "specific_metric"],
+    "rules": [
+      {
+        "expression": "data.get('field_name') > threshold",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Explanation with {data.get('field')} interpolation",
+        "recommendations": [
+          "Action step 1",
+          "Action step 2"
+        ]
+      }
+    ]
+  }
+}
+----
+
+==== 4. Integration
+
+Add to `plugins/cassandra/reports/default.py`:
+
+[source,python]
+----
+REPORT_SECTIONS = [
+    {
+        'type': 'section',
+        'title': 'Operational Health',
+        'checks': [
+            # ... existing checks ...
+            {
+                'type': 'module',
+                'module': 'plugins.cassandra.checks.your_check',
+                'function': 'run_your_check'
+            }
+        ]
+    }
+]
+----
+
+== Helper Functions
+
+The framework provides helper functions to reduce boilerplate:
+
+=== require_ssh()
+
+Checks if SSH is configured and available.
+
+[source,python]
+----
+from plugins.common.check_helpers import require_ssh
+
+ssh_ok, skip_msg, skip_data = require_ssh(connector, "nodetool commands")
+if not ssh_ok:
+    return skip_msg, skip_data
+----
+
+=== format_check_header()
+
+Creates standard check headers with optional SSH notice.
+
+[source,python]
+----
+from plugins.common.check_helpers import format_check_header
+
+adoc_content = format_check_header(
+    "Check Title",
+    "Check description.",
+    requires_ssh=True  # Adds SSH requirement notice
+)
+----
+
+=== safe_execute_query()
+
+Wraps query execution with consistent error handling.
+
+[source,python]
+----
+from plugins.common.check_helpers import safe_execute_query
+
+success, formatted, raw = safe_execute_query(
+    connector, 
+    query, 
+    "Operation description"
+)
+
+if not success:
+    return formatted, {"status": "error", "data": raw}
+----
+
+=== format_recommendations()
+
+Formats recommendation lists consistently.
+
+[source,python]
+----
+from plugins.common.check_helpers import format_recommendations
+
+recommendations = [
+    "Action step 1",
+    "Action step 2"
+]
+adoc_content.extend(format_recommendations(recommendations))
+----
+
+== Testing
+
+=== Integration Tests
+
+Test query functions against a live Cassandra cluster:
+
+[source,bash]
+----
+cd ~/git/pg_healthcheck2
+python3 tests/integration/test_cassandra_queries.py
+----
+
+=== Unit Tests
+
+Test check logic with mocked connector:
+
+[source,bash]
+----
+python3 -m pytest tests/cassandra/checks/test_your_check.py -v
+----
+
+=== Manual Testing
+
+Run the full health check:
+
+[source,bash]
+----
+python3 main.py --config config/config.yaml
+----
+
+== Troubleshooting
+
+=== CQL Connection Issues
+
+*Problem:* Cannot connect to Cassandra via CQL
+
+*Solutions:*
+- Verify hosts and port in configuration
+- Check Cassandra is running: `systemctl status cassandra`
+- Test connectivity: `cqlsh -u cassandra -p cassandra`
+- Check firewall rules for port 9042
+
+=== SSH Connection Issues
+
+*Problem:* Nodetool or shell commands fail with SSH errors
+
+*Solutions:*
+- Verify SSH credentials are correct
+- Test SSH manually: `ssh -i /path/to/key user@host`
+- Check SSH key permissions: `chmod 600 /path/to/key`
+- Verify user can run nodetool: `ssh user@host "nodetool status"`
+
+=== Parser Issues
+
+*Problem:* Nodetool or shell output not parsing correctly
+
+*Solutions:*
+- Check Cassandra version compatibility
+- Verify command output format hasn't changed
+- Enable debug logging to see raw output
+- Update parser in `plugins/common/parsers.py`
+
+=== Query Failures
+
+*Problem:* CQL queries fail or return empty results
+
+*Solutions:*
+- Verify the query syntax is valid
+- Check user permissions for queried tables
+- Test query manually in cqlsh
+- Check for version-specific table name changes
+
+== Version Compatibility
+
+*Cassandra Versions:*
+- ✅ Fully tested with Cassandra 4.0.x, 4.1.x
+- ✅ Compatible with Cassandra 3.11.x (most features)
+- ⚠️ Cassandra 2.x may have limited support
+
+*Version-Specific Notes:*
+- `system.peers_v2` table (Cassandra 4.x+) vs `system.peers` (3.x)
+- Some nodetool output formats differ between versions
+- Check your Cassandra version: `nodetool version`
+
+== Additional Resources
+
+*Documentation:*
+- Cassandra Plugin Prompt: `tools/templates/check_generation/cassandra_check_prompt.adoc`
+- Common Utilities: `plugins/common/README.adoc`
+- Main Framework: `README.md`
+
+*External References:*
+- https://cassandra.apache.org/doc/latest/[Apache Cassandra Documentation]
+- https://cassandra.apache.org/doc/latest/tools/nodetool/[Nodetool Reference]
+- https://cassandra.apache.org/doc/latest/cql/[CQL Reference]
+
+== Support
+
+For issues or questions:
+1. Check existing checks for examples
+2. Review the cassandra_check_prompt.adoc
+3. Use aidev.py to generate boilerplate code
+4. Consult the test suite for usage patterns
+
+== License
+
+This plugin is part of the pg_healthcheck2 framework.

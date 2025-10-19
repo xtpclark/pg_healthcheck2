@@ -98,7 +98,8 @@ def execute_operations(operations, settings, run_integration_tests=True):
             else:
                 print(f"⚠️  Unknown action '{action}'. Skipping.")
         
-        # Run integration tests if enabled and we have check files
+
+# Run integration tests if enabled and we have check files
         if run_integration_tests and check_files.get('check_module') and check_files.get('query_file'):
             print("\n--- Running Integration Tests ---")
             print(f"  [DEBUG] check_module: {check_files.get('check_module')}")
@@ -112,11 +113,13 @@ def execute_operations(operations, settings, run_integration_tests=True):
                 connector_factory = get_connector_factory(plugin_name, settings)
                 
                 if connector_factory:
+                    # Use the SSH-aware validator
                     from lib.validators import validate_and_correct_with_integration_tests
                     
                     integration_success = validate_and_correct_with_integration_tests(
                         check_files=check_files,
                         connector_factory=connector_factory,
+                        plugin_name=plugin_name,
                         settings=settings,
                         max_attempts=3
                     )
@@ -168,30 +171,59 @@ def extract_plugin_name(file_path: str) -> str:
         print(f"  [DEBUG] Normalized to: {normalized_path}")
         return None
 
+"""
+Replace your existing get_connector_factory() function in files.py with this version.
+"""
 
 def get_connector_factory(plugin_name: str, settings: dict):
     """
     Get a connector factory function for integration testing.
     
+    Supports both external servers and containers with priority:
+    1. Environment variables (highest)
+    2. settings.yaml external_servers config
+    3. Container (fallback)
+    
     Args:
-        plugin_name: Name of plugin (e.g., 'postgres', 'mongodb')
-        settings: Settings dict (may contain test DB config)
+        plugin_name: Name of plugin (e.g., 'postgres', 'mongodb', 'cassandra')
+        settings: Settings dict from settings.yaml
     
     Returns:
-        Callable that returns a test database connector
+        Callable that returns a test database connector, or None if unavailable
     """
     # Check if integration testing is enabled
     if not settings.get('integration_tests', {}).get('enabled', False):
         print(f"  [DEBUG] Integration tests disabled in config")
         return None
     
+    print(f"  [DEBUG] Checking for integration test configuration: {plugin_name}")
+    
+    # Check for external server configuration first (env vars or config file)
+    from lib.external_server import (
+        get_external_server_config,
+        create_external_connector,
+        print_external_server_info
+    )
+    
+    external_config = get_external_server_config(plugin_name, settings)
+    
+    if external_config:
+        # External server is configured - use it
+        print_external_server_info(plugin_name, external_config)
+        
+        def factory():
+            return create_external_connector(plugin_name, external_config)
+        
+        return factory
+    
+    # No external server - fall back to containers
+    print(f"  [DEBUG] No external server configured, will use container")
     print(f"  [DEBUG] Attempting to import container for: {plugin_name}")
     
     try:
         if plugin_name == 'postgres':
-            print(f"  [DEBUG] Importing: from tests.integration.framework import PostgreSQLContainer")
+            print(f"  [DEBUG] Importing PostgreSQLContainer")
             from tests.integration.framework import PostgreSQLContainer
-            print(f"  [DEBUG] Import successful!")
             
             def factory():
                 version = settings.get('integration_tests', {}).get('postgres_version', '16')
@@ -202,11 +234,29 @@ def get_connector_factory(plugin_name: str, settings: dict):
             
             return factory
         
+        elif plugin_name == 'cassandra':
+            print(f"  [DEBUG] Importing CassandraContainer")
+            from tests.integration.framework import CassandraContainer
+            
+            def factory():
+                version = settings.get('integration_tests', {}).get('cassandra_version', '4.1')
+                print(f"  [DEBUG] Creating Cassandra {version} container...")
+                print(f"  [DEBUG] Note: Container supports CQL only")
+                print(f"  [DEBUG] For nodetool checks, configure external server with SSH")
+                container = CassandraContainer(version=version, settings=settings)  # pass in all settings.
+        #        container = CassandraContainer(version=version)
+                container.start()
+                return container.get_connector()
+            
+            return factory
+        
         elif plugin_name == 'mongodb':
+            print(f"  [DEBUG] Importing MongoDBContainer")
             from tests.integration.framework import MongoDBContainer
             
             def factory():
                 version = settings.get('integration_tests', {}).get('mongodb_version', '7.0')
+                print(f"  [DEBUG] Creating MongoDB {version} container...")
                 container = MongoDBContainer(version=version)
                 container.start()
                 return container.get_connector()
@@ -214,10 +264,12 @@ def get_connector_factory(plugin_name: str, settings: dict):
             return factory
         
         elif plugin_name in ['valkey', 'redis']:
+            print(f"  [DEBUG] Importing ValkeyContainer/RedisContainer")
             from tests.integration.framework import ValkeyContainer, RedisContainer
             
             def factory():
                 version = settings.get('integration_tests', {}).get('valkey_version', '7.2')
+                print(f"  [DEBUG] Creating {plugin_name.title()} {version} container...")
                 if plugin_name == 'redis':
                     container = RedisContainer(version=version)
                 else:
@@ -227,28 +279,13 @@ def get_connector_factory(plugin_name: str, settings: dict):
             
             return factory
         
-        elif plugin_name == 'cassandra':
-            print(f"  [DEBUG] Importing: from tests.integration.framework import CassandraContainer")
-            from tests.integration.framework import CassandraContainer
-            print(f"  [DEBUG] Import successful!")
-            
-            def factory():
-                version = settings.get('integration_tests', {}).get('cassandra_version', '4.1')
-                print(f"  [DEBUG] Creating Cassandra {version} container...")
-                container = CassandraContainer(version=version)
-                container.start()
-                return container.get_connector()
-            
-            return factory
-
         elif plugin_name == 'kafka':
-            print(f"  [DEBUG] Importing: from tests.integration.framework import KafkaContainer")
+            print(f"  [DEBUG] Importing KafkaContainer")
             from tests.integration.framework import KafkaContainer
-            print(f"  [DEBUG] Import successful!")
             
             def factory():
                 version = settings.get('integration_tests', {}).get('kafka_version', 'latest')
-                print(f"  [DEBUG] Creating Kafka container (Redpanda)...")
+                print(f"  [DEBUG] Creating Kafka container...")
                 container = KafkaContainer(version=version)
                 container.start()
                 return container.get_connector()
@@ -256,12 +293,11 @@ def get_connector_factory(plugin_name: str, settings: dict):
             return factory
         
         else:
-            print(f"  [DEBUG] No container implementation for: {plugin_name} in operations/files.py")
+            print(f"  [DEBUG] No container implementation for: {plugin_name}")
             return None
     
     except ImportError as e:
         print(f"  [DEBUG] Import failed: {e}")
-        print(f"  [DEBUG] sys.path: {sys.path[:3]}...")  # Show first 3 entries
-        import traceback
-        traceback.print_exc()
+        print(f"  [DEBUG] sys.path: {sys.path[:3]}...")
         return None
+

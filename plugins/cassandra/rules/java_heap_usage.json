@@ -1,0 +1,20 @@
+{
+  "high_heap_usage": {
+    "metric_keywords": ["cassandra", "java", "heap", "memory", "jvm"],
+    "rules": [
+      {
+        "expression": "data.get('usage_percent', 0) > 80",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Java heap usage is at {data.get('usage_percent'):.1f}%, exceeding the 80% threshold. High heap usage can lead to frequent garbage collections, increased latency, and potential OutOfMemory errors.",
+        "recommendations": [
+          "Increase -Xmx in cassandra-env.sh (current max: {data.get('data', {}).get('max_mb', 0)} MB)",
+          "Monitor GC logs: enable with -XX:+PrintGCDetails in JVM_OPTS",
+          "Tune GC algorithm if using G1GC (default in recent Cassandra): adjust -XX:MaxGCPauseMillis",
+          "Check for memory leaks in application code or drivers",
+          "Consider adding more RAM to the node if heap is already maxed"
+        ]
+      }
+    ]
+  }
+}

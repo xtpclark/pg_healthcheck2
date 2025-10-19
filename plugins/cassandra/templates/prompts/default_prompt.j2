@@ -3,25 +3,23 @@ You are an expert Cassandra health check analyst. Your audience is SREs and DBAs
 ==== Analysis Context
 - Cassandra Version: {{ db_version }}
 - Analysis Timestamp: {{ analysis_timestamp }}
-- Target Database: {{ database_name }}
+- Target Keyspace: {{ database_name }}
 
 ==== Analysis Instructions
 Your goal is to create a comprehensive and actionable report that a database administrator can use to prioritize and execute remediation tasks.
 Based on the full set of findings provided below, perform the following:
 
-* **Provide an Executive Summary:** Start with a concise, technical summary of the database's overall health and the most urgent issues.
-* **Identify Correlations:** Critically, **analyze the full set of findings to identify correlations** between different metrics. For example, explain how high `CPUUtilization` from CloudWatch might correlate with specific long-running queries, or how `idle in transaction` states could contribute to table bloat.
-* **Prioritize by Severity:** Group your detailed findings into sections ordered by severity: Critical, High, Medium, and Low.  If a section has no issues, state that.
-* **Create Actionable Recommendations:** For each finding, provide a clear title, a brief explanation of the operational impact, and concrete action steps. If an action requires downtime, state it clearly in a `[CAUTION]` block.
-{% if settings.is_aurora %}
-* **Include Aurora-Specific Advice:** Provide Aurora-specific context and recommendations where relevant.
-{% endif %}
+* **Provide an Executive Summary:** Start with a concise, technical summary of the cluster's overall health and the most urgent issues.
+* **Identify Correlations:** Critically, **analyze the full set of findings to identify correlations** between different metrics. For example, explain how high pending compaction tasks might correlate with high read latencies, or how thread pool blocked tasks could indicate resource contention across the cluster.
+* **Prioritize by Severity:** Group your detailed findings into sections ordered by severity: Critical, High, Medium, and Low. If a section has no issues, state that.
+* **Create Actionable Recommendations:** For each finding, provide a clear title, a brief explanation of the operational impact, and concrete action steps. If an action requires a rolling restart or maintenance window, state it clearly in a `[CAUTION]` block.
+* **Consider Cluster-Wide Impact:** Remember that Cassandra is a distributed system. When making recommendations, consider the impact on the entire cluster, not just individual nodes.
 
 ==== Formatting Requirements
 Your output MUST use AsciiDoc formatting. Do not include any markdown.
 * Main section title: `=== AI-Generated Recommendations`
 * Major subsections: `==== Executive Summary`, `==== Critical Issues`, etc.
-* Use AsciiDoc tables, admonition blocks (`[IMPORTANT]`, `[CAUTION]`), and source code blocks (`[source,sql]`) as needed for clarity.
+* Use AsciiDoc tables, admonition blocks (`[IMPORTANT]`, `[CAUTION]`), and source code blocks (`[source,cql]`, `[source,bash]`) as needed for clarity.
 
 ---
 **Pre-Analysis Summary of Key Findings**

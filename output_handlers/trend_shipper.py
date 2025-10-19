@@ -12,14 +12,7 @@ import requests
 import json
 from decimal import Decimal
 from datetime import datetime, timedelta
-
-class CustomJsonEncoder(json.JSONEncoder):
-    """A custom JSON encoder to handle special data types like Decimal and datetime."""
-    def default(self, obj):
-        if isinstance(obj, Decimal): return float(obj)
-        if isinstance(obj, datetime): return obj.isoformat()
-        if isinstance(obj, timedelta): return obj.total_seconds()
-        return json.JSONEncoder.default(self, obj)
+from utils.json_utils import UniversalJSONEncoder, safe_json_dumps
 
 def load_config(config_path='config/trends.yaml'):
     """Loads the trend shipper configuration from a YAML file.
@@ -132,7 +125,7 @@ def ship_to_api(api_config, target_info, findings, adoc_content):
             'findings': findings,
             'report_adoc': adoc_content
         }
-        response = requests.post(api_config['endpoint_url'], headers=headers, data=json.dumps(full_payload, cls=CustomJsonEncoder), timeout=15)
+        response = requests.post(api_config['endpoint_url'], headers=headers, data=safe_json_dumps(full_payload), timeout=15)
         response.raise_for_status()
         print(f"Log: Successfully sent raw findings to API. Status: {response.status_code}")
     except requests.exceptions.RequestException as e:
@@ -165,7 +158,7 @@ def run(structured_findings, target_info, adoc_content=None):
     destination = config.get('destination')
 
     if destination == "postgresql":
-        findings_as_json = json.dumps(structured_findings, cls=CustomJsonEncoder)
+        findings_as_json = safe_json_dumps(structured_findings)
         ship_to_database(config.get('database'), target_info, findings_as_json, structured_findings, adoc_content)
     elif destination == "api":
         ship_to_api(config.get('api'), target_info, structured_findings, adoc_content)

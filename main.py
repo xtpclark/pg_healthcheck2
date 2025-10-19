@@ -20,7 +20,7 @@ import argparse
 import pkgutil
 import socket
 import getpass
-
+from utils.json_utils import UniversalJSONEncoder
 from utils.dynamic_prompt_generator import generate_dynamic_prompt
 from utils.run_recommendation import run_recommendation
 from utils.report_builder import ReportBuilder
@@ -31,14 +31,6 @@ try:
     APP_VERSION = (Path(__file__).parent / "VERSION").read_text().strip()
 except FileNotFoundError:
     APP_VERSION = "unknown"
-
-class CustomJsonEncoder(json.JSONEncoder):
-    """A custom JSON encoder to handle special data types like Decimal and datetime."""
-    def default(self, obj):
-        if isinstance(obj, Decimal): return float(obj)
-        if isinstance(obj, datetime): return obj.isoformat()
-        if isinstance(obj, timedelta): return obj.total_seconds()
-        return json.JSONEncoder.default(self, obj)
 
 def discover_plugins():
     """Finds and loads all available plugins from the 'plugins' directory.
@@ -179,8 +171,6 @@ class HealthCheck:
         print(f"[DEBUG] Prompt length being passed to run_recommendation: {len(full_prompt)} characters.")
         # ===============================
 
-
-
         ai_metrics = {}
         if full_prompt:
             ai_adoc, ai_metrics = run_recommendation(self.settings, full_prompt)
@@ -194,7 +184,7 @@ class HealthCheck:
         output_path = self.paths['adoc_out'] / "structured_health_check_findings.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
-            json.dump(self.all_structured_findings, f, indent=2, cls=CustomJsonEncoder)
+            json.dump(self.all_structured_findings, f, indent=2, cls=UniversalJSONEncoder)
         print(f"\nStructured health check findings saved to: {output_path}")
 
     def write_adoc(self, output_file):

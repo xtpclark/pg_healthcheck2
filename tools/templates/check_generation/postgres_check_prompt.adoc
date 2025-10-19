@@ -188,6 +188,70 @@ def run_memory_check(connector, settings):
         adoc_content.append(f"[WARNING]\n====\nMemory usage exceeds {threshold_mb}MB\n====\n")
 ----
 
+=== Query File Structure and Integration Testing
+
+==== Required: __all__ Declaration
+
+Every query file MUST start with an `__all__` list explicitly declaring its public query functions:
+
+[source,python]
+----
+"""Vacuum-related queries for PostgreSQL."""
+
+__all__ = [
+    'get_tables_needing_vacuum_query',
+    'get_vacuum_settings_query'
+]
+
+def get_tables_needing_vacuum_query(connector):
+    """Returns query for tables needing vacuum."""
+    return "SELECT ..."
+
+def _build_threshold_clause(threshold):
+    """Private helper - not in __all__, won't be tested."""
+    return f"n_dead_tup > {threshold}"
+----
+
+**Benefits of __all__:**
+- ✅ Makes public API explicit
+- ✅ Enables better IDE support and type checking
+- ✅ Separates public functions from private helpers
+- ✅ Standard Python convention
+
+==== Integration Test Rules
+
+The integration test framework validates query functions automatically. Follow these rules:
+
+1. **List all public functions in __all__** - Only functions in `__all__` will be tested
+2. **Private helpers start with underscore** - Functions like `_is_supported_version()` are ignored
+3. **Provide defaults for parameters** - Functions with extra parameters need defaults:
+
+[source,python]
+----
+# ✅ GOOD: Has defaults, can be tested
+def get_pg_stat_statements_query(connector, query_type='standard', order_by='total_time'):
+    """Defaults allow integration testing."""
+    if query_type == 'standard':
+        return "SELECT ... ORDER BY " + order_by
+
+# ❌ PROBLEMATIC: No defaults, will be skipped in integration tests
+def get_top_queries_by_metric_query(connector, order_by_metric):
+    """This will be skipped - no test value for order_by_metric."""
+    return f"SELECT ... ORDER BY {order_by_metric}"
+
+# ✅ BETTER: Add reasonable default
+def get_top_queries_by_metric_query(connector, order_by_metric='total_time'):
+    """Default to total_time for integration testing."""
+    return f"SELECT ... ORDER BY {order_by_metric}"
+----
+
+**Default Value Guidelines:**
+- Use safe, commonly available values
+- Choose defaults that work on a fresh PostgreSQL installation
+- Use `'public'` for schema names
+- Use `'total_time'` or `'calls'` for metric parameters
+- Document why the default was chosen
+
 == AsciiDoc Formatting Rules
 
 === Report Structure
@@ -335,6 +399,9 @@ if __name__ == '__main__':
 
 Before outputting JSON, verify:
 
+✅ Query file has `__all__` list declaring all public functions
+✅ Query functions with parameters provide reasonable defaults
+✅ Private helper functions start with underscore (_)
 ✅ Query functions return appropriate format for this database
 ✅ Check module uses connector.execute_query()
 ✅ Version detection handled gracefully (with hasattr checks)

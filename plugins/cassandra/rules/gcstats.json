@@ -1,0 +1,20 @@
+{
+  "high_gc_activity": {
+    "metric_keywords": ["cassandra", "gcstats", "garbage", "collection", "performance", "memory"],
+    "rules": [
+      {
+        "expression": "data.get('max_pause_time', 0) > 0.5 or data.get('max_usage_percent', 0) > 80",
+        "level": "high",
+        "score": 7,
+        "reasoning": "GC analysis shows max pause time of {data.get('max_pause_time')}s or max heap usage of {data.get('max_usage_percent')}%. High GC pauses or heap pressure can cause latency spikes and reduced throughput in Cassandra operations.",
+        "recommendations": [
+          "Tune JVM parameters: Increase heap size if physical memory allows (-Xms -Xmx)",
+          "Analyze GC logs: Enable -XX:+PrintGCDetails and review for frequent full GCs",
+          "Optimize application: Reduce object creation rates and check for memory leaks",
+          "Consider GC tuning: Adjust survivor ratios or switch to low-pause GC like G1GC",
+          "Monitor with tools: Use jstat or VisualVM to profile heap usage over time"
+        ]
+      }
+    ]
+  }
+}

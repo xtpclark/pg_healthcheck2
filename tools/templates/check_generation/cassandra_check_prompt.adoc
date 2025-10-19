@@ -1,5 +1,6 @@
 = Cassandra Health Check Generation
 :toc: left
+:toclevels: 3
 
 You are an expert developer and AI code generator for the pg_healthcheck2 multi-database monitoring framework.
 
@@ -36,7 +37,7 @@ def run_check_name(connector, settings):
     
     Args:
         connector: Database connector with execute_query() method
-        settings: Dictionary of configuration settings
+        settings: Dictionary of configuration settings (main config, not connector settings)
     
     Returns:
         tuple: (asciidoc_report_string, structured_data_dict)
@@ -48,6 +49,128 @@ def run_check_name(connector, settings):
     
     return "\n".join(adoc_content), structured_data
 ----
+
+== Using Shared Helper Functions (RECOMMENDED)
+
+The framework provides reusable helper functions in `plugins.common.check_helpers` to reduce boilerplate and ensure consistency:
+
+[source,python]
+----
+from plugins.common.check_helpers import (
+    require_ssh,              # Check if SSH is available
+    format_check_header,      # Standard check header formatting
+    format_recommendations,   # Standard recommendation formatting
+    safe_execute_query       # Safe query execution with error handling
+)
+----
+
+=== Helper Function: require_ssh()
+
+Replaces manual SSH configuration checking:
+
+[source,python]
+----
+# ✅ NEW PATTERN (Recommended):
+ssh_ok, skip_msg, skip_data = require_ssh(connector, "nodetool commands")
+if not ssh_ok:
+    adoc_content.append(skip_msg)
+    structured_data["check_result"] = skip_data
+    return "\n".join(adoc_content), structured_data
+
+# ✅ OLD PATTERN (Still supported):
+connector_settings = getattr(connector, 'settings', {})
+ssh_configured = (
+    'ssh_host' in connector_settings and
+    'ssh_user' in connector_settings and
+    ('ssh_key_file' in connector_settings or 'ssh_password' in connector_settings)
+)
+if not ssh_configured:
+    # ... manual skip message ...
+----
+
+**Benefits:**
+- ✅ Consistent error messages
+- ✅ Less boilerplate code
+- ✅ Standardized skip data structure
+
+=== Helper Function: format_check_header()
+
+Creates standard check headers with optional SSH requirement notice:
+
+[source,python]
+----
+# ✅ NEW PATTERN:
+adoc_content = format_check_header(
+    "Node Status Analysis (Nodetool)",
+    "Checking cluster node health using `nodetool status`.",
+    requires_ssh=True  # Adds SSH requirement notice
+)
+
+# Equivalent to:
+adoc_content = [
+    "=== Node Status Analysis (Nodetool)",
+    "",
+    "Checking cluster node health using `nodetool status`.",
+    "",
+    "[NOTE]",
+    "====",
+    "This check requires SSH access to the database server.",
+    "===="
+]
+----
+
+=== Helper Function: format_recommendations()
+
+Formats recommendation lists consistently:
+
+[source,python]
+----
+# ✅ NEW PATTERN:
+recommendations = [
+    "SSH to node {address} and check logs",
+    "Verify network connectivity with 'nodetool gossipinfo'",
+    "Check disk space with 'df -h'"
+]
+adoc_content.extend(format_recommendations(recommendations))
+
+# Generates:
+# ==== Recommendations
+# [TIP]
+# ====
+# * SSH to node {address} and check logs
+# * Verify network connectivity with 'nodetool gossipinfo'
+# * Check disk space with 'df -h'
+# ====
+----
+
+=== Helper Function: safe_execute_query()
+
+Wraps query execution with consistent error handling:
+
+[source,python]
+----
+# ✅ NEW PATTERN:
+query = get_nodetool_status_query(connector)
+success, formatted, raw = safe_execute_query(connector, query, "Nodetool status")
+
+if not success:
+    adoc_content.append(formatted)
+    structured_data["node_status"] = {"status": "error", "data": raw}
+    return "\n".join(adoc_content), structured_data
+
+# Equivalent to:
+try:
+    formatted, raw = connector.execute_query(query, return_raw=True)
+    if "[ERROR]" in formatted:
+        # ... error handling ...
+except Exception as e:
+    # ... exception handling ...
+----
+
+**Benefits:**
+- ✅ Consistent error message format
+- ✅ Automatic exception handling
+- ✅ Returns success boolean for easy checking
 
 == Database Interaction Rules (CRITICAL)
 
@@ -65,300 +188,1006 @@ cursor.execute(query)        # ❌ FORBIDDEN
 
 *The connector provides:*
 - `connector.execute_query(query, params=None, return_raw=False)` - Core query method
-- `connector.version_info` - MAY contain version information (check with hasattr)
+- `connector.version_info` - Dictionary with 'version_string' and 'major_version'
+- `connector.get_db_metadata()` - Returns dict with 'version' and 'db_name'
+- `connector.settings` - Dictionary with connection settings including SSH config
 
-*Handle missing attributes gracefully:*
+*Always check version_info existence before using:*
 [source,python]
 ----
-# Check if version_info exists before using
-if hasattr(connector, 'version_info') and connector.version_info.get('is_v15_or_newer'):
-    # Use version-specific query
-else:
-    # Use generic query
+if hasattr(connector, 'version_info'):
+    major = connector.version_info.get('major_version', 0)
+    if major >= 4:
+        # Use Cassandra 4.x features
 ----
 
-== Query Format Rules (CRITICAL)
+== Cassandra-Specific Guidance (CRITICAL)
 
-Queries must be *FUNCTIONS* that return query strings, NOT static constants.
+=== Two Query Types: CQL vs Nodetool
 
-=== Query File Structure
+The Cassandra connector supports two distinct operation types:
 
-Create query files in: `plugins/{plugin_name}/utils/qrylib/`
+1. **CQL Queries** - Standard SELECT statements against system tables
+2. **Nodetool Commands** - JSON-based requests executed via SSH for operational metrics
 
-*File naming:* Descriptive name matching the check purpose
+[IMPORTANT]
+====
+Choose the RIGHT tool for the job:
 
-*Each query file contains FUNCTIONS that return query strings:*
+*Use CQL for:*
+- Schema information (keyspaces, tables, columns)
+- Replication strategies
+- Basic topology (datacenters, racks)
+- Node addresses and versions
+
+*Use Nodetool for:*
+- Node status (Up/Down, Normal/Leaving/Joining)
+- Load and disk usage
+- Compaction statistics
+- Thread pool metrics
+- Operational health
+====
+
+=== SSH Configuration for Nodetool Commands (CRITICAL)
+
+[CRITICAL]
+====
+**Nodetool commands require SSH access to Cassandra nodes.**
+
+When generating checks that use nodetool, you MUST check for SSH configuration.
+
+**RECOMMENDED:** Use the `require_ssh()` helper function from `plugins.common.check_helpers`.
+
+**Alternative:** Check `connector.settings` (NOT the `settings` parameter) for SSH configuration.
+
+**Why:** The `settings` parameter contains the main config.yaml settings. The `connector.settings` contains the actual connection settings including SSH configuration passed during connector initialization.
+====
+
+==== RECOMMENDED SSH Check Pattern (Use Helpers):
 
 [source,python]
 ----
-def get_query_name(connector):
+from plugins.common.check_helpers import require_ssh, format_check_header
+
+def run_nodetool_check(connector, settings):
     """
-    Returns the query for [describe purpose].
+    Check that requires nodetool/SSH access.
     
     Args:
-        connector: Connector instance (may have version_info)
+        connector: Database connector with execute_query() and settings
+        settings: Main application settings (NOT used for SSH check)
     
     Returns:
-        str: Query in appropriate format for this database technology
+        tuple: (asciidoc_report_string, structured_data_dict)
     """
-    # Adapt query based on connector capabilities if needed
-    if hasattr(connector, 'version_info'):
-        # Use version-aware logic
-        pass
+    # ✅ RECOMMENDED: Use helper function
+    adoc_content = format_check_header(
+        "Check Title (Nodetool)",
+        "Description of check using nodetool commands.",
+        requires_ssh=True
+    )
+    structured_data = {}
     
-    return query_string
+    # ✅ RECOMMENDED: Check SSH with helper
+    ssh_ok, skip_msg, skip_data = require_ssh(connector, "nodetool commands")
+    if not ssh_ok:
+        adoc_content.append(skip_msg)
+        structured_data["check_result"] = skip_data
+        return "\n".join(adoc_content), structured_data
+    
+    # Proceed with nodetool command...
+    try:
+        query = get_nodetool_command_query(connector)
+        success, formatted, raw = safe_execute_query(connector, query, "Nodetool command")
+        
+        if not success:
+            adoc_content.append(formatted)
+            structured_data["result"] = {"status": "error", "data": raw}
+            return "\n".join(adoc_content), structured_data
+        
+        # Handle results...
 ----
 
-== Check Module Structure Rules
-
-=== Import Pattern
+==== Alternative SSH Check Pattern (Manual):
 
 [source,python]
 ----
-# Import query functions from qrylib
-from plugins.{plugin_name}.utils.qrylib.query_file_name import (
-    get_query_function_1,
-    get_query_function_2
-)
+def run_nodetool_check(connector, settings):
+    """Check that requires nodetool/SSH access."""
+    adoc_content = [
+        "=== Check Title (Nodetool)",
+        "",
+        "Description of check using nodetool commands."
+    ]
+    structured_data = {}
+    
+    # ✅ ALTERNATIVE: Check connector.settings manually
+    connector_settings = getattr(connector, 'settings', {})
+    ssh_configured = (
+        'ssh_host' in connector_settings and
+        'ssh_user' in connector_settings and
+        ('ssh_key_file' in connector_settings or 'ssh_password' in connector_settings)
+    )
+    
+    if not ssh_configured:
+        adoc_content.append("[IMPORTANT]\n====\n"
+                          "This check requires SSH access to a Cassandra node.\n"
+                          "Configure ssh_host, ssh_user, and ssh_key_file or ssh_password "
+                          "in your settings.\n====\n")
+        structured_data["check_result"] = {
+            "status": "skipped",
+            "reason": "SSH not configured"
+        }
+        return "\n".join(adoc_content), structured_data
+    
+    # Proceed with nodetool command...
+----
+
+==== WRONG SSH Check Pattern (NEVER USE THIS):
+
+[source,python]
+----
+def run_nodetool_check(connector, settings):
+    # ❌ WRONG: Checking settings parameter instead of connector.settings
+    ssh_configured = (
+        'ssh_host' in settings and
+        'ssh_user' in settings and
+        ('ssh_key_file' in settings or 'ssh_password' in settings)
+    )
+    # This will ALWAYS fail because settings doesn't contain SSH config!
+----
+
+==== When SSH Check is NOT Needed:
+
+CQL-only checks don't require SSH and should NOT include the SSH check:
+
+[source,python]
+----
+def run_cql_check(connector, settings):
+    """
+    Check using only CQL queries.
+    No SSH configuration needed.
+    """
+    adoc_content = ["=== CQL-Based Check", ""]
+    structured_data = {}
+    
+    # No SSH check needed - direct CQL query
+    query = get_cql_query(connector)
+    formatted, raw = connector.execute_query(query, return_raw=True)
+    
+    # Process results...
+----
+
+=== CQL Query Pattern (End-to-End)
+
+==== Step 1: Query Library File
+
+*File:* `plugins/cassandra/utils/qrylib/qry_keyspace_replication.py`
+
+[CRITICAL]
+====
+**File Naming Convention:**
+
+Query files MUST be named `qry_{check_name}.py` to match the check file name.
+
+Examples:
+- Check: `node_status_check.py` → Query: `qry_node_status.py`
+- Check: `compaction_pending_tasks.py` → Query: `qry_compaction_pending_tasks.py`
+- Check: `keyspace_replication_check.py` → Query: `qry_keyspace_replication.py`
+
+**Why:** This prevents file overwrites when multiple checks are generated. Each check gets its own unique query file.
+====
+
+[source,python]
+----
+"""Keyspace replication queries for Cassandra."""
+
+__all__ = [
+    'get_keyspace_replication_query'
+]
+
+def get_keyspace_replication_query(connector):
+    """
+    Returns query for keyspace replication strategies.
+    
+    Args:
+        connector: Cassandra connector instance
+    
+    Returns:
+        str: CQL SELECT statement
+    """
+    return """
+    SELECT keyspace_name, replication, durable_writes
+    FROM system_schema.keyspaces;
+    """
+----
+
+[CRITICAL]
+====
+CQL does NOT support `WHERE keyspace_name NOT IN (...)` for filtering.
+You MUST filter system keyspaces in Python code, not in the query.
+====
+
+==== Step 2: Check Module Using CQL
+
+*File:* `plugins/cassandra/checks/keyspace_replication_check.py`
+
+[source,python]
+----
+from plugins.cassandra.utils.qrylib.qry_keyspace_replication import get_keyspace_replication_query
+from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query
 
 def get_weight():
     return 7
 
-def run_check_name(connector, settings):
-    adoc_content = []
+def run_keyspace_replication_check(connector, settings):
+    """
+    Analyzes keyspace replication strategies.
+    
+    Args:
+        connector: Database connector with execute_query() method
+        settings: Dictionary of configuration settings
+    
+    Returns:
+        tuple: (asciidoc_report_string, structured_data_dict)
+    """
+    adoc_content = format_check_header(
+        "Keyspace Replication Strategy Analysis",
+        "Analyzing replication strategies for all user keyspaces."
+    )
     structured_data = {}
     
-    # Call query function, passing connector
-    query = get_query_function_1(connector)
-    formatted, raw = connector.execute_query(query, return_raw=True)
-    
-    # ... process results ...
+    try:
+        query = get_keyspace_replication_query(connector)
+        success, formatted, raw = safe_execute_query(connector, query, "Keyspace replication query")
+        
+        if not success:
+            adoc_content.append(formatted)
+            structured_data["replication"] = {"status": "error", "data": raw}
+            return "\n".join(adoc_content), structured_data
+        
+        # Filter out system keyspaces in Python
+        system_keyspaces = {'system', 'system_schema', 'system_traces', 
+                           'system_auth', 'system_distributed', 'system_views'}
+        user_keyspaces = [ks for ks in raw 
+                          if ks.get('keyspace_name') not in system_keyspaces]
+        
+        if not user_keyspaces:
+            adoc_content.append("[NOTE]\n====\nNo user keyspaces found.\n====\n")
+            structured_data["replication"] = {"status": "success", "data": []}
+            return "\n".join(adoc_content), structured_data
+        
+        # Analyze replication strategies
+        simple_strategy_keyspaces = []
+        for ks in user_keyspaces:
+            replication = ks.get('replication', {})
+            if 'SimpleStrategy' in replication.get('class', ''):
+                simple_strategy_keyspaces.append(ks['keyspace_name'])
+        
+        if simple_strategy_keyspaces:
+            adoc_content.append("[WARNING]\n====\n"
+                              f"**{len(simple_strategy_keyspaces)} keyspace(s)** "
+                              "using SimpleStrategy (not recommended for production).\n"
+                              "====\n")
+            adoc_content.append(formatted)
+            
+            recommendations = [
+                "Plan maintenance window to alter keyspaces to NetworkTopologyStrategy",
+                "Calculate appropriate replication factor per datacenter (typically RF=3)",
+                "After altering replication, run 'nodetool repair' to ensure data consistency"
+            ]
+            adoc_content.extend(format_recommendations(recommendations))
+        else:
+            adoc_content.append("[NOTE]\n====\n"
+                              "All user keyspaces use NetworkTopologyStrategy.\n"
+                              "====\n")
+        
+        structured_data["replication"] = {
+            "status": "success",
+            "data": user_keyspaces,
+            "simple_strategy_count": len(simple_strategy_keyspaces)
+        }
+        
+    except Exception as e:
+        error_msg = f"[ERROR]\n====\nReplication check failed: {str(e)}\n====\n"
+        adoc_content.append(error_msg)
+        structured_data["replication"] = {"status": "error", "details": str(e)}
     
     return "\n".join(adoc_content), structured_data
 ----
 
-=== Result Handling Pattern
+=== CQL Query Construction Rules (CRITICAL)
 
-Handle three scenarios: error, no issues, issues found
+[CRITICAL]
+====
+**NEVER use bind variables (?) in Cassandra CQL queries.**
 
-[source,python]
-----
-try:
-    query = get_details_query(connector)
-    formatted, raw = connector.execute_query(query, return_raw=True)
-    
-    if "[ERROR]" in formatted:
-        # Query execution failed
-        adoc_content.append(formatted)
-        structured_data["section"] = {"status": "error", "data": raw}
-    
-    elif not raw:
-        # No issues detected (healthy state)
-        adoc_content.append("[NOTE]\n====\nNo issues detected. System is healthy.\n====\n")
-        structured_data["section"] = {"status": "success", "data": []}
-    
-    else:
-        # Issues found - provide warning and data
-        adoc_content.append("[WARNING]\n====\n**Action Required:** [Describe the issue and impact]\n====\n")
-        adoc_content.append(formatted)
-        structured_data["section"] = {"status": "success", "data": raw}
+The Cassandra connector does NOT support parameterized queries with `?` placeholders.
+Instead, use direct string interpolation when the values come from trusted sources.
+====
 
-except Exception as e:
-    error_msg = f"[ERROR]\n====\nCheck failed: {e}\n====\n"
-    adoc_content.append(error_msg)
-    structured_data["section"] = {"status": "error", "details": str(e)}
-----
-
-=== Settings-Based Thresholds
-
-Use settings for configurable thresholds:
+==== WRONG - Do Not Use Bind Variables:
 
 [source,python]
 ----
-def run_memory_check(connector, settings):
-    # Get threshold from settings or use default
-    threshold_mb = settings.get('memory_threshold_mb', 1000)
-    warning_percent = settings.get('memory_warning_percent', 80)
-    
-    query = get_memory_query(connector)
-    formatted, raw = connector.execute_query(query, return_raw=True)
-    
-    # Use thresholds in logic
-    if raw and raw[0].get('used_memory_mb', 0) > threshold_mb:
-        adoc_content.append(f"[WARNING]\n====\nMemory usage exceeds {threshold_mb}MB\n====\n")
+# ❌ This will fail with "Invalid amount of bind variables"
+def get_tables_query(connector):
+    return """
+    SELECT table_name
+    FROM system_schema.tables
+    WHERE keyspace_name = ?;
+    """
+
+# ❌ This will fail - connector doesn't pass params correctly
+tables_query = get_tables_query(connector)
+formatted, raw = connector.execute_query(tables_query, [ks_name], return_raw=True)
 ----
 
-== AsciiDoc Formatting Rules
-
-=== Report Structure
+==== CORRECT - Use String Interpolation:
 
 [source,python]
 ----
-adoc_content = [
-    "=== Check Title",  # Level 3 header for main check
-    ""
+# ✅ Direct string interpolation is safe when values come from system tables
+def get_tables_query(connector, keyspace_name):
+    """
+    Returns query for tables in a specific keyspace.
+    
+    Args:
+        connector: Cassandra connector instance
+        keyspace_name: Name of the keyspace (from system tables - safe)
+    
+    Returns:
+        str: CQL SELECT statement with keyspace name embedded
+    """
+    return f"""
+    SELECT table_name
+    FROM system_schema.tables
+    WHERE keyspace_name = '{keyspace_name}';
+    """
+
+# ✅ No params passed to execute_query
+tables_query = get_tables_query(connector, ks_name)
+formatted, raw = connector.execute_query(tables_query, return_raw=True)
+----
+
+==== Why String Interpolation is Safe Here:
+
+1. **Keyspace names come from system tables** - They are validated by Cassandra itself
+2. **No user input** - Values are from `SELECT * FROM system_schema.keyspaces`
+3. **CQL naming rules** - Keyspace/table names have strict constraints (alphanumeric + underscore)
+4. **Connector limitation** - The connector's `execute_query()` doesn't properly support bind variables
+
+==== General Pattern for All CQL Queries:
+
+[source,python]
+----
+# Query function signature includes all filter values
+def get_something_query(connector, filter_value):
+    """Returns CQL query with filter_value directly interpolated."""
+    return f"SELECT * FROM system.table WHERE field = '{filter_value}';"
+
+# Check module calls with the value
+query = get_something_query(connector, value_from_system_table)
+formatted, raw = connector.execute_query(query, return_raw=True)
+----
+
+[IMPORTANT]
+====
+**Key Rule:** Query functions should accept filter values as parameters and embed them directly in the SQL string. NEVER return queries with `?` placeholders.
+====
+
+
+=== Query File Structure and Integration Testing
+
+==== Required: __all__ Declaration
+
+Every query file MUST start with an `__all__` list explicitly declaring its public query functions:
+
+[source,python]
+----
+"""Schema-related queries for Cassandra."""
+
+__all__ = [
+    'get_keyspaces_query',
+    'get_tables_query',
+    'get_row_count_query'
 ]
 
-# Add subsections
-adoc_content.append("==== Analysis Results")  # Level 4 for subsections
-adoc_content.append("")
+def get_keyspaces_query(connector):
+    """Returns query for all keyspaces."""
+    return "SELECT ..."
 
-# Add content with admonition blocks
-adoc_content.append("[WARNING]\n====\n[Describe issue]\n====\n")
-
-# Add data tables (if applicable)
-adoc_content.append(formatted)
-
-# Add recommendations
-adoc_content.append("\n==== Recommendations")
-adoc_content.append("[TIP]\n====\n* Best practice...\n====\n")
+def get_tables_query(connector, keyspace_name='system'):
+    """Returns query for tables - has default for integration testing."""
+    return f"SELECT ... WHERE keyspace_name = '{keyspace_name}';"
 ----
 
-=== Admonition Blocks
+**Benefits of __all__:**
+- ✅ Makes public API explicit
+- ✅ Enables better IDE support and type checking
+- ✅ Separates public functions from private helpers
+- ✅ Standard Python convention
 
-Use semantic admonition types:
+==== Integration Test Rules
 
-- `[CRITICAL]` - Immediate action required, service at risk
-- `[WARNING]` - Action required, issues detected
-- `[IMPORTANT]` - Key information, configuration guidance
-- `[TIP]` - Best practices, recommendations
-- `[NOTE]` - Informational, no action needed
-- `[ERROR]` - Check execution failed
+The integration test framework validates query functions automatically. Follow these rules:
 
-*Always wrap admonitions with `====` blocks:*
+1. **List all public functions in __all__** - Only functions in `__all__` will be tested
+2. **Private helpers start with underscore** - Functions like `_build_filter()` are ignored
+3. **Provide defaults for parameters** - Functions with extra parameters need defaults:
 
 [source,python]
 ----
-adoc_content.append("[WARNING]\n====\n**Action Required:** Description...\n====\n")
+# ✅ GOOD: Has defaults, can be tested
+def get_tables_query(connector, keyspace_name='system'):
+    """Default to 'system' keyspace for integration testing."""
+    return f"SELECT table_name FROM system_schema.tables WHERE keyspace_name = '{keyspace_name}';"
+
+# ❌ PROBLEMATIC: No defaults, will be skipped in integration tests
+def get_row_count_query(connector, keyspace_name, table_name):
+    """This will be skipped - no test values provided."""
+    return f"SELECT COUNT(*) FROM {keyspace_name}.{table_name};"
+
+# ✅ BETTER: Add reasonable defaults
+def get_row_count_query(connector, keyspace_name='system', table_name='local'):
+    """Defaults allow integration testing without setup."""
+    return f"SELECT COUNT(*) FROM {keyspace_name}.{table_name};"
 ----
 
-=== Recommendations Section
+**Default Value Guidelines:**
+- Use `'system'` keyspace (always exists in Cassandra)
+- Use `'local'` table (exists in system keyspace)
+- Choose defaults that work on a fresh installation
+- Document why the default was chosen
 
-For checks that identify issues, include actionable guidance:
+
+=== Nodetool Query Pattern (End-to-End)
+
+==== Step 1: Query Library File
+
+*File:* `plugins/cassandra/utils/qrylib/qry_node_status.py`
+
+[CRITICAL]
+====
+**File Naming Convention:**
+
+Query files MUST be named `qry_{check_name}.py` to match the check file name.
+
+For nodetool checks:
+- Check: `node_status_check.py` → Query: `qry_node_status.py`
+- Check: `compaction_pending_tasks.py` → Query: `qry_compaction_pending_tasks.py`
+
+**Never use generic names like `nodetool_queries.py` - this will cause overwrites!**
+====
 
 [source,python]
 ----
-adoc_content.append("\n==== Recommendations")
-adoc_content.append("[TIP]\n====\n"
-                    "* **Best Practice:** [Preventive measures]\n"
-                    "* **Remediation:** [Steps to fix current issues]\n"
-                    "* **Monitoring:** [What to watch going forward]\n"
-                    "====\n")
-----
+"""Node status queries for Cassandra (nodetool)."""
 
-== Structured Data Format
+__all__ = [
+    'get_nodetool_status_query'
+]
 
-[source,python]
-----
-structured_data = {
-    'section_name': {
-        'status': 'success',  # or 'error'
-        'data': [...],         # List of dicts, single dict, or raw data
-        'count': 5             # Optional metadata
-    }
-}
-----
+import json
 
-== Unit Test File (Required)
-
-*Path:* `tests/{plugin_name}/checks/test_check_name.py`
-
-[source,python]
-----
-import unittest
-from unittest.mock import Mock
-from plugins.{plugin_name}.checks.check_name import run_check_name, get_weight
-
-class TestCheckName(unittest.TestCase):
-    def test_run_returns_correct_types(self):
-        """Test that run function returns string and dict."""
-        mock_connector = Mock()
-        mock_connector.execute_query.return_value = ('formatted', {'data': []})
-        
-        result = run_check_name(mock_connector, {})
-        
-        self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 2)
-        self.assertIsInstance(result[0], str)
-        self.assertIsInstance(result[1], dict)
+def get_nodetool_status_query(connector):
+    """
+    Returns JSON request for 'nodetool status' command.
     
-    def test_weight_is_valid(self):
-        """Test that weight is between 1 and 10."""
-        weight = get_weight()
-        self.assertGreaterEqual(weight, 1)
-        self.assertLessEqual(weight, 10)
-
-if __name__ == '__main__':
-    unittest.main()
+    Args:
+        connector: Cassandra connector instance
+    
+    Returns:
+        str: JSON string with operation and command
+    """
+    return json.dumps({
+        "operation": "nodetool",
+        "command": "status"
+    })
 ----
 
-== Output Format (CRITICAL)
+==== Step 2: Check Module Using Nodetool (WITH HELPERS)
 
-[source,json]
+*File:* `plugins/cassandra/checks/node_status_check.py`
+
+[source,python]
+----
+from plugins.cassandra.utils.qrylib.qry_node_status import get_nodetool_status_query
+from plugins.common.check_helpers import (
+    require_ssh,
+    format_check_header,
+    format_recommendations,
+    safe_execute_query
+)
+
+def get_weight():
+    return 9  # Critical - node availability
+
+def run_node_status_check(connector, settings):
+    """
+    Performs node status analysis using nodetool.
+    
+    Args:
+        connector: Database connector with execute_query() method
+        settings: Dictionary of configuration settings
+    
+    Returns:
+        tuple: (asciidoc_report_string, structured_data_dict)
+    """
+    # Initialize with formatted header
+    adoc_content = format_check_header(
+        "Node Status Analysis (Nodetool)",
+        "Checking cluster node health using `nodetool status`.",
+        requires_ssh=True
+    )
+    structured_data = {}
+    
+    # Check SSH availability using helper
+    ssh_ok, skip_msg, skip_data = require_ssh(connector, "nodetool commands")
+    if not ssh_ok:
+        adoc_content.append(skip_msg)
+        structured_data["node_status"] = skip_data
+        return "\n".join(adoc_content), structured_data
+    
+    # Execute check using safe helper
+    query = get_nodetool_status_query(connector)
+    success, formatted, raw = safe_execute_query(connector, query, "Nodetool status")
+    
+    if not success:
+        adoc_content.append(formatted)
+        structured_data["node_status"] = {"status": "error", "data": raw}
+        return "\n".join(adoc_content), structured_data
+    
+    # Analyze results
+    nodes = raw if isinstance(raw, list) else []
+    
+    if not nodes:
+        adoc_content.append("[NOTE]\n====\nNo node data returned.\n====\n")
+        structured_data["node_status"] = {"status": "success", "data": []}
+        return "\n".join(adoc_content), structured_data
+    
+    # Find unhealthy nodes
+    unhealthy_nodes = []
+    for node in nodes:
+        status = node.get('status', 'U')
+        state = node.get('state', 'N')
+        if status != 'U' or state != 'N':
+            unhealthy_nodes.append(node)
+    
+    # Format results
+    if unhealthy_nodes:
+        adoc_content.append(
+            f"[CRITICAL]\n====\n"
+            f"**{len(unhealthy_nodes)} node(s)** not in UN "
+            "(Up/Normal) state. This poses availability risk.\n"
+            "====\n"
+        )
+        adoc_content.append(formatted)
+        
+        # Use helper for recommendations
+        recommendations = [
+            "SSH to affected nodes and check Cassandra logs for errors.",
+            "Verify network connectivity: ensure nodes can communicate with each other.",
+            "Check resources: verify disk space, memory, and CPU are not exhausted.",
+            "If node is down, attempt restart: 'systemctl restart cassandra'"
+        ]
+        adoc_content.extend(format_recommendations(recommendations))
+        
+        status_result = "critical"
+    else:
+        adoc_content.append(
+            f"[NOTE]\n====\n"
+            f"All {len(nodes)} node(s) are healthy (UN state).\n"
+            "====\n"
+        )
+        adoc_content.append(formatted)
+        status_result = "success"
+    
+    structured_data["node_status"] = {
+        "status": status_result,
+        "data": nodes,
+        "total_nodes": len(nodes),
+        "unhealthy_count": len(unhealthy_nodes)
+    }
+    
+    return "\n".join(adoc_content), structured_data
+----
+
+==== Understanding Nodetool Output Structure
+
+When you execute a nodetool command, the connector automatically parses the output:
+
+*nodetool status* returns list of dicts:
+[source,python]
+----
+[
+    {
+        'datacenter': 'datacenter1',
+        'status': 'U',           # U=Up, D=Down
+        'state': 'N',            # N=Normal, L=Leaving, J=Joining, M=Moving
+        'address': '127.0.0.1',
+        'load': '108.45 KB',
+        'tokens': 256,
+        'owns_effective_percent': 100.0,
+        'host_id': 'aaa-bbb-ccc',
+        'rack': 'rack1'
+    }
+]
+----
+
+*nodetool compactionstats* returns dict:
+[source,python]
 ----
 {
-  "operations": [
-    {
-      "action": "create_file",
-      "path": "plugins/{plugin_name}/checks/check_name.py",
-      "content": "..."
-    },
-    {
-      "action": "create_file",
-      "path": "plugins/{plugin_name}/utils/qrylib/query_file.py",
-      "content": "..."
-    },
-    {
-      "action": "create_file",
-      "path": "plugins/{plugin_name}/rules/check_name.json",
-      "content": "..."
-    },
-    {
-      "action": "create_file",
-      "path": "tests/{plugin_name}/checks/test_check_name.py",
-      "content": "..."
-    }
-  ],
-  "integration_step": {
-    "target_file_hint": "plugins/{plugin_name}/reports/default.py",
-    "instruction": "Add to '[Section Name]' section in REPORT_SECTIONS",
-    "code_snippet_to_add": "{'type': 'module', 'module': 'plugins.{plugin_name}.checks.check_name', 'function': 'run_check_name'}"
-  }
+    'pending_tasks': 15,
+    'active_compactions': [
+        {
+            'compaction_id': 'abc123',
+            'keyspace': 'my_keyspace',
+            'table': 'my_table',
+            'completed': 50000000,
+            'total': 100000000,
+            'unit': 'bytes',
+            'type': 'Compaction'
+        }
+    ]
 }
 ----
 
-*CRITICAL:* Module path MUST be full import path:
-✅ `'module': 'plugins.postgres.checks.check_name'`
-❌ NOT: `'module': 'check_name'`
+*nodetool tpstats* returns list of dicts:
+[source,python]
+----
+[
+    {
+        'pool_name': 'ReadStage',
+        'active': 0,
+        'pending': 0,
+        'completed': 12345,
+        'blocked': 0,
+        'all_time_blocked': 0
+    }
+]
+----
 
-== Pre-Submission Validation Checklist
 
-Before outputting JSON, verify:
+=== Shell Command Pattern (End-to-End)
 
-✅ Query functions return appropriate format for this database
-✅ Check module uses connector.execute_query()
-✅ Version detection handled gracefully (with hasattr checks)
-✅ Admonition blocks used appropriately
-✅ Settings-based thresholds where applicable
-✅ Integration step has FULL module path
-✅ Rule file uses correct schema with metric_keywords
+==== When to Use Shell Commands
 
+Use shell commands for system-level metrics that aren't available through CQL or nodetool:
 
-== Cassandra-Specific Guidance (CRITICAL)
+*Common Use Cases:*
+- Disk space per mount point: `df -h`
+- Memory usage: `free -m`
+- CPU metrics: `mpstat`, `iostat`
+- Process information: `ps aux | grep cassandra`
+- Network statistics: `netstat -s`, `ss -s`
+- File system checks: `du -sh /var/lib/cassandra`
+- Log file analysis: `tail -n 100 /var/log/cassandra/system.log`
 
-=== Query Language
+[IMPORTANT]
+====
+**Shell commands require SSH access, just like nodetool commands.**
 
-Cassandra uses CQL (Cassandra Query Language) for queries.
+Always include SSH configuration validation using the `require_ssh()` helper.
+====
 
-=== IMPORTANT: Limited CQL Metrics
+==== Step 1: Query Library File
 
-**Cassandra has very limited monitoring capabilities via CQL.** Many metrics require `nodetool` or JMX, which are NOT accessible via the CQL connector.
+*File:* `plugins/cassandra/utils/qrylib/qry_disk_usage.py`
 
-The connector can ONLY execute CQL queries against system tables. For advanced metrics, include recommendations for users to run nodetool commands.
+[source,python]
+----
+"""Disk usage queries for Cassandra (shell commands)."""
 
-=== Available System Tables
+__all__ = [
+    'get_disk_usage_query',
+    'get_cassandra_data_dir_usage_query'
+]
 
-**system.local** - Local node information (SINGLE ROW ONLY):
+import json
+
+def get_disk_usage_query(connector):
+    """
+    Returns JSON request for disk usage via 'df -h' command.
+    
+    Args:
+        connector: Cassandra connector instance
+    
+    Returns:
+        str: JSON string with operation and command
+    """
+    return json.dumps({
+        "operation": "shell",
+        "command": "df -h"
+    })
+
+def get_cassandra_data_dir_usage_query(connector, data_dir='/var/lib/cassandra'):
+    """
+    Returns JSON request for Cassandra data directory size.
+    
+    Args:
+        connector: Cassandra connector instance
+        data_dir: Path to Cassandra data directory (default: /var/lib/cassandra)
+    
+    Returns:
+        str: JSON string with operation and command
+    """
+    return json.dumps({
+        "operation": "shell",
+        "command": f"du -sh {data_dir}"
+    })
+----
+
+==== Step 2: Check Module Using Shell Commands
+
+*File:* `plugins/cassandra/checks/disk_usage_check.py`
+
+[source,python]
+----
+from plugins.cassandra.utils.qrylib.qry_disk_usage import get_disk_usage_query
+from plugins.common.check_helpers import (
+    require_ssh,
+    format_check_header,
+    format_recommendations,
+    safe_execute_query
+)
+
+def get_weight():
+    return 7  # High - disk space issues are critical
+
+def run_disk_usage_check(connector, settings):
+    """
+    Analyzes disk usage on the Cassandra server using shell commands.
+    
+    Args:
+        connector: Database connector with execute_query() method
+        settings: Dictionary of configuration settings
+    
+    Returns:
+        tuple: (asciidoc_report_string, structured_data_dict)
+    """
+    # Initialize with formatted header
+    adoc_content = format_check_header(
+        "Disk Usage Analysis (Shell)",
+        "Checking disk space on all mounted filesystems using `df -h`.",
+        requires_ssh=True
+    )
+    structured_data = {}
+    
+    # Check SSH availability
+    ssh_ok, skip_msg, skip_data = require_ssh(connector, "shell commands")
+    if not skip_ok:
+        adoc_content.append(skip_msg)
+        structured_data["disk_usage"] = skip_data
+        return "\n".join(adoc_content), structured_data
+    
+    # Execute shell command
+    query = get_disk_usage_query(connector)
+    success, formatted, raw = safe_execute_query(connector, query, "df -h command")
+    
+    if not success:
+        adoc_content.append(formatted)
+        structured_data["disk_usage"] = {"status": "error", "data": raw}
+        return "\n".join(adoc_content), structured_data
+    
+    # Shell commands return raw text output
+    # The connector's shell executor may parse it into a dict with 'output' key
+    output = raw.get('output', '') if isinstance(raw, dict) else str(raw)
+    
+    if not output:
+        adoc_content.append("[NOTE]\n====\nNo disk usage data returned.\n====\n")
+        structured_data["disk_usage"] = {"status": "success", "data": {}}
+        return "\n".join(adoc_content), structured_data
+    
+    # Parse df output (line-by-line)
+    # Example output:
+    # Filesystem      Size  Used Avail Use% Mounted on
+    # /dev/sda1       100G   75G   25G  75% /
+    # /dev/sdb1       500G  450G   50G  90% /var/lib/cassandra
+    
+    lines = output.strip().split('\n')
+    filesystems = []
+    high_usage_mounts = []
+    
+    for line in lines[1:]:  # Skip header
+        parts = line.split()
+        if len(parts) >= 6:
+            filesystem = parts[0]
+            size = parts[1]
+            used = parts[2]
+            avail = parts[3]
+            use_pct_str = parts[4]
+            mount = parts[5]
+            
+            # Parse percentage
+            try:
+                use_pct = int(use_pct_str.rstrip('%'))
+            except ValueError:
+                use_pct = 0
+            
+            filesystems.append({
+                'filesystem': filesystem,
+                'size': size,
+                'used': used,
+                'available': avail,
+                'use_percent': use_pct,
+                'mounted_on': mount
+            })
+            
+            # Flag high usage (>80%)
+            if use_pct > 80:
+                high_usage_mounts.append({
+                    'mount': mount,
+                    'use_percent': use_pct,
+                    'available': avail
+                })
+    
+    # Add formatted output
+    adoc_content.append(formatted)
+    
+    # Analyze and report
+    if high_usage_mounts:
+        adoc_content.append(
+            f"[WARNING]\n====\n"
+            f"**{len(high_usage_mounts)} filesystem(s)** with high disk usage (>80%) detected.\n"
+            "====\n"
+        )
+        
+        # List high usage mounts
+        adoc_content.append("\n==== High Usage Filesystems")
+        adoc_content.append("|===\n|Mount Point|Usage %|Available")
+        for mount in high_usage_mounts:
+            adoc_content.append(f"|{mount['mount']}|{mount['use_percent']}%|{mount['available']}")
+        adoc_content.append("|===\n")
+        
+        recommendations = [
+            "Identify and remove old/unused data or snapshots",
+            "For /var/lib/cassandra: Run 'nodetool clearsnapshot' to remove old snapshots",
+            "Check for abandoned SSTables: 'find /var/lib/cassandra/data -name \"*tmp*\"'",
+            "Consider adding storage capacity or archiving old data",
+            "Monitor disk growth rate to predict when expansion is needed"
+        ]
+        adoc_content.extend(format_recommendations(recommendations))
+        
+        status = "warning"
+    else:
+        adoc_content.append(
+            "[NOTE]\n====\n"
+            f"All {len(filesystems)} filesystem(s) have adequate free space (<80% usage).\n"
+            "====\n"
+        )
+        status = "success"
+    
+    structured_data["disk_usage"] = {
+        "status": status,
+        "data": filesystems,
+        "high_usage_count": len(high_usage_mounts),
+        "max_usage_percent": max([f['use_percent'] for f in filesystems]) if filesystems else 0
+    }
+    
+    return "\n".join(adoc_content), structured_data
+----
+
+==== Understanding Shell Command Output Structure
+
+Shell commands return different output formats than CQL or nodetool:
+
+*Simple commands (df, free, etc.):*
+[source,python]
+----
+# Raw dict with command metadata:
+{
+    'command': 'df -h',
+    'output': 'Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1  ...',
+    'stderr': None,
+    'exit_code': 0
+}
+----
+
+*You need to parse the 'output' field yourself* based on the command's output format.
+
+==== Shell Command Best Practices
+
+[TIP]
+====
+**When using shell commands:**
+
+1. **Parse output manually** - Shell commands return raw text, not structured data
+2. **Handle variations** - Output format can differ between Linux distributions
+3. **Check exit codes** - Non-zero exit code indicates command failure
+4. **Consider stderr** - Error messages appear in stderr field
+5. **Be specific** - Use exact paths and options (e.g., `df -h /var/lib/cassandra`)
+6. **Avoid pipes when possible** - Some shells may not support complex pipes
+====
+
+==== Common Shell Commands for Cassandra
+
+*Disk Usage:*
+```json
+{"operation": "shell", "command": "df -h"}
+{"operation": "shell", "command": "du -sh /var/lib/cassandra"}
+```
+
+*Memory:*
+```json
+{"operation": "shell", "command": "free -m"}
+{"operation": "shell", "command": "cat /proc/meminfo"}
+```
+
+*Process Info:*
+```json
+{"operation": "shell", "command": "ps aux | grep cassandra | grep -v grep"}
+{"operation": "shell", "command": "pgrep -a java"}
+```
+
+*System Load:*
+```json
+{"operation": "shell", "command": "uptime"}
+{"operation": "shell", "command": "cat /proc/loadavg"}
+```
+
+*Network:*
+```json
+{"operation": "shell", "command": "netstat -s"}
+{"operation": "shell", "command": "ss -s"}
+```
+
+*File System:*
+```json
+{"operation": "shell", "command": "find /var/lib/cassandra/data -name '*tmp*' -type f"}
+{"operation": "shell", "command": "ls -lh /var/lib/cassandra/commitlog"}
+```
+
+=== Comparison: CQL vs Nodetool vs Shell
+
+[cols="1,1,1,1"]
+|===
+| Aspect | CQL | Nodetool | Shell
+
+| **Connection**
+| Native Cassandra protocol
+| SSH required
+| SSH required
+
+| **Output Format**
+| Structured (list of dicts)
+| Structured (parsed by connector)
+| Raw text (manual parsing)
+
+| **Use Cases**
+| Schema, topology, replication
+| Operational metrics, node status
+| System-level metrics, files
+
+| **Performance**
+| Fast, direct
+| Moderate (SSH overhead)
+| Moderate (SSH overhead)
+
+| **Privileges**
+| CQL user permissions
+| OS user with nodetool access
+| OS user with shell access
+
+| **Example Query**
+| `SELECT * FROM system.local`
+| `{"operation": "nodetool", "command": "status"}`
+| `{"operation": "shell", "command": "df -h"}`
+|===
+
+[IMPORTANT]
+====
+**Choose the right tool:**
+
+- **CQL** when data is in system tables
+- **Nodetool** when you need Cassandra-specific operational metrics
+- **Shell** when you need OS-level information not available through CQL or nodetool
+====
+
+=== Available System Tables for CQL
+
+==== system.local (Single Row - Local Node Only)
 
 *Available Columns:*
 - cluster_name (text)
@@ -374,38 +1203,54 @@ The connector can ONLY execute CQL queries against system tables. For advanced m
 - rpc_address (inet)
 - tokens (set<text>)
 
-*Columns that DO NOT exist:*
-- ❌ uptime (use nodetool instead)
-- ❌ address (use listen_address or broadcast_address)
-- ❌ keyspace_name (use system_schema.keyspaces)
-- ❌ status (use nodetool status)
-- ❌ state (use nodetool status)
-- ❌ load (use nodetool status)
-- ❌ owns (use nodetool status)
-- ❌ schema_version (moved to system.peers_v2 in Cassandra 4.x)
+*Example:*
+[source,cql]
+----
+SELECT cluster_name, data_center, rack, release_version
+FROM system.local;
+----
 
-**system.peers_v2** (Cassandra 4.x+) - Peer node information:
+==== system.peers_v2 (Cassandra 4.x+) / system.peers (3.x)
 
 *Available Columns:*
 - peer (inet) - PRIMARY KEY
 - data_center (text)
-- rack (text)  
+- rack (text)
 - release_version (text)
 - native_address (inet)
 - native_port (int)
 - host_id (uuid)
 - tokens (set<text>)
 
-*Note:* Cassandra 3.x uses `system.peers` (without _v2)
+*Version-Aware Pattern:*
+[source,python]
+----
+def get_peer_info_query(connector):
+    """Returns peer query - version aware for 3.x vs 4.x."""
+    if hasattr(connector, 'version_info'):
+        major = connector.version_info.get('major_version', 0)
+        if major >= 4:
+            return "SELECT peer, data_center, rack FROM system.peers_v2;"
+        else:
+            return "SELECT peer, data_center, rack FROM system.peers;"
+    return "SELECT peer, data_center, rack FROM system.peers_v2;"
+----
 
-**system_schema.keyspaces** - Keyspace metadata:
+==== system_schema.keyspaces
 
 *Available Columns:*
 - keyspace_name (text) - PRIMARY KEY
 - durable_writes (boolean)
 - replication (frozen<map<text, text>>)
 
-**system_schema.tables** - Table metadata:
+*Example:*
+[source,cql]
+----
+SELECT keyspace_name, replication, durable_writes
+FROM system_schema.keyspaces;
+----
+
+==== system_schema.tables
 
 *Available Columns:*
 - keyspace_name (text)
@@ -416,149 +1261,357 @@ The connector can ONLY execute CQL queries against system tables. For advanced m
 - compression (frozen<map<text, text>>)
 - id (uuid)
 
-=== Query Examples
+*Example:*
+[source,cql]
+----
+SELECT keyspace_name, table_name, compaction
+FROM system_schema.tables;
+----
 
-**Good - Basic Node Info:**
-```cql
-SELECT cluster_name, data_center, rack, release_version, host_id
-FROM system.local;
-```
+=== CQL Limitations and Workarounds
 
-**Good - Peer Status:**
-```cql
-SELECT peer, data_center, rack, release_version, host_id  
-FROM system.peers_v2;
-```
+[CRITICAL]
+====
+*What CQL CANNOT Do:*
 
-**Good - Keyspace Replication:**
-```cql
-SELECT keyspace_name, replication
-FROM system_schema.keyspaces
-WHERE keyspace_name NOT IN ('system', 'system_schema', 'system_traces', 'system_auth', 'system_distributed');
-```
+❌ `WHERE keyspace_name NOT IN (...)` - Use Python filtering instead
+❌ Get node status (Up/Down) - Use `nodetool status`
+❌ Get node load - Use `nodetool status`
+❌ Get compaction stats - Use `nodetool compactionstats`
+❌ Get thread pool metrics - Use `nodetool tpstats`
+====
 
-**Good - Table List:**
-```cql
-SELECT keyspace_name, table_name
-FROM system_schema.tables
-WHERE keyspace_name NOT IN ('system', 'system_schema', 'system_traces', 'system_auth', 'system_distributed');
-```
+*Filtering Pattern:*
+[source,python]
+----
+# DON'T do this in CQL:
+query = """
+SELECT * FROM system_schema.keyspaces
+WHERE keyspace_name NOT IN ('system', 'system_schema');  -- ❌ Won't work
+"""
 
-**BAD - These DON'T Work:**
-```cql
--- ❌ WRONG - uptime doesn't exist
-SELECT uptime FROM system.local;
+# DO this in Python:
+query = "SELECT * FROM system_schema.keyspaces;"
+formatted, raw = connector.execute_query(query, return_raw=True)
 
--- ❌ WRONG - address doesn't exist (use listen_address)
-SELECT address FROM system.local;
+system_keyspaces = {'system', 'system_schema', 'system_traces', 
+                   'system_auth', 'system_distributed', 'system_views'}
+user_keyspaces = [ks for ks in raw 
+                  if ks.get('keyspace_name') not in system_keyspaces]
+----
 
--- ❌ WRONG - status requires nodetool
-SELECT status, state FROM system.local;
+== Rule File Schema
 
--- ❌ WRONG - load requires nodetool  
-SELECT load, owns FROM system.local;
-```
+*File:* `plugins/cassandra/rules/{check_name}.json`
 
-=== Version-Aware Queries
+[CRITICAL]
+====
+**File Naming Convention:**
+
+Rule files MUST be named `{check_name}.json` to match the check file name (without `_check` suffix).
+
+Examples:
+- Check: `node_status_check.py` → Rule: `node_status.json`
+- Check: `compaction_pending_tasks.py` → Rule: `compaction_pending_tasks.json`
+- Check: `keyspace_replication_check.py` → Rule: `keyspace_replication.json`
+
+**This ensures each check has its own unique rule file.**
+====
+
+[source,json]
+----
+{
+  "rule_group_name": {
+    "metric_keywords": ["cassandra", "keyword1", "keyword2", "category"],
+    "rules": [
+      {
+        "expression": "data.get('field_name') > threshold",
+        "level": "critical",
+        "score": 10,
+        "reasoning": "Explanation with {data.get('field')} interpolation",
+        "recommendations": [
+          "Action step 1",
+          "Action step 2"
+        ]
+      }
+    ]
+  }
+}
+----
+
+*Levels:* critical (9-10), high (7-8), medium (4-6), low (1-3)
+
+=== Rule Example 1: Nodetool Status Check
+
+*File:* `plugins/cassandra/rules/node_status.json`
+
+[source,json]
+----
+{
+  "node_not_healthy": {
+    "metric_keywords": ["cassandra", "nodetool", "status", "availability", "node"],
+    "rules": [
+      {
+        "expression": "data.get('status') != 'U' or data.get('state') != 'N'",
+        "level": "critical",
+        "score": 10,
+        "reasoning": "Node {data.get('address')} is in state {data.get('status')}{data.get('state')} instead of UN (Up/Normal). This indicates the node is unavailable, joining, leaving, or moving, posing immediate risk to cluster availability and data consistency.",
+        "recommendations": [
+          "SSH to node {data.get('address')} immediately and check /var/log/cassandra/system.log",
+          "Verify network connectivity between nodes using 'nodetool gossipinfo'",
+          "Check disk space with 'df -h' and memory with 'free -h'",
+          "If node is down, attempt restart: 'systemctl restart cassandra'"
+        ]
+      }
+    ]
+  }
+}
+----
+
+=== Rule Example 2: Compaction Backlog Check
+
+*File:* `plugins/cassandra/rules/compaction_backlog.json`
+
+[source,json]
+----
+{
+  "high_compaction_backlog": {
+    "metric_keywords": ["cassandra", "compaction", "performance", "nodetool"],
+    "rules": [
+      {
+        "expression": "data.get('pending_tasks', 0) > 100",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Compaction backlog of {data.get('pending_tasks')} pending tasks detected, exceeding threshold of 100. Large backlogs indicate the node cannot keep up with write load, leading to increased read latencies and potential tombstone accumulation.",
+        "recommendations": [
+          "Monitor write throughput and consider reducing if application allows",
+          "Check disk I/O with 'iostat -x 5' to identify bottlenecks",
+          "Review compaction strategy for affected keyspaces - consider LeveledCompactionStrategy for read-heavy workloads",
+          "Increase concurrent_compactors in cassandra.yaml if CPU allows (default: number of disks)"
+        ]
+      }
+    ]
+  }
+}
+----
+
+=== Rule Example 3: Replication Strategy Check
+
+*File:* `plugins/cassandra/rules/keyspace_replication.json`
+
+[source,json]
+----
+{
+  "simple_strategy_in_use": {
+    "metric_keywords": ["cassandra", "keyspace", "replication", "configuration", "best-practice"],
+    "rules": [
+      {
+        "expression": "'SimpleStrategy' in data.get('replication', {}).get('class', '')",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Keyspace '{data.get('keyspace_name')}' uses SimpleStrategy replication. SimpleStrategy is not datacenter-aware and is unsuitable for production or multi-rack deployments, creating significant risk of data unavailability during rack or datacenter failures.",
+        "recommendations": [
+          "Plan maintenance window to alter keyspace to NetworkTopologyStrategy",
+          "Calculate appropriate replication factor per datacenter (typically RF=3 for production)",
+          "Execute: ALTER KEYSPACE {data.get('keyspace_name')} WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3}",
+          "Run 'nodetool repair' after altering replication to ensure data consistency"
+        ]
+      }
+    ]
+  }
+}
+----
+
+== AsciiDoc Formatting Rules
+
+=== Report Structure
 
 [source,python]
 ----
-def get_peer_status_query(connector):
-    """Returns peer status query - version aware."""
-    
-    if hasattr(connector, 'version_info'):
-        major = connector.version_info.get('major_version', 0)
+adoc_content = [
+    "=== Check Title",          # Level 3 header
+    "",
+    "Brief description of check purpose."
+]
+
+# Subsections
+adoc_content.append("==== Analysis Results")  # Level 4
+adoc_content.append("")
+
+# Admonition blocks
+adoc_content.append("[WARNING]\n====\n**Action Required:** Issue description\n====\n")
+
+# Data tables (from connector)
+adoc_content.append(formatted)
+
+# Recommendations
+adoc_content.append("\n==== Recommendations")
+adoc_content.append("[TIP]\n====\n* Best practice...\n====\n")
+----
+
+=== Admonition Types
+
+- `[CRITICAL]` - Service at risk, immediate action required
+- `[WARNING]` - Issues detected, action needed
+- `[IMPORTANT]` - Key information, configuration guidance
+- `[TIP]` - Best practices, recommendations
+- `[NOTE]` - Informational, healthy state
+- `[ERROR]` - Check execution failed
+
+== Unit Test File (Required)
+
+*Path:* `tests/cassandra/checks/test_{check_name}.py`
+
+[CRITICAL]
+====
+**File Naming Convention:**
+
+Test files MUST be named `test_{check_name}.py` to match the check file name.
+
+Examples:
+- Check: `node_status_check.py` → Test: `test_node_status_check.py`
+- Check: `compaction_pending_tasks.py` → Test: `test_compaction_pending_tasks.py`
+====
+
+[source,python]
+----
+import unittest
+from unittest.mock import Mock
+from plugins.cassandra.checks.{check_name} import run_{check_name}, get_weight
+
+class Test{CheckName}(unittest.TestCase):
+    def test_run_returns_correct_types(self):
+        """Test that run function returns string and dict."""
+        mock_connector = Mock()
+        mock_connector.execute_query.return_value = (
+            '[NOTE]\n====\nTest\n====\n',
+            []
+        )
         
-        if major >= 4:
-            # Cassandra 4.x+ uses peers_v2
-            return """
-            SELECT peer, data_center, rack, release_version, host_id
-            FROM system.peers_v2;
-            """
-        else:
-            # Cassandra 3.x uses peers
-            return """
-            SELECT peer, data_center, rack, release_version, host_id
-            FROM system.peers;
-            """
+        result = run_{check_name}(mock_connector, {})
+        
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+        self.assertIsInstance(result[0], str)
+        self.assertIsInstance(result[1], dict)
     
-    # Fallback to v2
-    return "SELECT peer, data_center, rack FROM system.peers_v2;"
+    def test_weight_is_valid(self):
+        """Test that weight is between 1 and 10."""
+        weight = get_weight()
+        self.assertGreaterEqual(weight, 1)
+        self.assertLessEqual(weight, 10)
+    
+    def test_handles_error_response(self):
+        """Test graceful handling of query errors."""
+        mock_connector = Mock()
+        mock_connector.execute_query.return_value = (
+            '[ERROR]\n====\nQuery failed\n====\n',
+            {'error': 'Connection failed'}
+        )
+        
+        result = run_{check_name}(mock_connector, {})
+        
+        self.assertIn('[ERROR]', result[0])
+        self.assertEqual(result[1].get('status'), 'error')
+
+if __name__ == '__main__':
+    unittest.main()
 ----
 
-=== Metrics Requiring Nodetool
+== Output Format (CRITICAL)
 
-**Cluster Status & Load:**
-- Node status (UN/DN) - `nodetool status`
-- Node load - `nodetool status`
-- Token ownership - `nodetool status`
-
-**Compaction:**
-- Compaction stats - `nodetool compactionstats`
-- Pending compactions - `nodetool compactionstats`
-
-**Performance:**
-- Thread pool stats - `nodetool tpstats`
-- Latency histograms - `nodetool tablehistograms`
-- Table stats - `nodetool tablestats`
-
-**Repair:**
-- Repair status - `nodetool repair`
-- Anti-entropy info - `nodetool describecluster`
-
-=== Recommendations Pattern
-
-When a check needs nodetool metrics, include this pattern:
-
-[source,python]
+[source,json]
 ----
-adoc_content.append("\n==== Additional Monitoring")
-adoc_content.append("[NOTE]")
-adoc_content.append("====")
-adoc_content.append("For detailed cluster metrics not available via CQL, use:")
-adoc_content.append("")
-adoc_content.append("* **Node Status:** `nodetool status` - Shows UN/DN state, load, and tokens")
-adoc_content.append("* **Compaction:** `nodetool compactionstats` - Shows active and pending compactions")
-adoc_content.append("* **Thread Pools:** `nodetool tpstats` - Shows thread pool activity and blocking")
-adoc_content.append("")
-adoc_content.append("These metrics require shell access to the Cassandra nodes.")
-adoc_content.append("====")
+{
+  "operations": [
+    {
+      "action": "create_file",
+      "path": "plugins/cassandra/checks/{check_name}.py",
+      "content": "..."
+    },
+    {
+      "action": "create_file",
+      "path": "plugins/cassandra/utils/qrylib/qry_{check_name}.py",
+      "content": "..."
+    },
+    {
+      "action": "create_file",
+      "path": "plugins/cassandra/rules/{check_name}.json",
+      "content": "..."
+    },
+    {
+      "action": "create_file",
+      "path": "tests/cassandra/checks/test_{check_name}.py",
+      "content": "..."
+    }
+  ],
+  "integration_step": {
+    "target_file_hint": "plugins/cassandra/reports/default.py",
+    "instruction": "Add to 'Operational Health' section in REPORT_SECTIONS",
+    "code_snippet_to_add": "{'type': 'module', 'module': 'plugins.cassandra.checks.{check_name}', 'function': 'run_{check_name}'}"
+  }
+}
 ----
 
-=== Common Pitfalls
+[CRITICAL]
+====
+**File Naming Rules Summary:**
 
-1. **Don't hallucinate columns** - Only use columns listed above
-2. **system.local returns ONE row** - Don't use WHERE clauses
-3. **No aggregation on system.local** - It's a single row
-4. **Filter system keyspaces** - Exclude system*, test keyspaces
-5. **Check version** before using peers_v2 (Cassandra 4.x+)
+1. Check file: `{check_name}.py` (e.g., `node_status_check.py`)
+2. Query file: `qry_{check_name}.py` (e.g., `qry_node_status.py`)
+3. Rule file: `{check_name}.json` (e.g., `node_status.json`)
+4. Test file: `test_{check_name}.py` (e.g., `test_node_status_check.py`)
 
-=== Best Practices
+Where `{check_name}` is derived from the natural language request (e.g., "node status check" → `node_status_check`).
 
-1. **Use system.local** for local node info only
-2. **Use system.peers_v2** (or peers for 3.x) for cluster-wide info
-3. **Always filter system keyspaces** in schema queries
-4. **Note nodetool requirements** in recommendations
-5. **Keep queries simple** - Cassandra's system tables are minimal
+**Never use generic names like `nodetool_queries.py` or `cassandra_rules.json` as they will be overwritten when other checks are generated.**
+====
 
-== Scope Limitations
+*CRITICAL:* Module path MUST be full import path:
+✅ `'module': 'plugins.cassandra.checks.{check_name}'`
+❌ NOT: `'module': '{check_name}'`
 
-**What CQL CAN do:**
-- ✅ Get cluster name, datacenter, rack
-- ✅ List peer nodes
-- ✅ List keyspaces and tables
-- ✅ Get replication strategies
-- ✅ Get Cassandra version
 
-**What CQL CANNOT do:**
-- ❌ Get node status (UN/DN)
-- ❌ Get node load or disk usage
-- ❌ Get compaction statistics
-- ❌ Get thread pool metrics
-- ❌ Get repair status
-- ❌ Get performance latencies
 
-For the "CANNOT" items, recommend nodetool in the check output.
+== Pre-Submission Validation Checklist
+
+Before outputting JSON, verify:
+
+✅ Query file has `__all__` list declaring all public functions
+
+✅ Query functions with parameters provide reasonable defaults
+
+✅ Private helper functions start with underscore (_)
+
+✅ Chose correct tool: CQL for schema, nodetool for operations, **shell for system metrics**
+
+✅ Used Python filtering for system keyspaces (no CQL NOT IN)
+
+✅ **NO bind variables (?) in CQL queries - use string interpolation with function parameters**
+
+✅ Query functions return JSON strings for nodetool/shell commands
+
+✅ Check module handles parsed nodetool output structure
+
+✅ **Check module manually parses shell command output**
+
+✅ Version-aware queries check hasattr(connector, 'version_info')
+
+✅ **RECOMMENDED: Use helper functions (require_ssh, format_check_header, etc.)**
+
+✅ **Shell and nodetool checks use require_ssh() helper or manual SSH validation**
+
+✅ Error handling includes SSH configuration hints for nodetool/shell
+
+✅ Rule file has metric_keywords and proper level/score
+
+✅ Integration step has FULL module path
+
+✅ Unit tests cover error cases and return types
+
+✅ **ALL FILES follow naming convention: check, qry_{check}, {check}.json, test_{check}**
+
+
 
 == Your Task
 
@@ -567,6 +1620,50 @@ Generate a Cassandra health check for:
 *Plugin Name:* {{ plugin_name }}
 *Request:* {{ natural_language_request }}
 
-**Remember:** Only use columns that exist in the system tables listed above. For metrics requiring nodetool, add recommendations instead of trying to query them via CQL.
+**Critical Reminders:**
+1. **Choose the right tool:** CQL for schema/topology, nodetool for operations, **shell for system metrics**
+2. **Filter in Python:** Never use `NOT IN` in CQL queries
+3. **Use helper functions:** Prefer `require_ssh()`, `format_check_header()`, `safe_execute_query()` over manual patterns
+4. **Nodetool returns structured data:** Connector parses it automatically
+5. **Shell returns raw text:** You must parse the output manually
+6. **Include SSH hints:** When nodetool/shell fails, suggest SSH config
+7. **Format consistently:** Use `format_check_header()` and `format_recommendations()`
+8. **Follow naming convention:** All files must use `{check_name}` pattern to avoid overwrites
+9. **Follow the patterns:** Use the exact end-to-end examples above
+
+**Query Type Decision Tree:**
+```
+Need schema info? → Use CQL
+Need Cassandra operational metrics? → Use Nodetool
+Need OS-level metrics? → Use Shell
+```
+
+**Preferred Pattern (Use This):**
+```python
+from plugins.common.check_helpers import require_ssh, format_check_header, safe_execute_query, format_recommendations
+
+def run_{check_name}(connector, settings):
+    adoc_content = format_check_header("Title", "Description", requires_ssh=True)
+    ssh_ok, skip_msg, skip_data = require_ssh(connector, "nodetool")
+    if not ssh_ok:
+        adoc_content.append(skip_msg)
+        return "\n".join(adoc_content), skip_data
+    
+    success, formatted, raw = safe_execute_query(connector, query, "Operation")
+    if not success:
+        return "\n".join(adoc_content + [formatted]), {"status": "error", "data": raw}
+    
+    # Analyze results...
+    recommendations = ["Action 1", "Action 2"]
+    adoc_content.extend(format_recommendations(recommendations))
+    
+    return "\n".join(adoc_content), structured_data
+```
+
+**File Naming (CRITICAL - Never Generic Names):**
+- Check: `plugins/cassandra/checks/{check_name}.py`
+- Query: `plugins/cassandra/utils/qrylib/qry_{check_name}.py`
+- Rule: `plugins/cassandra/rules/{check_name}.json`
+- Test: `tests/cassandra/checks/test_{check_name}.py`
 
 Output ONLY the JSON plan. No explanations, no markdown, no additional text.

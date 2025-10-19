@@ -1,0 +1,33 @@
+{
+  "system_log_errors_detected": {
+    "metric_keywords": ["cassandra", "logs", "errors", "system.log", "operational"],
+    "rules": [
+      {
+        "expression": "data.get('error_count', 0) > 0",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Detected {data.get('error_count')} recent error, exception, or warning entries in Cassandra system.log. Log errors often indicate underlying issues such as resource exhaustion, network problems, compaction failures, or application misconfigurations that could impact cluster stability and performance if not addressed.",
+        "recommendations": [
+          "Immediately review the full log file via SSH: 'tail -n 5000 /var/log/cassandra/system.log'",
+          "Use grep to filter specific issues: 'grep -i 'outofmemory' /var/log/cassandra/system.log' or 'grep -i 'compaction' /var/log/cassandra/system.log'",
+          "Check system resources: Run 'free -h', 'df -h', and 'iostat' to correlate errors with disk/memory/IO problems",
+          "If errors are frequent, enable debug logging temporarily in logback.xml and reproduce the issue",
+          "Monitor log growth: Consider log rotation configuration if logs are filling disk space"
+        ]
+      },
+      {
+        "expression": "data.get('error_count', 0) > 50",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "High volume of {data.get('error_count')} errors in recent log tail indicates severe ongoing problems. This level of error rate suggests the node is under significant stress or misconfigured, risking data loss, unavailability, or cascading failures across the cluster.",
+        "recommendations": [
+          "Escalate immediately: Stop writes to the application and investigate root cause",
+          "Restart Cassandra if safe: 'systemctl restart cassandra' after backing up logs",
+          "Run full diagnostics: 'nodetool status', 'nodetool tpstats', 'nodetool compactionstats'",
+          "Check JVM heap: Ensure cassandra.yaml MAX_HEAP_SIZE is appropriate for available RAM",
+          "Review recent changes: Configuration updates, schema alterations, or traffic spikes may have triggered this"
+        ]
+      }
+    ]
+  }
+}
