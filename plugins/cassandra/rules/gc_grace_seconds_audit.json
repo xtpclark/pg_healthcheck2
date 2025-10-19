@@ -1,0 +1,19 @@
+{
+  "inappropriate_gc_grace_seconds": {
+    "metric_keywords": ["cassandra", "gc_grace_seconds", "tombstones", "configuration", "performance"],
+    "rules": [
+      {
+        "expression": "data.get('gc_grace_seconds', 0) > 259200 or data.get('gc_grace_seconds', 864000) == 0",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Table '{data.get('keyspace')}.{data.get('table')}' has gc_grace_seconds set to {data.get('gc_grace_seconds')} seconds, which is greater than 3 days (259200s) or 0. This delays tombstone cleanup, increasing storage usage, read amplification, and risk of zombie data resurrection during repairs or reads.",
+        "recommendations": [
+          "Reduce gc_grace_seconds to 1-2 days (86400-172800 seconds) for this table unless business requirements demand longer retention.",
+          "Execute: ALTER TABLE {data.get('keyspace')}.{data.get('table')} WITH gc_grace_seconds = 86400;",
+          "Monitor impact on repairs and reads after change; consider running 'nodetool cleanup' on the table if tombstones are accumulating.",
+          "For gc_grace_seconds=0, always set a positive value to enable automatic tombstone expiration."
+        ]
+      }
+    ]
+  }
+}

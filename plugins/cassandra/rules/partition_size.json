@@ -1,0 +1,19 @@
+{
+  "large_partition_detected": {
+    "metric_keywords": ["cassandra", "partition", "size", "performance", "table_metrics"],
+    "rules": [
+      {
+        "expression": "data.get('max_partition_size', 0) > 104857600",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Table '{data.get('keyspace_name')}.{data.get('table_name')}' has max_partition_size of {data.get('max_partition_size')} bytes (>100MB threshold). Large partitions can lead to increased read latencies, higher memory usage during compaction, and potential OOM errors under load.",
+        "recommendations": [
+          "Review the data model for {data.get('keyspace_name')}.{data.get('table_name')}: identify queries causing wide partitions",
+          "Consider bucketing by time or other dimensions to split large partitions",
+          "Use 'nodetool cfstats {data.get('keyspace_name')}.{data.get('table_name')}' to get detailed SSTable stats",
+          "If refactoring isn't feasible, increase heap size and monitor compaction backlog"
+        ]
+      }
+    ]
+  }
+}

@@ -156,7 +156,6 @@ def execute_operations(operations, settings, run_integration_tests=True):
     finally:
         os.chdir(original_dir)
 
-
 def extract_plugin_name(file_path: str) -> str:
     """Extract plugin name from file path."""
     import re
@@ -170,10 +169,6 @@ def extract_plugin_name(file_path: str) -> str:
         print(f"  [DEBUG] Failed to extract plugin from: {file_path}")
         print(f"  [DEBUG] Normalized to: {normalized_path}")
         return None
-
-"""
-Replace your existing get_connector_factory() function in files.py with this version.
-"""
 
 def get_connector_factory(plugin_name: str, settings: dict):
     """
@@ -244,7 +239,6 @@ def get_connector_factory(plugin_name: str, settings: dict):
                 print(f"  [DEBUG] Note: Container supports CQL only")
                 print(f"  [DEBUG] For nodetool checks, configure external server with SSH")
                 container = CassandraContainer(version=version, settings=settings)  # pass in all settings.
-        #        container = CassandraContainer(version=version)
                 container.start()
                 return container.get_connector()
             

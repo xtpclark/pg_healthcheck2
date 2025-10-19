@@ -1,0 +1,39 @@
+{
+  "unhealthy_gossip_peers": {
+    "metric_keywords": ["cassandra", "gossipinfo", "peers", "status", "cluster", "communication"],
+    "rules": [
+      {
+        "expression": "data.get('status') != 'NORMAL'",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "Peer shows status '{data.get('status')}' in gossipinfo, not NORMAL. This suggests the peer is unreachable, down, or in a transitional state (LEAVING/JOINING/MOVING), disrupting cluster communication and potentially affecting data availability.",
+        "recommendations": [
+          "Verify peer node status with 'nodetool status'",
+          "Test network connectivity: 'ping <peer_ip>' and 'telnet <peer_ip> 7000'",
+          "Check peer node logs: 'tail -f /var/log/cassandra/system.log | grep ERROR'",
+          "Monitor gossip activity: 'nodetool gossipinfo | grep <peer_ip>'",
+          "Check node resources (CPU, memory, disk) on the affected peer",
+          "If status is LEAVING or JOINING, allow operation to complete",
+          "If persistently DOWN or unreachable, investigate root cause before decommissioning"
+        ]
+      }
+    ]
+  },
+  "high_gossip_generation": {
+    "metric_keywords": ["cassandra", "gossipinfo", "generation", "restart"],
+    "rules": [
+      {
+        "expression": "data.get('generation', 0) > 1000000000000",
+        "level": "low",
+        "score": 3,
+        "reasoning": "Peer has unusually high generation number ({data.get('generation')}), which may indicate frequent restarts or clock issues. Generation number increments with each node restart.",
+        "recommendations": [
+          "Review restart history for this node",
+          "Check for system clock synchronization issues (NTP)",
+          "Monitor for instability patterns",
+          "Investigate crash logs if restarts are unexpected"
+        ]
+      }
+    ]
+  }
+}

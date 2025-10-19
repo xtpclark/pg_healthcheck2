@@ -1,0 +1,19 @@
+{
+  "multiple_superusers": {
+    "metric_keywords": ["cassandra", "security", "authentication", "roles", "superuser"],
+    "rules": [
+      {
+        "expression": "data.get('superuser_count', 0) > 1",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Multiple superuser roles ({data.get('superuser_count')}) detected in system_auth.roles. Excessive superuser privileges increase security risks, as any of these roles have full administrative access to the cluster, potentially leading to unauthorized data access or modifications.",
+        "recommendations": [
+          "Audit each superuser role: LIST ALL PERMISSIONS OF {role} for each role in {data.get('data', [])}",
+          "Revoke superuser from non-essential roles: ALTER ROLE {role} WITH SUPERUSER = false; for each role in {data.get('data', [])}",
+          "Implement role-based access control (RBAC) with granular permissions instead of broad superuser grants",
+          "Enable Cassandra audit logging to monitor superuser activities"
+        ]
+      }
+    ]
+  }
+}

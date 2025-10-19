@@ -1,0 +1,18 @@
+{
+  "durable_writes_disabled": {
+    "metric_keywords": ["cassandra", "durable_writes", "commitlog", "durability", "data_loss"],
+    "rules": [
+      {
+        "expression": "not data.get('durable_writes', True)",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "Keyspace '{data.get('keyspace_name')}' has durable_writes disabled. This means writes are not committed to the commitlog, increasing the risk of data loss if the node crashes before memtables are flushed to SSTables.",
+        "recommendations": [
+          "Enable durable writes: ALTER KEYSPACE {data.get('keyspace_name')} WITH durable_writes = true",
+          "Verify commitlog location and disk space: df -h $(grep commitlog_directory cassandra.yaml | cut -d' ' -f2)",
+          "Consider using synchronous commitlog for higher durability if latency allows"
+        ]
+      }
+    ]
+  }
+}

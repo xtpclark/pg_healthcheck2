@@ -1,0 +1,19 @@
+{
+  "row_cache_enabled": {
+    "metric_keywords": ["cassandra", "row_cache", "caching", "memory", "configuration"],
+    "rules": [
+      {
+        "expression": "data.get('caching', {}).get('rows_per_partition', 'None') != 'None'",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Table '{data.get('table_name')}' in keyspace '{data.get('keyspace_name')}' has row cache enabled (rows_per_partition: {data.get('caching', {}).get('rows_per_partition')}). Row cache is discouraged in production environments as it can consume excessive heap memory, especially for tables with large or frequently updated partitions, potentially leading to OutOfMemory errors and degraded performance.",
+        "recommendations": [
+          "Disable row cache: ALTER TABLE {data.get('keyspace_name')}.{data.get('table_name')} WITH caching = {{'keys': 'All', 'rows_per_partition': 'NONE'}};",
+          "Monitor JVM heap usage post-change using tools like jstat or Prometheus",
+          "If hot data caching is needed, implement application-level caching (e.g., Caffeine, Redis) instead",
+          "Review cassandra.yaml row_cache_size_in_mb and row_cache_save_period_in_seconds settings globally"
+        ]
+      }
+    ]
+  }
+}

@@ -1553,24 +1553,30 @@ if __name__ == '__main__':
 }
 ----
 
-[CRITICAL]
-====
-**File Naming Rules Summary:**
+== File Naming Rules (CRITICAL)
 
-1. Check file: `{check_name}.py` (e.g., `node_status_check.py`)
-2. Query file: `qry_{check_name}.py` (e.g., `qry_node_status.py`)
-3. Rule file: `{check_name}.json` (e.g., `node_status.json`)
-4. Test file: `test_{check_name}.py` (e.g., `test_node_status_check.py`)
+1. **Check Name Source**:
+   - If the natural language request includes an explicit check name (e.g., `'keyspace_replication_health'`), this name MUST be used **exactly as provided** as the `{check_name}` for all generated files (check, query, rule, and test) without any modification, truncation, derivation, or substitution. For example, `'keyspace_replication_health'` must result in `keyspace_replication_health.py`, `qry_keyspace_replication_health.py`, `keyspace_replication_health.json`, and `test_keyspace_replication_health.py`.
+   - If no explicit check name is provided, derive `{check_name}` from the natural language request by converting it to a lowercase, underscore-separated string (e.g., "check node status" → `node_status_check`), ensuring it is unique, descriptive, and avoids generic terms.
+   - **CRITICAL**: Never derive a `check_name` when an explicit name is provided in the request. Derivation is only allowed when no explicit name is specified.
+   - **Never use generic names** like `nodetool_queries.py`, `cassandra_rules.json`, or `check.py`, as they will be overwritten by other checks.
 
-Where `{check_name}` is derived from the natural language request (e.g., "node status check" → `node_status_check`).
+2. **File Naming Conventions**:
+   - Check file: `plugins/cassandra/checks/{check_name}.py` (e.g., `keyspace_replication_health.py`)
+   - Query file: `plugins/cassandra/utils/qrylib/qry_{check_name}.py` (e.g., `qry_keyspace_replication_health.py`)
+   - Rule file: `plugins/cassandra/rules/{check_name}.json` (e.g., `keyspace_replication_health.json`)
+   - Test file: `tests/cassandra/checks/test_{check_name}.py` (e.g., `test_keyspace_replication_health.py`)
 
-**Never use generic names like `nodetool_queries.py` or `cassandra_rules.json` as they will be overwritten when other checks are generated.**
-====
+3. **Consistency Enforcement**:
+   - When an explicit check name is provided (e.g., `'keyspace_replication_health'`), it MUST be used verbatim for all file names and the integration step’s `code_snippet_to_add` (e.g., `{'type': 'module', 'module': 'plugins.cassandra.checks.keyspace_replication_health', 'function': 'run_keyspace_replication_health'}`).
+   - Before generating the JSON plan, validate that all file paths and the integration step use the exact `{check_name}` as specified in the request or derived correctly if no explicit name is provided.
+   - If the tool attempts to derive a different `check_name` (e.g., `keyspace_replication_check` instead of `keyspace_replication_health`), it MUST raise an error or warning indicating a naming mismatch and use the explicitly provided name instead.
 
-*CRITICAL:* Module path MUST be full import path:
+*CRITICAL*: The module path in the integration step MUST use the full import path:
 ✅ `'module': 'plugins.cassandra.checks.{check_name}'`
 ❌ NOT: `'module': '{check_name}'`
 
+*CRITICAL*: If an explicit check name is provided, it takes absolute precedence over any derived name. The tool MUST NOT modify, truncate, or reinterpret the provided name under any circumstances.
 
 
 == Pre-Submission Validation Checklist

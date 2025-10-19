@@ -1,0 +1,35 @@
+{
+  "system_auth_non_network_topology": {
+    "metric_keywords": ["cassandra", "system_auth", "replication", "strategy", "configuration"],
+    "rules": [
+      {
+        "expression": "data.get('replication_class') != 'org.apache.cassandra.locator.NetworkTopologyStrategy'",
+        "level": "high",
+        "score": 8,
+        "reasoning": "System auth keyspace uses {data.get('replication_class')}, which is not NetworkTopologyStrategy. This keyspace must use multi-DC aware replication to ensure authentication availability across all datacenters.",
+        "recommendations": [
+          "Alter keyspace: ALTER KEYSPACE system_auth WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 1, 'dc2': 1}}; (adjust DCs and RF as needed)",
+          "Run 'nodetool repair system_auth -full' after altering to propagate changes",
+          "Verify configuration: DESCRIBE KEYSPACE system_auth;"
+        ]
+      }
+    ]
+  },
+  "system_auth_missing_datacenters": {
+    "metric_keywords": ["cassandra", "system_auth", "replication", "datacenter", "availability"],
+    "rules": [
+      {
+        "expression": "len(data.get('missing_datacenters', [])) > 0",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "System auth keyspace is not replicated to the following datacenters: {', '.join(data.get('missing_datacenters'))}. This will cause authentication failures and service disruptions when accessing from those datacenters.",
+        "recommendations": [
+          "Add missing datacenters to replication: ALTER KEYSPACE system_auth WITH replication = {{'class': 'NetworkTopologyStrategy', ... include all DCs with RF=1}};",
+          "Immediately run 'nodetool repair system_auth -full' to sync data to new replicas",
+          "Monitor auth logs for failures in affected datacenters",
+          "Consider RF=1 for system_auth as higher RF may impact performance unnecessarily"
+        ]
+      }
+    ]
+  }
+}

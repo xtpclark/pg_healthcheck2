@@ -1,0 +1,19 @@
+{
+  "java_udf_aggregates": {
+    "metric_keywords": ["cassandra", "udf", "aggregate", "java", "security", "schema"],
+    "rules": [
+      {
+        "expression": "data.get('language') == 'java'",
+        "level": "high",
+        "score": 7,
+        "reasoning": "User-defined {data.get('type')} '{data.get('keyspace_name')}.{data.get('function_name')}' uses Java language, which poses security risks due to potential arbitrary code execution and is more difficult to manage than script-based implementations like JavaScript or Python.",
+        "recommendations": [
+          "Rewrite the UDF/aggregate in a safer language such as JavaScript or Python.",
+          "Conduct a security audit if Java implementation must be retained.",
+          "Remove any unused UDFs/aggregates to reduce the attack surface.",
+          "Validate and test all dependent queries after modifying UDFs/aggregates."
+        ]
+      }
+    ]
+  }
+}
