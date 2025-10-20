@@ -14,10 +14,14 @@ try:
     from azure.identity import DefaultAzureCredential
     from azure.monitor.query import MetricsQueryClient
     from azure.mgmt.rdbms.postgresql import PostgreSqlManagementClient
-    from azure.core.exceptions import AzureError, HttpResponseError
+    from azure.core.exceptions import HttpResponseError
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
+    # Define placeholder exception for decorator
+    class HttpResponseError(Exception):
+        pass
+
 
 from .retry_utils import retry_on_failure
 
@@ -145,7 +149,8 @@ class AzureConnectionManager:
         """Check if Azure clients are initialized."""
         return self.postgres_client is not None and self.metrics_client is not None
 
-    @retry_on_failure(max_attempts=3, delay=1, exceptions=(AzureError, HttpResponseError))
+    @retry_on_failure(max_attempts=3, delay=1, exceptions=(HttpResponseError,))
+
     def get_server_details(self, server_name: Optional[str] = None) -> Optional[Dict]:
         """
         Fetch Azure PostgreSQL server details.
