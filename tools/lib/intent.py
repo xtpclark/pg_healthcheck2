@@ -74,8 +74,36 @@ def generic_handler(task_name, prompt_template, entities, settings):
     
     generation_model = settings.get('generation_model', settings.get('ai_model'))
     plan_response_raw = execute_ai_prompt(action_prompt, settings, model_override=generation_model)
+
+    print("\n=== RAW AI RESPONSE ===")
+    print(plan_response_raw)
+    print("=== END RAW RESPONSE ===\n")
     
     execute_plan_from_ai(plan_response_raw, settings)
+
+def old_execute_plan_from_ai(plan_response_raw, settings):
+    """Parses and executes an AI-generated plan."""
+    if not plan_response_raw:
+        print("❌ AI failed to generate an execution plan.")
+        return
+
+    try:
+        from lib.operations.files import execute_operations
+        from lib.integrators.report import handle_code_integration
+        
+        plan_json = json.loads(clean_ai_response(plan_response_raw, "json"))
+        operations = plan_json.get("operations")
+        integration_step = plan_json.get("integration_step")
+        
+        auto_integrate = settings.get('operations', {}).get('auto_integrate', True)
+        
+        if execute_operations(operations, settings):
+            handle_code_integration(integration_step, settings, auto_integrate)
+    
+    except Exception as e:
+        print(f"❌ Failed to process AI's execution plan. Error: {e}")
+        print(f"Raw Response: {plan_response_raw}")
+
 
 def execute_plan_from_ai(plan_response_raw, settings):
     """Parses and executes an AI-generated plan."""
@@ -88,6 +116,19 @@ def execute_plan_from_ai(plan_response_raw, settings):
         from lib.integrators.report import handle_code_integration
         
         plan_json = json.loads(clean_ai_response(plan_response_raw, "json"))
+        
+        # ADD DEBUGGING HERE
+        if 'operations' not in plan_json:
+            print(f"⚠️  AI response missing 'operations' key")
+            print(f"   Available keys: {list(plan_json.keys())}")
+            
+            if 'error' in plan_json:
+                print(f"\n❌ Error from AI: {plan_json['error']}")
+            
+            print(f"\n📋 Full AI Response:")
+            print(json.dumps(plan_json, indent=2))
+            return
+        
         operations = plan_json.get("operations")
         integration_step = plan_json.get("integration_step")
         
