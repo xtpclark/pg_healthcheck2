@@ -26,6 +26,7 @@ class SSHConnectionManager:
     - Automatic reconnection on failure
     - Support for key-based and password authentication
     - Connection timeout handling
+    - Secure host key verification
     
     Example:
         ssh_manager = SSHConnectionManager(settings)
@@ -46,6 +47,9 @@ class SSHConnectionManager:
                 - ssh_password: SSH password (optional)
                 - ssh_timeout: Connection timeout in seconds (default: 10)
                 - ssh_port: SSH port (default: 22)
+                - ssh_command_timeout: Command execution timeout (default: 30)
+                - ssh_strict_host_key_checking: Enable host key verification (default: True)
+                - ssh_known_hosts_file: Path to custom known_hosts file (optional)
         """
         if not PARAMIKO_AVAILABLE:
             raise ImportError(
@@ -84,7 +88,34 @@ class SSHConnectionManager:
         """
         try:
             self.client = paramiko.SSHClient()
-            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # Security: Configure host key policy
+            strict_host_key_checking = self.settings.get('ssh_strict_host_key_checking', True)
+            
+            if strict_host_key_checking:
+                # Production mode: Load known_hosts for security
+                self.client.load_system_host_keys()
+                
+                # Optionally load custom known_hosts file
+                known_hosts = self.settings.get('ssh_known_hosts_file')
+                if known_hosts:
+                    try:
+                        self.client.load_host_keys(known_hosts)
+                        logger.info(f"Loaded custom known_hosts from {known_hosts}")
+                    except IOError as e:
+                        logger.warning(f"Could not load known_hosts file {known_hosts}: {e}")
+                
+                # Use RejectPolicy - will raise exception if host key unknown
+                self.client.set_missing_host_key_policy(paramiko.RejectPolicy())
+                logger.info("SSH host key checking enabled (secure mode)")
+            else:
+                # Development/testing mode: Auto-accept host keys (INSECURE!)
+                logger.warning(
+                    "⚠️  SSH host key checking DISABLED! "
+                    "This is insecure and should only be used in development/testing. "
+                    "Set ssh_strict_host_key_checking=True for production."
+                )
+                self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
             connect_args = {
                 'hostname': self.settings['ssh_host'],
@@ -100,8 +131,11 @@ class SSHConnectionManager:
                 connect_args['password'] = self.settings['ssh_password']
             
             self.client.connect(**connect_args)
-            logger.info(f"SSH connection established to {self.settings['ssh_host']}")
+            logger.info(f"✅ SSH connection established to {self.settings['ssh_host']}")
             
+        except paramiko.SSHException as e:
+            logger.error(f"SSH connection failed: {e}")
+            raise ConnectionError(f"Could not establish SSH connection: {e}")
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")
             raise ConnectionError(f"Could not establish SSH connection: {e}")
@@ -111,7 +145,7 @@ class SSHConnectionManager:
         if self.client:
             try:
                 self.client.close()
-                logger.info("SSH connection closed")
+                logger.info("🔌 SSH connection closed")
             except Exception as e:
                 logger.warning(f"Error closing SSH connection: {e}")
             finally:
@@ -142,23 +176,26 @@ class SSHConnectionManager:
         
         Args:
             command: Shell command to execute
-            timeout: Optional command timeout in seconds
+            timeout: Optional command timeout in seconds (default: from settings or 30s)
         
         Returns:
             Tuple of (stdout, stderr, exit_code)
         
         Raises:
             ConnectionError: If not connected
+            TimeoutError: If command exceeds timeout
             RuntimeError: If command execution fails
         """
         if not self.is_connected():
             raise ConnectionError("SSH connection not established. Call connect() first.")
         
+        command_timeout = timeout or self.settings.get('ssh_command_timeout', 30)
+        
         try:
             # Execute command
             stdin, stdout, stderr = self.client.exec_command(
                 command,
-                timeout=timeout or self.settings.get('ssh_timeout', 10)
+                timeout=command_timeout
             )
             
             # Read output
@@ -166,14 +203,20 @@ class SSHConnectionManager:
             stdout_text = stdout.read().decode('utf-8')
             stderr_text = stderr.read().decode('utf-8')
             
-            logger.debug(f"Command executed: {command}")
+            # Log command (truncate if very long)
+            cmd_display = command[:100] + '...' if len(command) > 100 else command
+            logger.debug(f"Command executed: {cmd_display}")
             logger.debug(f"Exit code: {exit_code}")
             
             return stdout_text, stderr_text, exit_code
-            
+        
+        except TimeoutError as e:
+            logger.error(f"Command timeout after {command_timeout}s: {command[:50]}...")
+            raise TimeoutError(f"Command timed out after {command_timeout}s")
         except Exception as e:
             logger.error(f"Command execution failed: {e}")
-            raise RuntimeError(f"Failed to execute command '{command}': {e}")
+            cmd_display = command[:50] + '...' if len(command) > 50 else command
+            raise RuntimeError(f"Failed to execute command '{cmd_display}': {e}")
     
     def __enter__(self):
         """Context manager entry."""
