@@ -37,6 +37,168 @@ def clean_ai_response(response_text, response_type="json"):
     Returns:
         str: Cleaned response
     """
+    import re
+    import json
+    
+    if not response_text:
+        return ""
+    
+    cleaned = response_text.strip()
+    
+    # Handle legacy format
+    if "*AI JSON Response:*" in cleaned:
+        cleaned = cleaned.split("*AI JSON Response:*")[1].strip()
+    
+    if response_type == "json":
+        # Strategy 1: Try direct JSON parsing (no fences)
+        try:
+            json.loads(cleaned)
+            return cleaned
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 2: Extract from markdown code fence using regex
+        # Patterns to try:
+        # - ```json\n{...}\n```
+        # - ```\n{...}\n```
+        # - ```json{...}```  (no newlines)
+        fence_patterns = [
+            r'```json\s*\n(.*?)\n```',      # Standard JSON fence with newlines
+            r'```json\s*(.*?)```',           # JSON fence without newlines
+            r'```\s*\n(\{.*?\})\s*\n```',   # Generic fence with JSON object
+            r'```\s*(\{.*?\})```',           # Generic fence, no newlines
+        ]
+        
+        for pattern in fence_patterns:
+            matches = re.findall(pattern, cleaned, re.DOTALL)
+            if matches:
+                extracted = matches[0].strip()
+                try:
+                    # Validate it's valid JSON
+                    json.loads(extracted)
+                    return extracted
+                except json.JSONDecodeError:
+                    # Try next pattern
+                    continue
+        
+        # Strategy 3: Manual fence removal (fallback for malformed fences)
+        if '```' in cleaned:
+            lines = cleaned.split('\n')
+            
+            # Find fence start
+            start_idx = -1
+            for i, line in enumerate(lines):
+                if line.strip().startswith('```'):
+                    start_idx = i
+                    break
+            
+            # Find fence end
+            end_idx = -1
+            if start_idx != -1:
+                for i in range(start_idx + 1, len(lines)):
+                    if lines[i].strip() == '```':
+                        end_idx = i
+                        break
+            
+            # Extract content between fences
+            if start_idx != -1 and end_idx != -1:
+                extracted = '\n'.join(lines[start_idx + 1:end_idx]).strip()
+                try:
+                    json.loads(extracted)
+                    return extracted
+                except json.JSONDecodeError:
+                    pass
+        
+        # Strategy 4: Find outermost JSON object
+        # Look for { ... } and extract it
+        if '{' in cleaned and '}' in cleaned:
+            start = cleaned.find('{')
+            # Find matching closing brace
+            brace_count = 0
+            end = -1
+            in_string = False
+            escape_next = False
+            
+            for i in range(start, len(cleaned)):
+                char = cleaned[i]
+                
+                # Handle string escaping
+                if escape_next:
+                    escape_next = False
+                    continue
+                
+                if char == '\\':
+                    escape_next = True
+                    continue
+                
+                # Track if we're in a string
+                if char == '"':
+                    in_string = not in_string
+                    continue
+                
+                # Only count braces outside of strings
+                if not in_string:
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end = i + 1
+                            break
+            
+            if end > start:
+                extracted = cleaned[start:end]
+                try:
+                    json.loads(extracted)
+                    return extracted
+                except json.JSONDecodeError:
+                    pass
+        
+        # If we get here, return as-is and let the caller handle errors
+        return cleaned
+    
+    elif response_type == "python":
+        # Handle Python code fences
+        fence_patterns = [
+            r'```python\s*\n(.*?)\n```',
+            r'```\s*\n(.*?)\n```',
+        ]
+        
+        for pattern in fence_patterns:
+            matches = re.findall(pattern, cleaned, re.DOTALL)
+            if matches:
+                return matches[0].strip()
+        
+        # Fallback: manual fence removal
+        if '```' in cleaned:
+            lines = cleaned.split('\n')
+            
+            # Remove first line if it's a fence
+            if lines[0].strip().startswith('```'):
+                lines = lines[1:]
+            
+            # Remove last line if it's a fence
+            if lines and lines[-1].strip() == '```':
+                lines = lines[:-1]
+            
+            return '\n'.join(lines).strip()
+        
+        return cleaned
+    
+    # Default: just strip whitespace
+    return cleaned
+
+def obsolete_clean_ai_response(response_text, response_type="json"):
+    """
+    Cleans markdown fences from AI responses.
+    
+    Args:
+        response_text: Raw AI response
+        response_type: Expected type (json, python)
+        
+    Returns:
+        str: Cleaned response
+    """
     fence_map = {"json": "```json", "python": "```python"}
     fence = fence_map.get(response_type, "```")
     

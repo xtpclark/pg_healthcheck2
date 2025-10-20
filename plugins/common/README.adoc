@@ -7,48 +7,74 @@
 
 The `plugins/common` module provides shared utilities and helper functions used across all database plugins in the pg_healthcheck2 framework. These utilities promote code reuse, consistency, and maintainability by implementing the DRY (Don't Repeat Yourself) principle.
 
+**Key Features:**
+
+* ✅ SSH connection management with security features
+* ✅ Shell command execution with sanitization
+* ✅ Robust output parsing with regex-based validation
+* ✅ AsciiDoc formatting with proper escaping
+* ✅ Cloud platform integrations (AWS, Azure, Instaclustr)
+* ✅ Retry logic for transient failures
+* ✅ Type-safe helper functions
+
 == Module Architecture
 
 [source,text]
 ----
 plugins/common/
 ├── __init__.py               # Package initialization and exports
-├── ssh_handler.py            # SSH connection management
+├── ssh_handler.py            # SSH connection management with security
 ├── ssh_mixin.py              # SSH support detection for connectors
-├── shell_executor.py         # Command execution utilities
-├── parsers.py                # Output parsing (nodetool, shell)
-├── output_formatters.py      # AsciiDoc formatting
-└── check_helpers.py          # Reusable check utilities
+├── shell_executor.py         # Command execution with sanitization
+├── parsers.py                # Output parsing (nodetool, shell) with regex
+├── output_formatters.py      # AsciiDoc formatting with escaping
+├── check_helpers.py          # Reusable check utilities with type hints
+├── retry_utils.py            # Retry logic for API calls
+├── aws_handler.py            # AWS RDS and CloudWatch integration
+├── azure_handler.py          # Azure PostgreSQL and Monitor integration
+└── instaclustr_handler.py    # Instaclustr API integration
 ----
 
 == SSH Infrastructure
 
 === ssh_handler.py
 
-Manages SSH connections to remote database servers using Paramiko.
+Manages SSH connections to remote database servers using Paramiko with enhanced security.
 
 ==== SSHConnectionManager
 
-Thread-safe SSH connection manager with automatic reconnection.
+Thread-safe SSH connection manager with automatic reconnection and host key verification.
 
 *Features:*
 - ✅ Persistent SSH connections with keep-alive
 - ✅ Automatic reconnection on connection loss
 - ✅ Thread-safe connection management
 - ✅ Support for key-based and password authentication
-- ✅ Configurable timeouts
+- ✅ **Secure host key verification (production mode)**
+- ✅ Configurable timeouts (connection and command)
 - ✅ Graceful connection cleanup
 
 *Configuration:*
 [source,python]
 ----
+# Production configuration (secure)
 settings = {
     'ssh_host': 'database-server.example.com',
     'ssh_user': 'ubuntu',
-    'ssh_key_file': '/home/user/.ssh/id_rsa',  # Key-based auth
-    # OR
-    'ssh_password': 'secret',                   # Password auth (not recommended)
-    'ssh_timeout': 10                           # Connection timeout in seconds
+    'ssh_key_file': '/home/user/.ssh/id_rsa',
+    'ssh_port': 22,                              # Optional, default: 22
+    'ssh_timeout': 10,                           # Connection timeout in seconds
+    'ssh_command_timeout': 30,                   # Command timeout in seconds
+    'ssh_strict_host_key_checking': True,        # Enable host key verification (default)
+    'ssh_known_hosts_file': '/path/to/known_hosts'  # Optional custom known_hosts
+}
+
+# Development/testing configuration (INSECURE!)
+settings = {
+    'ssh_host': '192.168.1.113',
+    'ssh_user': 'cassandra',
+    'ssh_key_file': '/home/user/.ssh/id_rsa',
+    'ssh_strict_host_key_checking': False       # ⚠️ Only for dev/test!
 }
 
 ssh_manager = SSHConnectionManager(settings)
@@ -81,13 +107,27 @@ with SSHConnectionManager(settings) as ssh:
         print(stdout)
 ----
 
-*Automatic Reconnection:*
-[source,python]
-----
-# Connection is maintained and automatically reconnected if needed
-ssh_manager.ensure_connected()
-stdout, stderr, exit_code = ssh_manager.execute_command('uptime')
-----
+*Security Features:*
+
+[cols="1,3"]
+|===
+|Feature |Description
+
+|Host Key Verification
+|Uses `RejectPolicy()` by default to prevent MITM attacks
+
+|Known Hosts Loading
+|Loads system and custom known_hosts files
+
+|Secure by Default
+|`ssh_strict_host_key_checking=True` unless explicitly disabled
+
+|Command Timeouts
+|Separate timeouts for connection and command execution
+
+|Audit Logging
+|Logs all connection attempts and command executions
+|===
 
 *Error Handling:*
 [source,python]
@@ -97,6 +137,9 @@ try:
 except ConnectionError as e:
     logger.error(f"SSH connection failed: {e}")
     # Handle connection failure
+except TimeoutError as e:
+    logger.error(f"SSH connection timeout: {e}")
+    # Handle timeout
 ----
 
 *Key Methods:*
@@ -106,7 +149,7 @@ except ConnectionError as e:
 |Method |Description
 
 |`connect()`
-|Establishes SSH connection to remote host
+|Establishes SSH connection with host key verification
 
 |`disconnect()`
 |Closes SSH connection gracefully
@@ -171,18 +214,31 @@ else:
 |Method |Description
 
 |`has_ssh_support()`
-|Returns True if connector has SSH configured and available
+|Returns True if connector has SSH configured and connected
+
+|`get_ssh_skip_message(operation_name)`
+|Returns formatted skip message for checks requiring SSH
+
+|`get_ssh_settings_info()`
+|Returns SSH configuration info (safe for logging)
 |===
 
 == Command Execution
 
 === shell_executor.py
 
-Utilities for executing and processing shell commands.
+Utilities for executing and processing shell commands with security sanitization.
 
 ==== ShellExecutor
 
-Static utility class for shell command execution and output processing.
+Executor class for shell commands with built-in security and safety features.
+
+*Features:*
+- ✅ Command whitelisting for security
+- ✅ Dangerous pattern detection (`;`, `&&`, `||`, backticks, etc.)
+- ✅ Smart empty result handling
+- ✅ Extensible operation handlers
+- ✅ Optional unsafe mode for trusted environments
 
 *Execute Command:*
 [source,python]
@@ -192,31 +248,63 @@ from plugins.common import ShellExecutor, SSHConnectionManager
 ssh_manager = SSHConnectionManager(settings)
 ssh_manager.connect()
 
-stdout, stderr, exit_code = ShellExecutor.execute_command(
-    ssh_manager, 
-    'df -h /var/lib/cassandra'
-)
+# Secure mode (default)
+executor = ShellExecutor(ssh_manager)
 
-if exit_code == 0:
-    print(f"Success: {stdout}")
-else:
-    print(f"Error: {stderr}")
+# Execute safe command
+result = executor.execute('{"operation": "shell", "command": "df -h"}')
+
+# Unsafe mode (for trusted environments only!)
+executor_unsafe = ShellExecutor(ssh_manager, allow_unsafe_commands=True)
 ----
 
-*Parse Common Outputs:*
+*Safe Commands Whitelist:*
 [source,python]
 ----
-# Parse df (disk free) output
-df_data = ShellExecutor.parse_df_output(stdout)
-# Returns: [{'filesystem': '/dev/sda1', 'size': '100G', 'used': '75G', ...}]
+SAFE_COMMANDS = {
+    'df', 'free', 'ps', 'uptime', 'w', 'top', 'vmstat', 'iostat',
+    'netstat', 'ss', 'lsof', 'dmesg', 'journalctl', 'systemctl',
+    'nodetool', 'cqlsh', 'redis-cli', 'mongo', 'mongosh',
+    'du', 'ls', 'find', 'grep', 'awk', 'sed', 'cat', 'tail', 'head',
+    'wc', 'sort', 'uniq', 'hostname', 'uname', 'whoami', 'id'
+}
+----
 
-# Parse free (memory) output
-mem_data = ShellExecutor.parse_free_output(stdout)
-# Returns: {'mem_total': 8192, 'mem_used': 4096, ...}
+*Empty Result Detection:*
+[source,python]
+----
+# Commands that may legitimately return empty results
+EMPTY_OK_COMMANDS = {
+    'find', 'grep', 'locate', 'ls', 'awk', 'sed', 'lsof'
+}
+----
 
-# Parse ps (process) output
-processes = ShellExecutor.parse_ps_output(stdout)
-# Returns: [{'user': 'cassandra', 'pid': 1234, 'cmd': '/usr/bin/java ...'}]
+*Register Custom Operations:*
+[source,python]
+----
+def custom_mysql_handler(command: str) -> Tuple[str, Any]:
+    # Custom handler logic
+    return formatted_output, raw_data
+
+executor.register_operation('mysql-admin', custom_mysql_handler)
+
+# Now you can use it
+result = executor.execute('{"operation": "mysql-admin", "command": "status"}')
+----
+
+*Security Validation:*
+[source,python]
+----
+# These commands are BLOCKED by default:
+executor.execute('{"operation": "shell", "command": "rm -rf /; echo hacked"}')  
+# Raises ValueError: dangerous pattern ';' detected
+
+executor.execute('{"operation": "shell", "command": "cat /etc/passwd && malicious"}')
+# Raises ValueError: dangerous pattern '&&' detected
+
+# Safe commands are allowed:
+executor.execute('{"operation": "shell", "command": "df -h"}')  # ✅ Allowed
+executor.execute('{"operation": "shell", "command": "find /tmp -name *.log"}')  # ✅ Allowed
 ----
 
 *Key Methods:*
@@ -225,95 +313,46 @@ processes = ShellExecutor.parse_ps_output(stdout)
 |===
 |Method |Parameters |Returns
 
-|`execute_command(ssh_manager, command, timeout)`
-|SSH manager, command string, timeout
-|Tuple: (stdout, stderr, exit_code)
+|`execute(query, return_raw)`
+|JSON query string, raw flag
+|Formatted output or (formatted, raw) tuple
 
-|`parse_df_output(output)`
-|df command output
-|List of filesystem dicts
+|`register_operation(name, handler)`
+|Operation name, handler function
+|None (registers handler)
 
-|`parse_free_output(output)`
-|free command output
-|Dict with memory stats
+|`_sanitize_command(command)`
+|Command string (private)
+|Sanitized command or raises ValueError
 
-|`parse_ps_output(output)`
-|ps command output
-|List of process dicts
+|`_execute_shell(command)`
+|Shell command (private)
+|Tuple: (formatted, raw_data)
 
-|`parse_uptime_output(output)`
-|uptime command output
-|Dict with load averages
-
-|`parse_netstat_output(output)`
-|netstat command output
-|Dict with network stats
+|`_execute_nodetool(command)`
+|Nodetool command (private)
+|Tuple: (formatted, parsed_data)
 |===
-
-*Example Output Structures:*
-
-*df output:*
-[source,python]
-----
-[
-    {
-        'filesystem': '/dev/sda1',
-        'size': '100G',
-        'used': '75G',
-        'available': '25G',
-        'use_percent': 75,
-        'mounted_on': '/'
-    }
-]
-----
-
-*free output:*
-[source,python]
-----
-{
-    'mem_total': 8192,      # MB
-    'mem_used': 4096,
-    'mem_free': 2048,
-    'mem_available': 6144,
-    'swap_total': 2048,
-    'swap_used': 0,
-    'swap_free': 2048
-}
-----
-
-*ps output:*
-[source,python]
-----
-[
-    {
-        'user': 'cassandra',
-        'pid': 1234,
-        'cpu_percent': 5.2,
-        'mem_percent': 32.7,
-        'command': '/usr/bin/java -Xmx4G ...'
-    }
-]
-----
 
 == Output Parsing
 
 === parsers.py
 
-Parses nodetool and shell command outputs into structured data.
+Parses nodetool and shell command outputs into structured data with robust error handling.
 
 ==== NodetoolParser
 
-Parses Cassandra nodetool command outputs.
+Parses Cassandra nodetool command outputs using regex for reliability.
 
 *Supported Commands:*
-- `status` - Node status, load, and ownership
+- `status` - Node status, load, and ownership (regex-based parsing)
 - `compactionstats` - Compaction statistics
 - `tpstats` - Thread pool statistics
 - `describecluster` - Cluster topology and schema versions
 - `tablestats` - Table-level statistics
 - `info` - Node information summary
 - `gcstats` - Garbage collection statistics
-- `proxyhistograms` - Latency histograms
+- `gossipinfo` - Gossip protocol information
 
 *Usage:*
 [source,python]
@@ -322,7 +361,7 @@ from plugins.common import NodetoolParser
 
 parser = NodetoolParser()
 
-# Parse nodetool status
+# Parse nodetool status (now uses regex!)
 status_output = """
 Datacenter: datacenter1
 =======================
@@ -330,17 +369,60 @@ Status=Up/Down
 |/ State=Normal/Leaving/Joining/Moving
 --  Address       Load       Tokens  Owns    Host ID                               Rack
 UN  192.168.1.10  108.45 KB  256     33.3%   aaa-bbb-ccc                          rack1
-UN  192.168.1.11  110.23 KB  256     33.3%   ddd-eee-fff                          rack1
-DN  192.168.1.12  0 bytes    256     33.3%   ggg-hhh-iii                          rack1
+UN  192.168.1.11  1.5 GB     256     33.3%   ddd-eee-fff                          rack1
+DN  192.168.1.12  0 B        256     33.3%   ggg-hhh-iii                          rack1
 """
 
 result = parser.parse('status', status_output)
-# Returns list of node dicts
+# Returns list of node dicts with proper load parsing
+----
+
+*Improvements Over Previous Version:*
+
+[cols="1,2,2"]
+|===
+|Feature |Old Approach |New Approach
+
+|Load Parsing
+|String splitting (breaks with spaces)
+|Regex pattern matching (robust)
+
+|Error Handling
+|Basic try/catch
+|`_safe_int()`, `_safe_float()` helpers
+
+|NaN Handling
+|Could crash on NaN strings
+|Properly returns None for NaN/N/A
+
+|Code Quality
+|Duplicate parsers
+|Single, well-tested implementation
+|===
+
+*Helper Functions:*
+
+[source,python]
+----
+from plugins.common.parsers import _parse_size_to_bytes, _safe_int, _safe_float
+
+# Convert size strings to bytes
+bytes_val = _parse_size_to_bytes("108.45 KB")  # Returns: 111052
+bytes_val = _parse_size_to_bytes("1.5 GB")     # Returns: 1610612736
+
+# Safely convert values
+int_val = _safe_int("123")        # Returns: 123
+int_val = _safe_int("NaN")        # Returns: None
+int_val = _safe_int(None)         # Returns: 0 (default)
+int_val = _safe_int("invalid")    # Returns: 0 (default)
+
+float_val = _safe_float("123.45") # Returns: 123.45
+float_val = _safe_float("NaN")    # Returns: None
 ----
 
 *Output Structures:*
 
-*nodetool status:*
+*nodetool status (regex-based):*
 [source,python]
 ----
 [
@@ -349,7 +431,8 @@ result = parser.parse('status', status_output)
         'status': 'U',              # U=Up, D=Down
         'state': 'N',               # N=Normal, L=Leaving, J=Joining, M=Moving
         'address': '192.168.1.10',
-        'load': '108.45 KB',
+        'load': '108.45 KB',        # Preserved as string
+        'load_bytes': 111052,       # Converted to bytes
         'tokens': 256,
         'owns_effective_percent': 33.3,
         'host_id': 'aaa-bbb-ccc',
@@ -358,141 +441,38 @@ result = parser.parse('status', status_output)
 ]
 ----
 
-*nodetool compactionstats:*
+*nodetool info:*
 [source,python]
 ----
 {
-    'pending_tasks': 15,
-    'active_compactions': [
-        {
-            'compaction_id': 'abc123',
-            'keyspace': 'my_keyspace',
-            'table': 'my_table',
-            'completed': 50000000,
-            'total': 100000000,
-            'unit': 'bytes',
-            'type': 'Compaction',
-            'progress_percent': 50.0
-        }
-    ]
+    'id': 'aaa-bbb-ccc-ddd',
+    'gossip_active': True,
+    'native_transport_active': True,
+    'load': '108.45 KB',
+    'load_bytes': 111052,
+    'uptime_seconds': 86400,
+    'heap_memory_mb_used': 512.0,
+    'heap_memory_mb_total': 2048.0,
+    'heap_memory_percent': 25.0,
+    'datacenter': 'datacenter1',
+    'rack': 'rack1',
+    'percent_repaired': 100.0
 }
 ----
 
-*nodetool tpstats:*
-[source,python]
-----
-[
-    {
-        'pool_name': 'ReadStage',
-        'active': 0,
-        'pending': 0,
-        'completed': 12345,
-        'blocked': 0,
-        'all_time_blocked': 0
-    },
-    {
-        'pool_name': 'MutationStage',
-        'active': 2,
-        'pending': 10,
-        'completed': 98765,
-        'blocked': 0,
-        'all_time_blocked': 5
-    }
-]
-----
-
-*nodetool describecluster:*
+*nodetool gcstats:*
 [source,python]
 ----
 {
-    'name': 'Production Cluster',
-    'snitch': 'org.apache.cassandra.locator.GossipingPropertyFileSnitch',
-    'partitioner': 'org.apache.cassandra.dht.Murmur3Partitioner',
-    'schema_versions': [
-        {
-            'version': '909ab78a-408f-34a2-872b-4ca50d2dfe2a',
-            'endpoints': ['192.168.1.10', '192.168.1.11']
-        },
-        {
-            'version': 'UNREACHABLE',
-            'endpoints': ['192.168.1.12']
-        }
-    ]
+    'interval_ms': 1000,
+    'max_gc_elapsed_ms': 50,
+    'total_gc_elapsed_ms': 100,
+    'stdev_gc_elapsed_ms': 10,
+    'gc_reclaimed_mb': 256,
+    'collections': 10,
+    'direct_memory_bytes': 1073741824
 }
 ----
-
-*nodetool tablestats:*
-[source,python]
-----
-{
-    'keyspaces': [
-        {
-            'keyspace_name': 'my_keyspace',
-            'read_count': 12345,
-            'read_latency': 1.234,
-            'write_count': 98765,
-            'write_latency': 0.567,
-            'pending_flushes': 0,
-            'tables': [
-                {
-                    'table_name': 'my_table',
-                    'sstable_count': 5,
-                    'space_used_live': 1048576,     # bytes
-                    'space_used_total': 2097152,
-                    'space_used_by_snapshots_total': 524288,
-                    'sstable_compression_ratio': 0.5,
-                    'number_of_partitions_estimate': 1000,
-                    'memtable_columns_count': 100,
-                    'memtable_data_size': 65536,
-                    'memtable_switch_count': 10,
-                    'local_read_count': 5000,
-                    'local_read_latency': 1.5,
-                    'local_write_count': 8000,
-                    'local_write_latency': 0.8,
-                    'pending_flushes': 0,
-                    'percent_repaired': 100.0,
-                    'bloom_filter_false_positives': 0,
-                    'bloom_filter_false_ratio': 0.0,
-                    'compacted_partition_minimum_bytes': 1024,
-                    'compacted_partition_maximum_bytes': 8192,
-                    'compacted_partition_mean_bytes': 2048
-                }
-            ]
-        }
-    ]
-}
-----
-
-*Key Methods:*
-
-[cols="1,2,2"]
-|===
-|Method |Parameters |Returns
-
-|`parse(command, output)`
-|Command name, raw output
-|Parsed structured data
-
-|`_parse_status(output)`
-|nodetool status output
-|List of node dicts
-
-|`_parse_compactionstats(output)`
-|nodetool compactionstats output
-|Dict with compaction info
-
-|`_parse_tpstats(output)`
-|nodetool tpstats output
-|List of thread pool dicts
-
-|`_parse_describecluster(output)`
-|nodetool describecluster output
-|Dict with cluster info
-
-|`_parse_tablestats(output)`
-|nodetool tablestats output
-|Dict with keyspace/table stats
-|===
 
 *Error Handling:*
 [source,python]
@@ -504,11 +484,40 @@ except ValueError as e:
     result = []
 ----
 
+==== ShellCommandParser
+
+Parses common shell command output.
+
+*Supported Commands:*
+- `df` - Disk usage
+- `free` - Memory usage
+
+[source,python]
+----
+from plugins.common import ShellCommandParser
+
+# Parse df output
+df_output = """
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1       100G   75G   25G  75% /
+"""
+filesystems = ShellCommandParser.parse_df(df_output)
+# Returns: [{'filesystem': '/dev/sda1', 'size': '100G', 'used': '75G', ...}]
+
+# Parse free output
+free_output = """
+              total        used        free      shared  buff/cache   available
+Mem:           8192        4096        2048         512        2048        6144
+"""
+memory = ShellCommandParser.parse_free(free_output)
+# Returns: {'total': '8192', 'used': '4096', 'free': '2048', ...}
+----
+
 == Output Formatting
 
 === output_formatters.py
 
-Formats data into AsciiDoc markup for health check reports.
+Formats data into AsciiDoc markup for health check reports with proper escaping.
 
 ==== AsciiDocFormatter
 
@@ -541,29 +550,10 @@ print(table)
 |===
 ----
 
-*Format Nodetool Output:*
+*Format Admonitions (NEW):*
 [source,python]
 ----
-# Format nodetool status
-nodes = [
-    {'datacenter': 'dc1', 'status': 'U', 'state': 'N', 'address': '192.168.1.10'},
-    {'datacenter': 'dc1', 'status': 'D', 'state': 'N', 'address': '192.168.1.11'}
-]
-
-formatted = formatter.format_nodetool_status(nodes)
-----
-
-*Format Shell Output:*
-[source,python]
-----
-# Format shell command output
-formatted = formatter.format_shell_output('df -h', stdout)
-----
-
-*Format Admonitions:*
-[source,python]
-----
-# Format different message types
+# Available admonition types
 note = formatter.format_note("Everything is healthy")
 warning = formatter.format_warning("High disk usage detected")
 critical = formatter.format_critical("Node is down!")
@@ -584,12 +574,12 @@ Everything is healthy
 High disk usage detected
 ====
 
-[CRITICAL]
+[IMPORTANT]
 ====
 Node is down!
 ====
 
-[ERROR]
+[CAUTION]
 ====
 Query failed
 ====
@@ -598,6 +588,35 @@ Query failed
 ====
 Run nodetool repair
 ====
+----
+
+*Specialized Formatters (NEW):*
+[source,python]
+----
+# Format nodetool status (simplified display)
+nodes = [{'datacenter': 'dc1', 'status': 'U', 'address': '192.168.1.10', ...}]
+formatted = formatter.format_nodetool_status(nodes)
+
+# Format thread pool stats
+pools = [{'pool_name': 'ReadStage', 'active': 0, 'pending': 0, ...}]
+formatted = formatter.format_nodetool_tpstats(pools)
+
+# Format compaction stats
+stats = {'pending_tasks': 5, 'active_compactions': [...]}
+formatted = formatter.format_nodetool_compactionstats(stats)
+
+# Format dictionary as two-column table
+data = {'setting1': 'value1', 'setting2': 'value2'}
+formatted = formatter.format_dict_as_table(data, 'Setting', 'Value')
+----
+
+*AsciiDoc Escaping (NEW):*
+[source,python]
+----
+# Properly escapes special characters
+formatter._escape_asciidoc("Text with | pipes")  # Returns: "Text with \\| pipes"
+formatter._escape_asciidoc("Text with [brackets]")  # Returns: "Text with \\[brackets\\]"
+formatter._escape_asciidoc("Text with \\ backslash")  # Returns: "Text with \\\\ backslash"
 ----
 
 *Key Methods:*
@@ -610,41 +629,41 @@ Run nodetool repair
 |List of dicts or list of lists
 |AsciiDoc table string
 
-|`format_nodetool_status(nodes)`
-|List of node dicts
-|Formatted table string
-
-|`format_nodetool_compactionstats(stats)`
-|Compaction stats dict
-|Formatted output string
-
-|`format_nodetool_tpstats(pools)`
-|List of thread pool dicts
-|Formatted table string
-
 |`format_shell_output(command, output)`
 |Command name and output
-|Formatted code block
+|Formatted code block or table
+
+|`format_literal(text)`
+|Raw text
+|AsciiDoc literal block
 
 |`format_note(message)`
 |Message string
-|AsciiDoc NOTE admonition
+|NOTE admonition
 
 |`format_warning(message)`
 |Message string
-|AsciiDoc WARNING admonition
+|WARNING admonition
 
 |`format_critical(message)`
 |Message string
-|AsciiDoc CRITICAL admonition
+|IMPORTANT admonition
 
 |`format_error(message)`
 |Message string
-|AsciiDoc ERROR admonition
+|CAUTION admonition
 
 |`format_tip(message)`
 |Message string
-|AsciiDoc TIP admonition
+|TIP admonition
+
+|`format_nodetool_status(nodes)`
+|List of node dicts
+|Formatted table
+
+|`format_dict_as_table(data, key_header, value_header)`
+|Dict and optional headers
+|Two-column table
 |===
 
 == Check Helpers
@@ -652,6 +671,8 @@ Run nodetool repair
 === check_helpers.py
 
 Reusable helper functions that reduce boilerplate in health check modules.
+
+*All functions now have complete type hints for better IDE support!*
 
 ==== require_ssh()
 
@@ -677,45 +698,48 @@ def run_my_check(connector, settings):
     # ...
 ----
 
-*Returns:*
+==== require_aws(), require_azure(), require_instaclustr() (NEW)
+
+Similar helpers for cloud platform checks.
+
+*Usage:*
 [source,python]
 ----
-(
-    True,                           # SSH is available
-    "",                            # Empty skip message
-    {}                             # Empty skip data
-)
-# OR
-(
-    False,                          # SSH not available
-    "[IMPORTANT]\n====\n...",      # Skip message (formatted AsciiDoc)
-    {                              # Skip data (structured)
-        "status": "skipped",
-        "reason": "SSH not configured"
-    }
-)
+from plugins.common.check_helpers import require_aws, require_azure, require_instaclustr
+
+# Check AWS availability
+aws_ok, skip_msg, skip_data = require_aws(connector, "CloudWatch metrics")
+if not aws_ok:
+    return skip_msg, skip_data
+
+# Check Azure availability
+azure_ok, skip_msg, skip_data = require_azure(connector, "Azure Monitor metrics")
+if not azure_ok:
+    return skip_msg, skip_data
+
+# Check Instaclustr availability
+ic_ok, skip_msg, skip_data = require_instaclustr(connector, "cluster metrics")
+if not ic_ok:
+    return skip_msg, skip_data
 ----
 
-==== format_check_header()
+==== format_check_header() (ENHANCED)
 
-Creates standardized check headers with optional SSH requirement notice.
+Creates standardized check headers with multiple requirement types.
 
 *Usage:*
 [source,python]
 ----
 from plugins.common.check_helpers import format_check_header
 
-# Without SSH requirement
+# Check with multiple requirements
 adoc_content = format_check_header(
-    "Keyspace Replication Analysis",
-    "Analyzing replication strategies for all user keyspaces."
-)
-
-# With SSH requirement
-adoc_content = format_check_header(
-    "Node Status Check (Nodetool)",
-    "Checking cluster node health using `nodetool status`.",
-    requires_ssh=True
+    "CloudWatch Metrics Analysis",
+    "Analyzing RDS CloudWatch metrics for performance insights.",
+    requires_ssh=False,
+    requires_aws=True,
+    requires_azure=False,
+    requires_instaclustr=False
 )
 ----
 
@@ -723,230 +747,436 @@ adoc_content = format_check_header(
 [source,python]
 ----
 [
-    "=== Node Status Check (Nodetool)",
+    "=== CloudWatch Metrics Analysis",
     "",
-    "Checking cluster node health using `nodetool status`.",
+    "Analyzing RDS CloudWatch metrics for performance insights.",
     "",
     "[NOTE]",
     "====",
-    "This check requires SSH access to the database server.",
+    "**Requirements:**",
+    "",
+    "* AWS credentials with CloudWatch read permissions",
     "===="
 ]
 ----
 
-==== format_recommendations()
+==== safe_execute_query() (ENHANCED)
 
-Formats recommendation lists consistently with proper AsciiDoc markup.
-
-*Usage:*
-[source,python]
-----
-from plugins.common.check_helpers import format_recommendations
-
-recommendations = [
-    "SSH to affected nodes and check logs",
-    "Verify network connectivity between nodes",
-    "Run 'nodetool repair' to ensure data consistency"
-]
-
-adoc_content.extend(format_recommendations(recommendations))
-----
-
-*Output:*
-[source,asciidoc]
-----
-==== Recommendations
-[TIP]
-====
-* SSH to affected nodes and check logs
-* Verify network connectivity between nodes
-* Run 'nodetool repair' to ensure data consistency
-====
-----
-
-==== safe_execute_query()
-
-Wraps query execution with consistent error handling and logging.
+Wraps query execution with consistent error handling and supports parameterized queries.
 
 *Usage:*
 [source,python]
 ----
 from plugins.common.check_helpers import safe_execute_query
 
-def run_my_check(connector, settings):
-    query = get_my_query(connector)
-    
-    # Execute with error handling
-    success, formatted, raw = safe_execute_query(
-        connector, 
-        query, 
-        "My query description"
-    )
-    
-    if not success:
-        # Query failed, formatted contains error message
-        adoc_content.append(formatted)
-        structured_data["result"] = {"status": "error", "data": raw}
-        return "\n".join(adoc_content), structured_data
-    
-    # Query succeeded, process results
-    # formatted = AsciiDoc formatted output
-    # raw = structured data (list/dict)
-----
-
-*Returns:*
-[source,python]
-----
-(
-    True,                           # Success
-    "[AsciiDoc table...]",         # Formatted output
-    [{'col1': 'val1', ...}]        # Raw structured data
-)
-# OR
-(
-    False,                          # Failure
-    "[ERROR]\n====\n...",          # Error message (formatted)
-    {'error': 'details'}           # Error info
-)
-----
-
-*Benefits:*
-- ✅ Consistent error message formatting
-- ✅ Automatic exception handling
-- ✅ Logging of errors
-- ✅ Clean success/failure checking
-
-==== Complete Check Example
-
-Here's a complete check using all helpers:
-
-[source,python]
-----
-from plugins.cassandra.utils.qrylib.qry_node_status import get_nodetool_status_query
-from plugins.common.check_helpers import (
-    require_ssh,
-    format_check_header,
-    format_recommendations,
-    safe_execute_query
+# Simple query
+success, formatted, raw = safe_execute_query(
+    connector, 
+    "SELECT * FROM system.peers", 
+    "System peers query"
 )
 
-def get_weight():
-    return 9  # Critical check
+# Parameterized query (NEW!)
+success, formatted, raw = safe_execute_query(
+    connector,
+    "SELECT * FROM system.peers WHERE data_center = %(dc)s",
+    "Peers by datacenter query",
+    params={'dc': 'datacenter1'}
+)
 
-def run_node_status_check(connector, settings):
-    """Check node status using nodetool."""
-    
-    # 1. Initialize with formatted header
-    adoc_content = format_check_header(
-        "Node Status Analysis (Nodetool)",
-        "Checking cluster node health using `nodetool status`.",
-        requires_ssh=True
-    )
-    structured_data = {}
-    
-    # 2. Check SSH availability
-    ssh_ok, skip_msg, skip_data = require_ssh(connector, "nodetool commands")
-    if not ssh_ok:
-        adoc_content.append(skip_msg)
-        structured_data["node_status"] = skip_data
-        return "\n".join(adoc_content), structured_data
-    
-    # 3. Execute query safely
-    query = get_nodetool_status_query(connector)
-    success, formatted, raw = safe_execute_query(connector, query, "Nodetool status")
-    
-    if not success:
-        adoc_content.append(formatted)
-        structured_data["node_status"] = {"status": "error", "data": raw}
-        return "\n".join(adoc_content), structured_data
-    
-    # 4. Analyze results
-    nodes = raw if isinstance(raw, list) else []
-    unhealthy_nodes = [n for n in nodes if n['status'] != 'U' or n['state'] != 'N']
-    
-    # 5. Format results
-    if unhealthy_nodes:
-        adoc_content.append(
-            f"[CRITICAL]\n====\n"
-            f"**{len(unhealthy_nodes)} node(s)** not in UN state.\n"
-            "====\n"
-        )
-        adoc_content.append(formatted)
-        
-        # 6. Add recommendations using helper
-        recommendations = [
-            "SSH to affected nodes and check /var/log/cassandra/system.log",
-            "Verify network connectivity between nodes",
-            "Check disk space with 'df -h'",
-            "If node is down, restart: 'systemctl restart cassandra'"
-        ]
-        adoc_content.extend(format_recommendations(recommendations))
-    else:
-        adoc_content.append(
-            f"[NOTE]\n====\n"
-            f"All {len(nodes)} node(s) are healthy (UN state).\n"
-            "====\n"
-        )
-    
-    # 7. Return results
-    structured_data["node_status"] = {
-        "status": "success",
-        "data": nodes,
-        "total_nodes": len(nodes),
-        "unhealthy_count": len(unhealthy_nodes)
-    }
-    
+if not success:
+    # Query failed, formatted contains error message
+    adoc_content.append(formatted)
+    structured_data["result"] = {"status": "error", "data": raw}
     return "\n".join(adoc_content), structured_data
 ----
 
-== Package Initialization
+==== merge_structured_data() (NEW)
 
-=== __init__.py
+Safely merge multiple query results into structured data dictionary.
 
-The `__init__.py` file exports all common utilities for easy importing.
-
-*Available Exports:*
+*Usage:*
 [source,python]
 ----
-from plugins.common import (
-    # SSH Infrastructure
-    SSHConnectionManager,
-    SSHSupportMixin,
-    
-    # Command Execution
-    ShellExecutor,
-    
-    # Parsers
-    NodetoolParser,
-    
-    # Formatters
-    AsciiDocFormatter,
-    
-    # Check Helpers
-    require_ssh,
-    format_check_header,
-    format_recommendations,
-    safe_execute_query
+from plugins.common.check_helpers import merge_structured_data
+
+structured_data = {}
+
+# First query
+success, formatted, raw = safe_execute_query(connector, query1, "Query 1")
+structured_data = merge_structured_data(
+    structured_data,
+    {"node_status": raw},
+    "cluster_health"
 )
+
+# Second query
+success, formatted, raw = safe_execute_query(connector, query2, "Query 2")
+structured_data = merge_structured_data(
+    structured_data,
+    {"compaction_stats": raw},
+    "cluster_health"
+)
+
+# Result:
+# structured_data = {
+#     "cluster_health": {
+#         "node_status": [...],
+#         "compaction_stats": {...}
+#     }
+# }
 ----
 
-*Usage Example:*
+==== calculate_percentage() (NEW)
+
+Safely calculate percentages with zero-division handling.
+
+*Usage:*
 [source,python]
 ----
-# Import everything you need in one line
-from plugins.common import (
-    SSHConnectionManager,
-    NodetoolParser,
-    AsciiDocFormatter,
-    require_ssh,
-    safe_execute_query
-)
+from plugins.common.check_helpers import calculate_percentage
 
-# Use the utilities
-ssh = SSHConnectionManager(settings)
-parser = NodetoolParser()
-formatter = AsciiDocFormatter()
+pct = calculate_percentage(75, 100)      # Returns: 75.0
+pct = calculate_percentage(1, 3, 2)      # Returns: 33.33 (2 decimal places)
+pct = calculate_percentage(5, 0)         # Returns: None (safe!)
+pct = calculate_percentage(50, 200, 0)   # Returns: 25 (0 decimal places)
 ----
+
+==== format_bytes() (NEW)
+
+Convert bytes to human-readable format.
+
+*Usage:*
+[source,python]
+----
+from plugins.common.check_helpers import format_bytes
+
+format_bytes(1024)               # Returns: "1.00 KB"
+format_bytes(1536)               # Returns: "1.50 KB"
+format_bytes(1073741824)         # Returns: "1.00 GB"
+format_bytes(1536, 1)            # Returns: "1.5 KB" (1 decimal place)
+format_bytes(0)                  # Returns: "0 B"
+----
+
+== Retry Utilities (NEW)
+
+=== retry_utils.py
+
+Provides retry logic with exponential backoff for handling transient failures.
+
+==== retry_on_failure()
+
+Decorator to retry function calls on failure.
+
+*Usage:*
+[source,python]
+----
+from plugins.common import retry_on_failure
+from botocore.exceptions import ClientError
+
+@retry_on_failure(
+    max_attempts=3,
+    delay=1.0,
+    backoff=2.0,
+    exceptions=(ClientError,),
+    log_attempts=True
+)
+def fetch_cloudwatch_metrics():
+    # API call that might fail transiently
+    response = cloudwatch.get_metric_statistics(...)
+    return response
+
+# Will retry up to 3 times with exponential backoff (1s, 2s, 4s)
+result = fetch_cloudwatch_metrics()
+----
+
+*Parameters:*
+
+[cols="1,2,1"]
+|===
+|Parameter |Description |Default
+
+|`max_attempts`
+|Maximum number of attempts
+|3
+
+|`delay`
+|Initial delay between retries (seconds)
+|1.0
+
+|`backoff`
+|Multiplier for delay after each retry
+|2.0
+
+|`exceptions`
+|Exception type(s) to catch and retry
+|Exception
+
+|`log_attempts`
+|Whether to log retry attempts
+|True
+|===
+
+==== should_retry_error()
+
+Determine if an error should trigger a retry based on error codes.
+
+*Usage:*
+[source,python]
+----
+from plugins.common import should_retry_error
+
+try:
+    response = api.call()
+except Exception as e:
+    if should_retry_error(e):
+        # Retry the operation
+        time.sleep(1)
+        response = api.call()
+    else:
+        # Don't retry, raise immediately
+        raise
+----
+
+*Default Retryable Patterns:*
+- Throttling
+- RequestLimitExceeded
+- ServiceUnavailable
+- InternalError
+- TooManyRequests
+- HTTP 429, 500, 502, 503, 504
+
+== Cloud Platform Integrations
+
+=== aws_handler.py
+
+AWS RDS and CloudWatch integration with retry logic and error classification.
+
+==== AWSConnectionManager
+
+*Features:*
+- ✅ RDS instance details retrieval
+- ✅ CloudWatch metrics with retry logic
+- ✅ Error classification (permissions, throttling, invalid params)
+- ✅ Automatic credential loading from config file
+- ✅ Configurable retry behavior
+
+*Configuration:*
+[source,yaml]
+----
+# config/aws_credentials.yaml
+aws_region: us-east-1
+aws_access_key_id: AKIAIOSFODNN7EXAMPLE
+aws_secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+----
+
+*Usage:*
+[source,python]
+----
+from plugins.common import AWSConnectionManager
+
+settings = {
+    'aws_region': 'us-east-1',
+    'aws_access_key_id': 'YOUR_KEY',
+    'aws_secret_access_key': 'YOUR_SECRET'
+}
+
+aws_manager = AWSConnectionManager(settings)
+
+# Get RDS instance details (with retry)
+instance = aws_manager.get_instance_details('my-db-instance')
+# Returns: {
+#     'instance_id': 'my-db-instance',
+#     'instance_class': 'db.t3.medium',
+#     'engine': 'postgres',
+#     'engine_version': '14.7',
+#     'allocated_storage_gb': 100,
+#     'status': 'available',
+#     'endpoint': 'my-db.region.rds.amazonaws.com',
+#     'port': 5432,
+#     'availability_zone': 'us-east-1a',
+#     'multi_az': True
+# }
+
+# Get CloudWatch metrics (with retry and error classification)
+metrics = aws_manager.get_cloudwatch_metrics(
+    dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': 'my-db-instance'}],
+    metrics_to_fetch=[
+        {'Namespace': 'AWS/RDS', 'MetricName': 'CPUUtilization', 
+         'Statistic': 'Average', 'Unit': 'Percent'},
+        {'Namespace': 'AWS/RDS', 'MetricName': 'DatabaseConnections',
+         'Statistic': 'Average', 'Unit': 'Count'}
+    ],
+    hours=24,
+    period=3600
+)
+# Returns: {
+#     'CPUUtilization': {
+#         'value': 45.2,
+#         'unit': 'Percent',
+#         'statistic': 'Average',
+#         'timestamp': '2025-10-19T12:00:00Z',
+#         'status': 'success'
+#     },
+#     'DatabaseConnections': {
+#         'value': 'N/A',
+#         'note': 'Rate limited',
+#         'error_code': 'Throttling',
+#         'status': 'rate_limited'
+#     }
+# }
+----
+
+*Error Status Codes:*
+- `success` - Metric fetched successfully
+- `no_data` - No datapoints available
+- `permission_error` - Access denied or unauthorized
+- `rate_limited` - API throttling or request limit exceeded
+- `invalid_parameters` - Invalid parameter values
+- `error` - Other errors
+
+=== azure_handler.py
+
+Azure PostgreSQL and Azure Monitor integration with retry logic.
+
+==== AzureConnectionManager
+
+*Features:*
+- ✅ Azure PostgreSQL server details
+- ✅ Azure Monitor metrics with retry logic
+- ✅ Error classification (403, 429, 5xx errors)
+- ✅ DefaultAzureCredential for flexible authentication
+- ✅ Automatic credential loading
+
+*Configuration:*
+[source,yaml]
+----
+# config/azure_credentials.yaml
+subscription_id: 12345678-1234-1234-1234-123456789012
+client_id: abcdef12-3456-7890-abcd-ef1234567890
+client_secret: your-client-secret
+tenant_id: 87654321-4321-4321-4321-210987654321
+----
+
+*Usage:*
+[source,python]
+----
+from plugins.common import AzureConnectionManager
+
+settings = {
+    'subscription_id': '12345678-1234-1234-1234-123456789012',
+    'resource_group': 'my-resource-group',
+    'server_name': 'my-postgres-server'
+}
+
+azure_manager = AzureConnectionManager(settings)
+
+# Get server details (with retry)
+server = azure_manager.get_server_details()
+# Returns: {
+#     'server_name': 'my-postgres-server',
+#     'location': 'eastus',
+#     'version': '14',
+#     'sku_name': 'Standard_D4s_v3',
+#     'sku_tier': 'GeneralPurpose',
+#     'sku_capacity': 4,
+#     'storage_mb': 102400,
+#     'backup_retention_days': 7,
+#     'geo_redundant_backup': 'Enabled',
+#     'ssl_enforcement': 'Enabled',
+#     'user_visible_state': 'Ready'
+# }
+
+# Get metrics (with retry and error classification)
+resource_id = f"/subscriptions/{sub_id}/resourceGroups/{rg}/providers/Microsoft.DBforPostgreSQL/servers/{server}"
+metrics = azure_manager.get_metrics(resource_id, ['cpu_percent', 'active_connections'])
+# Returns: {
+#     'cpu_percent': {
+#         'value': 35.7,
+#         'unit': 'Percent',
+#         'timestamp': '2025-10-19T12:00:00Z',
+#         'status': 'success'
+#     },
+#     'active_connections': {
+#         'value': 'N/A',
+#         'note': 'Permission denied (403)',
+#         'status': 'permission_error'
+#     }
+# }
+----
+
+*Error Status Codes:*
+- `success` - Metric fetched successfully
+- `no_data` - No datapoints or time series data
+- `permission_error` - HTTP 403
+- `rate_limited` - HTTP 429
+- `service_error` - HTTP 500, 502, 503, 504
+- `error` - Other errors
+
+=== instaclustr_handler.py
+
+NetApp Instaclustr API integration with retry logic.
+
+==== InstaclustrConnectionManager
+
+*Features:*
+- ✅ Cluster details from Instaclustr API
+- ✅ Metrics retrieval with retry logic
+- ✅ Error classification (401, 403, 429, 5xx)
+- ✅ Configurable timeout
+- ✅ Automatic credential loading
+
+*Configuration:*
+[source,yaml]
+----
+# config/instaclustr_credentials.yaml
+instaclustr_api_key: your-api-key-here
+instaclustr_cluster_id: 12345678-1234-1234-1234-123456789012
+----
+
+*Usage:*
+[source,python]
+----
+from plugins.common import InstaclustrConnectionManager
+
+settings = {
+    'instaclustr_api_key': 'your-api-key',
+    'instaclustr_cluster_id': '12345678-1234-1234-1234-123456789012',
+    'instaclustr_timeout': 30  # Optional
+}
+
+ic_manager = InstaclustrConnectionManager(settings)
+
+# Get cluster details (with retry)
+cluster = ic_manager.get_cluster_details()
+# Returns: {
+#     'cluster_id': '12345678-1234-1234-1234-123456789012',
+#     'name': 'My Cassandra Cluster',
+#     'status': 'RUNNING',
+#     'data_centres': 2,
+#     'nodes': ['node-1-id', 'node-2-id', 'node-3-id'],
+#     'node_count': 3
+# }
+
+# Get metrics (with retry and error classification)
+metrics = ic_manager.get_metrics('health', hours=24)
+# Returns: {
+#     'metric_type': 'health',
+#     'value': 'HEALTHY',
+#     'timestamp': '2025-10-19T12:00:00Z',
+#     'note': '',
+#     'status': 'success'
+# }
+----
+
+*Error Status Codes:*
+- `success` - Metric fetched successfully
+- `auth_error` - HTTP 401 (invalid API key)
+- `permission_error` - HTTP 403
+- `rate_limited` - HTTP 429
+- `service_error` - HTTP 500, 502, 503, 504
+- `timeout` - Request timeout
+- `error` - Other errors
 
 == Best Practices
 
@@ -959,13 +1189,8 @@ formatter = AsciiDocFormatter()
 with SSHConnectionManager(settings) as ssh:
     stdout, stderr, exit_code = ssh.execute_command('df -h')
 
-# ✅ Check SSH availability before using
-if connector.has_ssh_support():
-    # Use SSH features
-    pass
-else:
-    # Skip SSH-dependent checks
-    pass
+# ✅ Enable host key checking in production
+settings['ssh_strict_host_key_checking'] = True
 
 # ✅ Use ensure_connected() for long-running operations
 ssh_manager.ensure_connected()
@@ -980,12 +1205,35 @@ ssh = SSHConnectionManager(settings)
 ssh.connect()
 # ... forgot to disconnect()
 
-# ❌ Don't assume SSH is always available
-stdout, stderr, exit_code = connector.ssh_manager.execute_command('df -h')
-# This will fail if SSH isn't configured
+# ❌ Don't disable host key checking in production
+settings['ssh_strict_host_key_checking'] = False  # INSECURE!
 
 # ❌ Don't ignore connection errors
 ssh.connect()  # No error handling
+----
+
+=== Command Execution Security
+
+*Do:*
+[source,python]
+----
+# ✅ Use default secure mode
+executor = ShellExecutor(ssh_manager)
+
+# ✅ Only disable sanitization if absolutely necessary and in trusted environments
+if in_trusted_environment():
+    executor = ShellExecutor(ssh_manager, allow_unsafe_commands=True)
+----
+
+*Don't:*
+[source,python]
+----
+# ❌ Don't blindly disable sanitization
+executor = ShellExecutor(ssh_manager, allow_unsafe_commands=True)  # DANGEROUS!
+
+# ❌ Don't construct commands from untrusted user input
+user_input = request.get('command')
+executor.execute(f'{{"operation": "shell", "command": "{user_input}"}}')  # INJECTION RISK!
 ----
 
 === Parser Usage
@@ -1000,14 +1248,9 @@ except ValueError as e:
     logger.error(f"Parse error: {e}")
     result = []
 
-# ✅ Validate parsed data structure
-if isinstance(result, list) and len(result) > 0:
-    # Process results
-    pass
-
-# ✅ Use appropriate parser for command type
-nodetool_parser = NodetoolParser()
-result = nodetool_parser.parse('status', output)
+# ✅ Use helper functions for safety
+value = _safe_int("123")
+size_bytes = _parse_size_to_bytes("1.5 GB")
 ----
 
 *Don't:*
@@ -1017,300 +1260,45 @@ result = nodetool_parser.parse('status', output)
 result = parser.parse('status', output)
 first_node = result[0]  # May fail if result is empty
 
-# ❌ Don't use wrong parser
-shell_output = ssh.execute_command('df -h')
-result = nodetool_parser.parse('df', shell_output)  # Wrong parser!
+# ❌ Don't manually parse complex output
+load_parts = load_str.split()  # Fragile!
+load_value = float(load_parts[0])  # May fail on "N/A" or malformed data
 ----
 
-=== Check Helper Usage
+=== Cloud API Usage
 
 *Do:*
 [source,python]
 ----
-# ✅ Always use require_ssh() for SSH-dependent checks
-ssh_ok, skip_msg, skip_data = require_ssh(connector, "operation")
-if not ssh_ok:
-    return skip_msg, skip_data
+# ✅ Check status field in responses
+metrics = aws_manager.get_cloudwatch_metrics(...)
+for metric_name, data in metrics.items():
+    if data['status'] == 'success':
+        value = data['value']
+        # Process value
+    elif data['status'] == 'rate_limited':
+        logger.warning(f"Rate limited for {metric_name}, retry later")
+    elif data['status'] == 'permission_error':
+        logger.error(f"Missing permissions for {metric_name}")
 
-# ✅ Use format_check_header() for consistency
-adoc_content = format_check_header("Title", "Description", requires_ssh=True)
-
-# ✅ Use safe_execute_query() for error handling
-success, formatted, raw = safe_execute_query(connector, query, "Description")
-if not success:
-    return formatted, {"status": "error", "data": raw}
-
-# ✅ Use format_recommendations() for consistent formatting
-adoc_content.extend(format_recommendations(["Step 1", "Step 2"]))
+# ✅ Let retry decorator handle transient failures automatically
+@retry_on_failure(max_attempts=3, delay=1)
+def fetch_data():
+    return api.get_data()
 ----
 
 *Don't:*
 [source,python]
 ----
-# ❌ Don't manually check SSH
-if 'ssh_host' in settings:  # Wrong - checks wrong settings
-    # ...
+# ❌ Don't assume all metrics succeed
+metrics = aws_manager.get_cloudwatch_metrics(...)
+cpu_value = metrics['CPUUtilization']['value']  # May be 'N/A'!
 
-# ❌ Don't manually format headers
-adoc_content = ["=== My Check", "", "Description"]  # Inconsistent
-
-# ❌ Don't handle errors manually
-try:
-    formatted, raw = connector.execute_query(query, return_raw=True)
-except Exception as e:
-    # Manual error handling - inconsistent
+# ❌ Don't ignore error classification
+if metrics['CPUUtilization']['value'] == 'N/A':
+    # Generic handling - doesn't distinguish rate limit from permissions error
     pass
 ----
-
-=== Formatter Usage
-
-*Do:*
-[source,python]
-----
-# ✅ Use appropriate formatter for data type
-table = formatter.format_table(list_of_dicts)
-adoc_content.append(table)
-
-# ✅ Use admonitions for different message types
-adoc_content.append(formatter.format_critical("Critical issue!"))
-adoc_content.append(formatter.format_warning("Warning message"))
-adoc_content.append(formatter.format_note("Informational note"))
-
-# ✅ Format shell output consistently
-formatted = formatter.format_shell_output('df -h', stdout)
-----
-
-*Don't:*
-[source,python]
-----
-# ❌ Don't manually create tables
-table = "|===\n|col1|col2\n"  # Inconsistent, error-prone
-
-# ❌ Don't mix formatting styles
-adoc_content.append("[WARNING]\n====\nMessage\n====\n")  # Manual
-adoc_content.append(formatter.format_warning("Message"))  # Helper
-# Choose one approach and stick with it
-
-# ❌ Don't assume data structure
-table = formatter.format_table(data)  # May fail if data is None
-----
-
-== Error Handling Patterns
-
-=== SSH Errors
-
-[source,python]
-----
-try:
-    ssh_manager.connect()
-except ConnectionError as e:
-    logger.error(f"SSH connection failed: {e}")
-    return error_response("SSH connection failed")
-except AuthenticationError as e:
-    logger.error(f"SSH authentication failed: {e}")
-    return error_response("Check SSH credentials")
-except TimeoutError as e:
-    logger.error(f"SSH connection timeout: {e}")
-    return error_response("SSH connection timeout")
-----
-
-=== Parser Errors
-
-[source,python]
-----
-try:
-    result = parser.parse('status', output)
-except ValueError as e:
-    logger.error(f"Parse error: {e}")
-    result = []
-except KeyError as e:
-    logger.error(f"Missing expected field: {e}")
-    result = []
-----
-
-=== Query Execution Errors
-
-[source,python]
-----
-# Using safe_execute_query (recommended)
-success, formatted, raw = safe_execute_query(connector, query, "Operation")
-if not success:
-    # Error already logged and formatted
-    return formatted, {"status": "error", "data": raw}
-
-# Manual approach (if needed)
-try:
-    formatted, raw = connector.execute_query(query, return_raw=True)
-except Exception as e:
-    logger.error(f"Query failed: {e}", exc_info=True)
-    error_msg = formatter.format_error(f"Query failed: {str(e)}")
-    return error_msg, {"status": "error", "details": str(e)}
-----
-
-== Testing Utilities
-
-=== Unit Testing with Mocks
-
-[source,python]
-----
-import unittest
-from unittest.mock import Mock, patch
-from plugins.common import SSHConnectionManager, NodetoolParser
-
-class TestMyCheck(unittest.TestCase):
-    def test_ssh_connection(self):
-        """Test SSH connection management."""
-        mock_settings = {
-            'ssh_host': 'localhost',
-            'ssh_user': 'test',
-            'ssh_key_file': '/path/to/key'
-        }
-        
-        with patch('paramiko.SSHClient') as mock_ssh:
-            ssh = SSHConnectionManager(mock_settings)
-            ssh.connect()
-            
-            self.assertTrue(mock_ssh.called)
-    
-    def test_parser(self):
-        """Test nodetool output parsing."""
-        parser = NodetoolParser()
-        output = "UN  192.168.1.10  100KB  256  33.3%  aaa-bbb  rack1"
-        
-        result = parser.parse('status', output)
-        
-        self.assertIsInstance(result, list)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['status'], 'U')
-----
-
-=== Integration Testing
-
-[source,python]
-----
-from plugins.common import SSHConnectionManager, ShellExecutor
-
-def test_ssh_integration():
-    """Test actual SSH connection (requires test environment)."""
-    settings = {
-        'ssh_host': 'test-server',
-        'ssh_user': 'testuser',
-        'ssh_key_file': '/path/to/test/key'
-    }
-    
-    with SSHConnectionManager(settings) as ssh:
-        stdout, stderr, exit_code = ssh.execute_command('echo "test"')
-        
-        assert exit_code == 0
-        assert stdout.strip() == "test"
-        assert stderr == ""
-----
-
-== Performance Considerations
-
-=== Connection Pooling
-
-*Current Implementation:*
-- One SSH connection per connector instance
-- Connection is kept alive with keep-alive packets
-- Automatic reconnection on connection loss
-
-*Optimization Tips:*
-[source,python]
-----
-# ✅ Reuse connector instance across multiple checks
-connector = CassandraConnector(settings)
-connector.connect()
-
-for check in checks:
-    result = check(connector, settings)  # Reuses same SSH connection
-
-connector.disconnect()
-
-# ❌ Don't create new connector for each check
-for check in checks:
-    connector = CassandraConnector(settings)  # New SSH connection each time
-    connector.connect()
-    result = check(connector, settings)
-    connector.disconnect()
-----
-
-=== Parser Performance
-
-*Optimization Tips:*
-[source,python]
-----
-# ✅ Parse once, use multiple times
-output = ssh.execute_command('nodetool status')[0]
-parsed = parser.parse('status', output)
-
-unhealthy = [n for n in parsed if n['status'] != 'U']
-high_load = [n for n in parsed if parse_load(n['load']) > threshold]
-
-# ❌ Don't parse multiple times
-output = ssh.execute_command('nodetool status')[0]
-unhealthy = parser.parse('status', output)  # Parse
-output = ssh.execute_command('nodetool status')[0]  # Execute again
-high_load = parser.parse('status', output)  # Parse again
-----
-
-== Troubleshooting
-
-=== Common Issues
-
-*SSH Connection Failures:*
-[source,text]
-----
-Problem: Connection refused or timeout
-Solution: Verify SSH port is open, check firewall rules
-
-Problem: Authentication failed
-Solution: Verify SSH key permissions (chmod 600), check username
-
-Problem: Connection drops frequently
-Solution: Increase keep-alive interval, check network stability
-----
-
-*Parser Failures:*
-[source,text]
-----
-Problem: Parse returns empty results
-Solution: Check output format hasn't changed, verify command succeeded
-
-Problem: KeyError during parsing
-Solution: Cassandra version may have changed output format, update parser
-
-Problem: Unexpected data structure
-Solution: Enable debug logging to see raw output, adjust parser
-----
-
-*Formatter Issues:*
-[source,text]
-----
-Problem: Tables not rendering correctly
-Solution: Verify data is list of dicts with consistent keys
-
-Problem: Admonitions not showing
-Solution: Check AsciiDoc syntax, ensure proper spacing
-
-Problem: Special characters breaking output
-Solution: Escape special AsciiDoc characters (|, [, ])
-----
-
-== Version Compatibility
-
-*Python:*
-- ✅ Tested with Python 3.8+
-- ✅ Compatible with Python 3.10+
-
-*Dependencies:*
-- Paramiko 2.x+ (SSH connections)
-- Standard library only for other modules
-
-*Cassandra Versions:*
-- ✅ Nodetool parsers support Cassandra 3.x and 4.x
-- ⚠️ Some output formats differ between versions
-- 💡 Use version detection in connectors for compatibility
 
 == Migration Guide
 
@@ -1322,7 +1310,7 @@ Solution: Escape special AsciiDoc characters (|, [, ])
 import paramiko
 
 ssh_client = paramiko.SSHClient()
-ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # INSECURE!
 ssh_client.connect(
     hostname=settings['ssh_host'],
     username=settings['ssh_user'],
@@ -1340,9 +1328,11 @@ ssh_client.close()
 ----
 from plugins.common import SSHConnectionManager
 
+settings['ssh_strict_host_key_checking'] = True  # Secure by default
+
 with SSHConnectionManager(settings) as ssh:
     stdout, stderr, exit_code = ssh.execute_command('df -h')
-    # output is already decoded
+    # output is already decoded and validated
 ----
 
 === From Manual Parsing to NodetoolParser
@@ -1356,11 +1346,11 @@ nodes = []
 
 for line in lines:
     if line.startswith('UN') or line.startswith('DN'):
-        parts = line.split()
+        parts = line.split()  # Breaks with "108.45 KB"
         nodes.append({
             'status': parts[0][0],
-            'state': parts[0][1],
             'address': parts[1],
+            'load': parts[2] + ' ' + parts[3],  # Manual parsing
             # ... manual parsing
         })
 ----
@@ -1372,75 +1362,174 @@ from plugins.common import NodetoolParser
 
 parser = NodetoolParser()
 output = execute_nodetool('status')
-nodes = parser.parse('status', output)  # Fully parsed
+nodes = parser.parse('status', output)  # Fully parsed with regex
+# Each node has 'load' as string and 'load_bytes' as int
 ----
 
-=== From Manual Formatting to Helpers
+=== Adding Cloud Support to Existing Connector
 
-*Before:*
+*Before (No cloud support):*
 [source,python]
 ----
-adoc_content = [
-    "=== My Check",
-    "",
-    "Description of check",
-    "",
-    "[NOTE]",
-    "====",
-    "This check requires SSH access to the database server.",
-    "===="
-]
-
-# ... check logic ...
-
-if issues:
-    adoc_content.append("\n==== Recommendations")
-    adoc_content.append("[TIP]\n====")
-    adoc_content.append("* Fix issue 1")
-    adoc_content.append("* Fix issue 2")
-    adoc_content.append("====\n")
+class PostgreSQLConnector:
+    def __init__(self, settings):
+        self.settings = settings
+        self.client = psycopg2.connect(...)
 ----
 
-*After:*
+*After (With AWS support):*
 [source,python]
 ----
-from plugins.common.check_helpers import (
-    format_check_header,
-    format_recommendations
-)
+from plugins.common import SSHSupportMixin, AWSSupportMixin, AWSConnectionManager
 
-adoc_content = format_check_header(
-    "My Check",
-    "Description of check",
-    requires_ssh=True
-)
-
-# ... check logic ...
-
-if issues:
-    recommendations = ["Fix issue 1", "Fix issue 2"]
-    adoc_content.extend(format_recommendations(recommendations))
+class PostgreSQLConnector(SSHSupportMixin, AWSSupportMixin):
+    def __init__(self, settings):
+        self.settings = settings
+        self.client = psycopg2.connect(...)
+        
+        # Add AWS support
+        if settings.get('aws_region'):
+            self.aws_manager = AWSConnectionManager(settings)
+        else:
+            self.aws_manager = None
+    
+    def get_cloudwatch_metrics(self, ...):
+        if not self.has_aws_support():
+            return self.get_aws_skip_message("CloudWatch metrics")
+        
+        return self.aws_manager.get_cloudwatch_metrics(...)
 ----
+
+== Troubleshooting
+
+=== SSH Connection Failures
+
+[cols="1,2,2"]
+|===
+|Problem |Possible Cause |Solution
+
+|Connection refused
+|SSH port blocked
+|Check firewall rules, verify SSH is running
+
+|Host key verification failed
+|Host key changed or not in known_hosts
+|Add host to known_hosts or use `ssh_strict_host_key_checking=False` (dev only!)
+
+|Authentication failed
+|Wrong key or permissions
+|Verify key file permissions (chmod 600), check username
+
+|Connection timeout
+|Network issue or wrong host
+|Verify host is reachable, check network connectivity
+|===
+
+=== Command Sanitization Errors
+
+[cols="1,2,2"]
+|===
+|Problem |Possible Cause |Solution
+
+|Command rejected with dangerous pattern
+|Command contains `;`, `&&`, etc.
+|Add command to SAFE_COMMANDS or use `allow_unsafe_commands=True`
+
+|Safe command blocked
+|Command not in whitelist
+|The sanitizer logs the command - review and add to SAFE_COMMANDS if legitimate
+
+|Need to run complex shell script
+|Multiple commands required
+|Put commands in a script file on the server, execute script instead
+|===
+
+=== Parser Failures
+
+[cols="1,2,2"]
+|===
+|Problem |Possible Cause |Solution
+
+|Parse returns empty
+|Output format changed
+|Check Cassandra version, update parser if needed
+
+|KeyError during parsing
+|Unexpected output structure
+|Enable debug logging to see raw output
+
+|Load parsing fails
+|Unusual size format
+|Check `_parse_size_to_bytes()` supports the unit
+|===
+
+=== Cloud API Errors
+
+[cols="1,2,2"]
+|===
+|Problem |Possible Cause |Solution
+
+|Permission denied (403)
+|Missing IAM permissions
+|Add required permissions to IAM role/user
+
+|Rate limited (429)
+|Too many requests
+|Check status field, implement exponential backoff (automatic with retry decorator)
+
+|Service error (5xx)
+|AWS/Azure service issue
+|Wait and retry (automatic), check service health status
+
+|Timeout
+|Slow API or network
+|Increase timeout setting
+|===
+
+== Version Compatibility
+
+*Python:*
+- ✅ Tested with Python 3.8+
+- ✅ Fully compatible with Python 3.10+
+- ✅ Type hints require Python 3.7+
+
+*Dependencies:*
+- paramiko 2.x+ (SSH connections)
+- boto3 1.x+ (AWS support)
+- azure-identity, azure-monitor-query, azure-mgmt-rdbms (Azure support)
+- requests 2.x+ (Instaclustr support)
+- pyyaml 5.x+ (Configuration loading)
+
+*Database Versions:*
+- ✅ Cassandra 3.x and 4.x supported
+- ⚠️ Some nodetool output formats differ between versions
+- 💡 Use version detection in connectors for compatibility
 
 == Contributing
 
 When adding new utilities to `plugins/common`:
 
 1. **Follow existing patterns** - Look at similar utilities
-2. **Add comprehensive docstrings** - Include usage examples
+2. **Add comprehensive docstrings** - Include usage examples and type hints
 3. **Write unit tests** - Test all public methods
-4. **Update this README** - Document new utilities
+4. **Update this README** - Document new utilities with examples
 5. **Export in __init__.py** - Make utilities easily accessible
+6. **Add security considerations** - Document any security implications
+7. **Include error handling** - Use try/except with proper logging
+8. **Consider retry logic** - Use `@retry_on_failure` for API calls
 
 == Additional Resources
 
 *Related Documentation:*
 - Plugin-specific READMEs (e.g., `plugins/cassandra/README.adoc`)
 - Main framework documentation (`README.adoc`)
-- Check generation prompt (`tools/templates/check_generation/cassandra_check_prompt.adoc`)
+- Check generation prompts (`tools/templates/check_generation/`)
 
 *External References:*
 - http://www.paramiko.org/[Paramiko Documentation]
+- https://boto3.amazonaws.com/v1/documentation/api/latest/index.html[AWS Boto3 Documentation]
+- https://docs.microsoft.com/en-us/python/api/overview/azure/[Azure SDK for Python]
+- https://www.instaclustr.com/support/api-integrations/[Instaclustr API Documentation]
 - https://docs.python.org/3/library/logging.html[Python Logging]
 - https://asciidoc.org/[AsciiDoc Documentation]
 

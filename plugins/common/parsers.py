@@ -8,9 +8,11 @@ Provides structured parsing of output from:
 """
 
 import logging
-from typing import List, Dict, Any
+import re
+from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+
 
 def _parse_size_to_bytes(size_str: str) -> int:
     """
@@ -62,7 +64,60 @@ def _parse_size_to_bytes(size_str: str) -> int:
     except (ValueError, IndexError):
         logger.warning(f"Could not parse size: {size_str}")
         return 0
+
+
+def _safe_int(value: Any, default: int = 0) -> Optional[int]:
+    """
+    Safely convert value to int, handling NaN, None, and invalid values.
+    
+    Args:
+        value: Value to convert
+        default: Default value if conversion fails
+    
+    Returns:
+        int or None: Converted value, None for NaN, or default for errors
+    """
+    if value is None:
+        return default
+    
+    try:
+        # Handle NaN strings
+        if str(value).upper() in ('NAN', 'N/A', ''):
+            return None
         
+        # Try to convert to int
+        return int(float(value))
+    
+    except (ValueError, AttributeError, TypeError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> Optional[float]:
+    """
+    Safely convert value to float, handling NaN, None, and invalid values.
+    
+    Args:
+        value: Value to convert
+        default: Default value if conversion fails
+    
+    Returns:
+        float or None: Converted value, None for NaN, or default for errors
+    """
+    if value is None:
+        return default
+    
+    try:
+        # Handle NaN strings
+        if str(value).upper() in ('NAN', 'N/A', ''):
+            return None
+        
+        # Try to convert to float
+        return float(value)
+    
+    except (ValueError, AttributeError, TypeError):
+        return default
+
+
 class NodetoolParser:
     """Parses Cassandra nodetool command output into structured data."""
     
@@ -83,9 +138,9 @@ class NodetoolParser:
             'compactionstats': self._parse_compactionstats,
             'gcstats': self._parse_gcstats,
             'describecluster': self._parse_describecluster,
-            'tablestats': self._parse_tablestats,       
+            'tablestats': self._parse_tablestats,
             'info': self._parse_info,
-            'gossipinfo': self._parse_gossipinfo,    
+            'gossipinfo': self._parse_gossipinfo,
         }
         
         parser = parsers.get(command)
@@ -96,7 +151,12 @@ class NodetoolParser:
             return [{'command': command, 'output': output}]
     
     def _parse_status(self, output: str) -> List[Dict]:
-        """Parses 'nodetool status' output."""
+        """
+        Parses 'nodetool status' output using regex for robustness.
+        
+        Example line:
+            UN  192.168.1.10  108.45 KB  256  33.3%  aaa-bbb-ccc  rack1
+        """
         nodes = []
         if not output or not output.strip():
             return nodes
@@ -104,29 +164,51 @@ class NodetoolParser:
         lines = output.strip().split('\n')
         current_dc = 'unknown'
         
+        # Regex pattern for node lines
+        # Matches: STATUS  ADDRESS  SIZE UNIT  TOKENS  OWNERSHIP%  HOST_ID  RACK
+        node_pattern = re.compile(
+            r'^(UN|UL|UJ|UM|DN|DL|DJ|DM)\s+'  # Status/State
+            r'(\S+)\s+'                        # IP Address
+            r'([\d.]+)\s+([KMGT]?B)\s+'       # Load (number + unit)
+            r'(\d+)\s+'                        # Tokens
+            r'([\d.]+)%\s+'                    # Ownership %
+            r'(\S+)\s+'                        # Host ID
+            r'(\S+)'                           # Rack
+        )
+        
         for line in lines:
+            # Check for datacenter header
             if "Datacenter:" in line:
                 parts = line.split("Datacenter:")
                 if len(parts) > 1:
                     current_dc = parts[1].strip()
+                continue
             
-            # Parse node lines
-            parts = line.split()
-            if len(parts) >= 8 and parts[0] in ('UN', 'UL', 'UJ', 'UM', 'DN', 'DL', 'DJ', 'DM'):
+            # Try to match node line with regex
+            match = node_pattern.match(line.strip())
+            
+            if match:
                 try:
+                    status_state = match.group(1)
+                    address = match.group(2)
+                    load_value = match.group(3)
+                    load_unit = match.group(4)
+                    load_str = f"{load_value} {load_unit}"
+                    
                     nodes.append({
                         'datacenter': current_dc,
-                        'status': parts[0][0],
-                        'state': parts[0][1],
-                        'address': parts[1],
-                        'load': ' '.join(parts[2:4]) if len(parts) > 3 else parts[2],
-                        'tokens': int(parts[4]) if parts[4].isdigit() else 0,
-                        'owns_effective_percent': float(parts[5].replace('%', '')) if '%' in parts[5] else 0.0,
-                        'host_id': parts[6],
-                        'rack': parts[7]
+                        'status': status_state[0],  # U or D
+                        'state': status_state[1],   # N, L, J, M
+                        'address': address,
+                        'load': load_str,
+                        'load_bytes': _parse_size_to_bytes(load_str),
+                        'tokens': int(match.group(5)),
+                        'owns_effective_percent': float(match.group(6)),
+                        'host_id': match.group(7),
+                        'rack': match.group(8)
                     })
                 except (ValueError, IndexError) as e:
-                    logger.warning(f"Failed to parse node line: {line} - {e}")
+                    logger.warning(f"Failed to parse matched node line: {line} - {e}")
         
         return nodes
     
@@ -227,7 +309,11 @@ class NodetoolParser:
         }
     
     def _parse_gcstats(self, output: str) -> Dict:
-        """Parses 'nodetool gcstats' output."""
+        """
+        Parses 'nodetool gcstats' output.
+        
+        Fixed: Handles None values and NaN properly.
+        """
         if not output or not output.strip():
             logger.warning("Empty nodetool gcstats output")
             return {}
@@ -254,22 +340,14 @@ class NodetoolParser:
                 logger.warning(f"Unexpected gcstats format (expected 7 columns, got {len(parts)})")
                 return {}
             
-            def safe_int(value, default=0):
-                try:
-                    if value.upper() == 'NAN':
-                        return None
-                    return int(value)
-                except (ValueError, AttributeError):
-                    return default
-            
             gc_stats = {
-                'interval_ms': safe_int(parts[0]),
-                'max_gc_elapsed_ms': safe_int(parts[1]),
-                'total_gc_elapsed_ms': safe_int(parts[2]),
-                'stdev_gc_elapsed_ms': safe_int(parts[3]),
-                'gc_reclaimed_mb': safe_int(parts[4]),
-                'collections': safe_int(parts[5]),
-                'direct_memory_bytes': safe_int(parts[6], default=-1)
+                'interval_ms': _safe_int(parts[0]),
+                'max_gc_elapsed_ms': _safe_int(parts[1]),
+                'total_gc_elapsed_ms': _safe_int(parts[2]),
+                'stdev_gc_elapsed_ms': _safe_int(parts[3]),
+                'gc_reclaimed_mb': _safe_int(parts[4]),
+                'collections': _safe_int(parts[5]),
+                'direct_memory_bytes': _safe_int(parts[6], default=-1)
             }
             
             return gc_stats
@@ -306,7 +384,6 @@ class NodetoolParser:
             'schema_versions': []
         }
         
-        current_section = None
         schema_section_started = False
         
         for line in lines:
@@ -322,13 +399,12 @@ class NodetoolParser:
             
             # Detect schema versions section
             elif 'Schema versions:' in line:
-                current_section = 'schema_versions'
                 schema_section_started = True
                 continue
             
             # End schema versions section when we hit other sections
             elif schema_section_started and any(keyword in line for keyword in [
-                'Stats for all nodes', 'Data Centers', 'Database versions', 
+                'Stats for all nodes', 'Data Centers', 'Database versions',
                 'Keyspaces', 'Live', 'Joining', 'Moving', 'Leaving'
             ]):
                 schema_section_started = False
@@ -355,73 +431,6 @@ class NodetoolParser:
                             'version': version,
                             'endpoints': endpoints
                         })
-        
-        return cluster_info
-    
-    def old_parse_describecluster(self, output: str) -> Dict:
-        """
-        Parses 'nodetool describecluster' output.
-        
-        Example output:
-            Cluster Information:
-                Name: Test Cluster
-                Snitch: org.apache.cassandra.locator.SimpleSnitch
-                DynamicEndPointSnitch: enabled
-                Partitioner: org.apache.cassandra.dht.Murmur3Partitioner
-                Schema versions:
-                    SCHEMA_VERSION_1: [192.168.1.10]
-        
-        Returns:
-            dict: Cluster information including schema versions
-        """
-        if not output or not output.strip():
-            logger.warning("Empty nodetool describecluster output")
-            return {'schema_versions': []}
-        
-        lines = output.strip().split('\n')
-        
-        cluster_info = {
-            'name': 'Unknown',
-            'snitch': 'Unknown',
-            'partitioner': 'Unknown',
-            'schema_versions': []
-        }
-        
-        current_section = None
-        
-        for line in lines:
-            line = line.strip()
-            
-            # Parse basic cluster info
-            if line.startswith('Name:'):
-                cluster_info['name'] = line.split(':', 1)[1].strip()
-            elif line.startswith('Snitch:'):
-                cluster_info['snitch'] = line.split(':', 1)[1].strip()
-            elif line.startswith('Partitioner:'):
-                cluster_info['partitioner'] = line.split(':', 1)[1].strip()
-            
-            # Detect schema versions section
-            elif 'Schema versions:' in line:
-                current_section = 'schema_versions'
-                continue
-            
-            # Parse schema versions
-            elif current_section == 'schema_versions' and ':' in line:
-                # Format: "SCHEMA_UUID: [ip1, ip2, ip3]"
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    version = parts[0].strip()
-                    endpoints_str = parts[1].strip()
-                    
-                    # Parse endpoint list
-                    # Remove brackets and split by comma
-                    endpoints_str = endpoints_str.strip('[]')
-                    endpoints = [ep.strip() for ep in endpoints_str.split(',') if ep.strip()]
-                    
-                    cluster_info['schema_versions'].append({
-                        'version': version,
-                        'endpoints': endpoints
-                    })
         
         return cluster_info
 
@@ -483,30 +492,33 @@ class NodetoolParser:
                 info['load'] = value
                 info['load_bytes'] = _parse_size_to_bytes(value)
             elif key == 'Generation No':
-                info['generation_no'] = int(value) if value.isdigit() else value
+                info['generation_no'] = _safe_int(value, default=value)
             elif key == 'Uptime (seconds)':
-                info['uptime_seconds'] = int(value) if value.isdigit() else 0
+                info['uptime_seconds'] = _safe_int(value, default=0)
             elif key == 'Heap Memory (MB)':
                 # Format: "512.00 / 2048.00"
                 if '/' in value:
                     used, total = value.split('/')
-                    info['heap_memory_mb_used'] = float(used.strip())
-                    info['heap_memory_mb_total'] = float(total.strip())
-                    info['heap_memory_percent'] = (
-                        info['heap_memory_mb_used'] / info['heap_memory_mb_total'] * 100
-                        if info['heap_memory_mb_total'] > 0 else 0
-                    )
+                    info['heap_memory_mb_used'] = _safe_float(used.strip())
+                    info['heap_memory_mb_total'] = _safe_float(total.strip())
+                    if info['heap_memory_mb_total'] and info['heap_memory_mb_total'] > 0:
+                        info['heap_memory_percent'] = (
+                            info['heap_memory_mb_used'] / info['heap_memory_mb_total'] * 100
+                        )
+                    else:
+                        info['heap_memory_percent'] = 0
             elif key == 'Off Heap Memory (MB)':
-                info['off_heap_memory_mb'] = float(value)
+                info['off_heap_memory_mb'] = _safe_float(value)
             elif key == 'Data Center':
                 info['datacenter'] = value
             elif key == 'Rack':
                 info['rack'] = value
             elif key == 'Exceptions':
-                info['exceptions'] = int(value) if value.isdigit() else 0
+                info['exceptions'] = _safe_int(value, default=0)
             elif key == 'Percent Repaired':
                 # Remove % sign and convert to float
-                info['percent_repaired'] = float(value.rstrip('%'))
+                percent_str = value.rstrip('%')
+                info['percent_repaired'] = _safe_float(percent_str)
             elif 'Cache' in key:
                 # Parse cache information (Key Cache, Row Cache, Counter Cache)
                 cache_name = key.lower().replace(' ', '_')
@@ -570,7 +582,7 @@ class NodetoolParser:
                     
                     # Parse specific values
                     if key in ('generation', 'heartbeat'):
-                        gossip_states[current_node][key_normalized] = int(value) if value.isdigit() else value
+                        gossip_states[current_node][key_normalized] = _safe_int(value, default=value)
                     elif key == 'STATUS':
                         # Format: "NORMAL,-9223372036854775808" or "LEAVING,token"
                         status_parts = value.split(',')
@@ -581,15 +593,12 @@ class NodetoolParser:
                         gossip_states[current_node]['load'] = value
                         gossip_states[current_node]['load_bytes'] = _parse_size_to_bytes(value)
                     elif key == 'SEVERITY':
-                        gossip_states[current_node]['severity'] = float(value)
+                        gossip_states[current_node]['severity'] = _safe_float(value)
                     else:
                         gossip_states[current_node][key_normalized] = value
         
         return gossip_states
 
-
-
-    
     def _parse_tablestats(self, output: str) -> List[Dict]:
         """
         Parses 'nodetool tablestats' output.
@@ -667,10 +676,7 @@ class NodetoolParser:
                     elif 'space used (total)' in line.lower():
                         current_table_data['space_used_total'] = value
                     elif 'sstable count' in line.lower():
-                        try:
-                            current_table_data['sstable_count'] = int(value)
-                        except ValueError:
-                            current_table_data['sstable_count'] = value
+                        current_table_data['sstable_count'] = _safe_int(value, default=value)
                     else:
                         # Store other metrics generically
                         current_table_data[key] = value
@@ -680,6 +686,7 @@ class NodetoolParser:
             tables.append(current_table_data)
         
         return tables
+
 
 class ShellCommandParser:
     """Parses common shell command output into structured data."""

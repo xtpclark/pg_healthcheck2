@@ -5,6 +5,7 @@ Provides consistent formatting across all database plugins:
 - AsciiDoc tables
 - Literal blocks
 - Shell command output detection and formatting
+- Admonition blocks (NOTE, WARNING, CRITICAL, ERROR, TIP)
 """
 
 import logging
@@ -21,12 +22,13 @@ class AsciiDocFormatter:
     - Tables from list of dicts
     - Shell command output (detects tabular vs literal)
     - Literal blocks for raw text
+    - Admonition blocks for messages
     """
     
     # Commands that typically produce tabular output
     TABULAR_COMMANDS = [
         'df', 'ps', 'free', 'top', 'netstat', 'ss', 'lsof',
-        'iostat', 'vmstat', 'mpstat', 'sar'
+        'iostat', 'vmstat', 'mpstat', 'sar', 'du'
     ]
     
     def format_table(self, data: List[Dict[str, Any]]) -> str:
@@ -51,8 +53,8 @@ class AsciiDocFormatter:
         
         for row in data:
             row_values = [str(row.get(col, '')) for col in columns]
-            # Escape pipe characters
-            row_values = [v.replace('|', '\\|') for v in row_values]
+            # Escape special characters
+            row_values = [self._escape_asciidoc(v) for v in row_values]
             table_lines.append('|' + '|'.join(row_values))
         
         table_lines.append('|===')
@@ -73,6 +75,9 @@ class AsciiDocFormatter:
         Returns:
             Formatted AsciiDoc string
         """
+        if not output or not output.strip():
+            return self.format_note("No output from command.")
+        
         # Check if this is a tabular command
         is_tabular = any(cmd in command.lower() for cmd in self.TABULAR_COMMANDS)
         
@@ -113,18 +118,61 @@ class AsciiDocFormatter:
             # Split by whitespace, but limit to header column count
             parts = line.split(None, len(header) - 1)
             
-            # Pad with empty strings if needed
-            while len(parts) < len(header):
-                parts.append('')
+            # Handle insufficient columns
+            if len(parts) < len(header):
+                # Pad with empty strings
+                parts.extend([''] * (len(header) - len(parts)))
+            elif len(parts) > len(header):
+                # Truncate extra columns (shouldn't happen but be safe)
+                parts = parts[:len(header)]
             
-            # Take only as many columns as header
-            parts = parts[:len(header)]
+            # Escape special characters
+            parts = [self._escape_asciidoc(part) for part in parts]
             
             table_lines.append('|' + '|'.join(parts))
         
         table_lines.append('|===')
         
         return '\n'.join(table_lines)
+    
+    def _escape_asciidoc(self, text: str) -> str:
+        """
+        Escape special AsciiDoc characters in text.
+        
+        Args:
+            text: Text to escape
+        
+        Returns:
+            Escaped text safe for AsciiDoc tables
+        """
+        # Escape pipe characters (table delimiter)
+        text = text.replace('|', '\\|')
+        
+        # Escape square brackets (can trigger macros)
+        text = text.replace('[', '\\[')
+        text = text.replace(']', '\\]')
+        
+        # Escape backslashes that aren't already escaping something
+        # This is tricky - only escape standalone backslashes
+        # We'll do a simple approach: if backslash isn't followed by |, [, or ]
+        # then escape it
+        result = []
+        i = 0
+        while i < len(text):
+            if text[i] == '\\':
+                # Check if next char is already an escape sequence we created
+                if i + 1 < len(text) and text[i + 1] in ('|', '[', ']', '\\'):
+                    # Already escaped, keep as is
+                    result.append(text[i])
+                else:
+                    # Standalone backslash, escape it
+                    result.append('\\\\')
+                i += 1
+            else:
+                result.append(text[i])
+                i += 1
+        
+        return ''.join(result)
     
     def format_literal(self, text: str) -> str:
         """
@@ -136,6 +184,9 @@ class AsciiDocFormatter:
         Returns:
             AsciiDoc literal block
         """
+        if not text:
+            text = "(empty)"
+        
         return f"[source,text]\n----\n{text}\n----\n"
     
     def format_note(self, message: str) -> str:
@@ -146,9 +197,33 @@ class AsciiDocFormatter:
             message: Note text
         
         Returns:
-            AsciiDoc note block
+            AsciiDoc NOTE admonition block
         """
         return f"[NOTE]\n====\n{message}\n====\n"
+    
+    def format_warning(self, message: str) -> str:
+        """
+        Formats a warning message.
+        
+        Args:
+            message: Warning text
+        
+        Returns:
+            AsciiDoc WARNING admonition block
+        """
+        return f"[WARNING]\n====\n{message}\n====\n"
+    
+    def format_critical(self, message: str) -> str:
+        """
+        Formats a critical/important message.
+        
+        Args:
+            message: Critical message text
+        
+        Returns:
+            AsciiDoc IMPORTANT admonition block
+        """
+        return f"[IMPORTANT]\n====\n{message}\n====\n"
     
     def format_error(self, error: str) -> str:
         """
@@ -158,6 +233,118 @@ class AsciiDocFormatter:
             error: Error text
         
         Returns:
-            AsciiDoc error block
+            AsciiDoc CAUTION admonition block
         """
-        return f"[ERROR]\n====\n{error}\n====\n"
+        return f"[CAUTION]\n====\n{error}\n====\n"
+    
+    def format_tip(self, message: str) -> str:
+        """
+        Formats a tip/recommendation message.
+        
+        Args:
+            message: Tip text
+        
+        Returns:
+            AsciiDoc TIP admonition block
+        """
+        return f"[TIP]\n====\n{message}\n====\n"
+    
+    def format_nodetool_status(self, nodes: List[Dict]) -> str:
+        """
+        Formats nodetool status output as an AsciiDoc table.
+        
+        Args:
+            nodes: List of node dictionaries from NodetoolParser
+        
+        Returns:
+            Formatted AsciiDoc table
+        """
+        if not nodes:
+            return self.format_note("No nodes found.")
+        
+        # Create simplified view for display
+        display_nodes = []
+        for node in nodes:
+            display_nodes.append({
+                'DC': node.get('datacenter', 'unknown'),
+                'Status': node.get('status', '?'),
+                'State': node.get('state', '?'),
+                'Address': node.get('address', 'unknown'),
+                'Load': node.get('load', '0 B'),
+                'Owns': f"{node.get('owns_effective_percent', 0):.1f}%",
+                'Host ID': node.get('host_id', 'unknown')[:8] + '...',  # Truncate
+                'Rack': node.get('rack', 'unknown')
+            })
+        
+        return self.format_table(display_nodes)
+    
+    def format_nodetool_tpstats(self, pools: List[Dict]) -> str:
+        """
+        Formats nodetool tpstats output as an AsciiDoc table.
+        
+        Args:
+            pools: List of thread pool dictionaries from NodetoolParser
+        
+        Returns:
+            Formatted AsciiDoc table
+        """
+        if not pools:
+            return self.format_note("No thread pool statistics found.")
+        
+        return self.format_table(pools)
+    
+    def format_nodetool_compactionstats(self, stats: Dict) -> str:
+        """
+        Formats nodetool compactionstats output.
+        
+        Args:
+            stats: Compaction stats dictionary from NodetoolParser
+        
+        Returns:
+            Formatted AsciiDoc string
+        """
+        lines = []
+        
+        pending = stats.get('pending_tasks', 0)
+        active = stats.get('active_compactions', [])
+        
+        lines.append(f"**Pending Compaction Tasks:** {pending}")
+        lines.append("")
+        
+        if active:
+            lines.append(f"**Active Compactions:** {len(active)}")
+            lines.append("")
+            lines.append(self.format_table(active))
+        else:
+            lines.append("**Active Compactions:** None")
+        
+        return '\n'.join(lines)
+    
+    def format_dict_as_table(self, data: Dict[str, Any], 
+                            key_header: str = "Key", 
+                            value_header: str = "Value") -> str:
+        """
+        Formats a dictionary as a two-column AsciiDoc table.
+        
+        Args:
+            data: Dictionary to format
+            key_header: Header for key column
+            value_header: Header for value column
+        
+        Returns:
+            AsciiDoc table string
+        """
+        if not data:
+            return self.format_note("No data to display.")
+        
+        table_lines = ['|===']
+        table_lines.append(f'|{key_header}|{value_header}')
+        
+        for key, value in data.items():
+            key_str = self._escape_asciidoc(str(key))
+            value_str = self._escape_asciidoc(str(value))
+            table_lines.append(f'|{key_str}|{value_str}')
+        
+        table_lines.append('|===')
+        
+        return '\n'.join(table_lines)

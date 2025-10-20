@@ -11,7 +11,7 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "plugins.cassandra.checks.disk_space_per_keyspace", "function": "run_disk_space_per_keyspace_check"},
             {"type": "module", "module": "plugins.cassandra.checks.data_directory_disk_space_check", "function": "run_data_directory_disk_space_check"},
             {"type": "module", "module": "plugins.cassandra.checks.memory_usage_check", "function": "run_memory_usage_check"},
-            {'type': 'module', 'module': 'plugins.cassandra.checks.cassandra_process_check', 'function': 'run_cassandra_process_check'},
+#            {'type': 'module', 'module': 'plugins.cassandra.checks.cassandra_process_check', 'function': 'run_cassandra_process_check'},
 #            {'type': 'module', 'module': 'plugins.cassandra.checks.system_log_errors_check', 'function': 'run_system_log_errors_check'},
             {'type': 'module', 'module': 'plugins.cassandra.checks.cpu_load_average_check', 'function': 'run_cpu_load_average_check'},
             {'type': 'module', 'module': 'plugins.cassandra.checks.network_connections_check', 'function': 'run_network_connections_check'},
@@ -50,7 +50,7 @@ REPORT_SECTIONS = [
     {
         'title': 'Performance Monitoring',
         'actions': [
-            {'type': 'module', 'module': 'plugins.cassandra.checks.tombstone_metrics_check', 'function': 'run_tombstone_metrics_check'},
+#            {'type': 'module', 'module': 'plugins.cassandra.checks.tombstone_metrics_check', 'function': 'run_tombstone_metrics_check'},
         ]
     },
     {
