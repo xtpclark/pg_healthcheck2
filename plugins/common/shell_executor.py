@@ -9,7 +9,8 @@ This module provides a unified interface for executing:
 
 import json
 import logging
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
+
 from .ssh_handler import SSHConnectionManager
 from .output_formatters import AsciiDocFormatter
 
@@ -31,16 +32,42 @@ class ShellExecutor:
         result = executor.execute('{"operation": "shell", "command": "df -h"}')
     """
     
-    def __init__(self, ssh_manager: SSHConnectionManager, formatter: Optional[AsciiDocFormatter] = None):
+    # Commands that are always safe to execute
+    SAFE_COMMANDS = {
+        'df', 'free', 'ps', 'uptime', 'w', 'top', 'vmstat', 'iostat',
+        'netstat', 'ss', 'lsof', 'dmesg', 'journalctl', 'systemctl',
+        'nodetool', 'cqlsh', 'redis-cli', 'mongo', 'mongosh',
+        'du', 'ls', 'find', 'grep', 'awk', 'sed', 'cat', 'tail', 'head',
+        'wc', 'sort', 'uniq', 'hostname', 'uname', 'whoami', 'id'
+    }
+    
+    # Commands that legitimately may return no output
+    EMPTY_OK_COMMANDS = {
+        'find', 'grep', 'locate', 'ls', 'awk', 'sed', 'lsof'
+    }
+    
+    def __init__(self, ssh_manager: SSHConnectionManager, 
+                 formatter: Optional[AsciiDocFormatter] = None,
+                 allow_unsafe_commands: bool = False):
         """
         Initialize shell executor.
         
         Args:
             ssh_manager: Configured SSHConnectionManager instance
             formatter: Optional custom formatter (defaults to AsciiDocFormatter)
+            allow_unsafe_commands: If True, disable command sanitization (DANGEROUS!)
         """
         self.ssh = ssh_manager
         self.formatter = formatter or AsciiDocFormatter()
+        self.allow_unsafe = allow_unsafe_commands
+        
+        if allow_unsafe_commands:
+            logger.warning(
+                "⚠️  Command sanitization DISABLED! "
+                "All commands will be executed without validation. "
+                "Only use in trusted environments."
+            )
+        
         self.operation_handlers = {
             'shell': self._execute_shell,
             'nodetool': self._execute_nodetool,
@@ -56,6 +83,58 @@ class ShellExecutor:
             handler_func: Function(command: str) -> Tuple[str, Any]
         """
         self.operation_handlers[operation_name] = handler_func
+        logger.info(f"Registered custom operation handler: {operation_name}")
+    
+    def _sanitize_command(self, command: str) -> str:
+        """
+        Basic command sanitization to prevent injection.
+        
+        Args:
+            command: Command to sanitize
+        
+        Returns:
+            Sanitized command
+        
+        Raises:
+            ValueError: If command contains dangerous patterns
+        """
+        if self.allow_unsafe:
+            return command
+        
+        if not command or not command.strip():
+            raise ValueError("Command cannot be empty")
+        
+        # Extract command name (first word)
+        cmd_parts = command.strip().split()
+        cmd_name = cmd_parts[0] if cmd_parts else ''
+        
+        # Check if command is in safe list
+        if cmd_name in self.SAFE_COMMANDS:
+            return command
+        
+        # Check for absolute paths to safe commands
+        if '/' in cmd_name:
+            # Extract basename from path
+            basename = cmd_name.split('/')[-1]
+            if basename in self.SAFE_COMMANDS:
+                return command
+        
+        # Block dangerous shell metacharacters
+        dangerous_patterns = [';', '&&', '||', '`', '$', '$(', '${']
+        
+        for pattern in dangerous_patterns:
+            if pattern in command:
+                logger.warning(f"Potentially dangerous command rejected: {command[:50]}...")
+                raise ValueError(
+                    f"Command contains potentially dangerous pattern '{pattern}'. "
+                    f"If this is a legitimate command, add '{cmd_name}' to SAFE_COMMANDS "
+                    f"or initialize ShellExecutor with allow_unsafe_commands=True."
+                )
+        
+        # If we get here, command is not in safe list but has no obvious injection patterns
+        # Log it but allow it
+        logger.info(f"Allowing non-whitelisted but safe-looking command: {cmd_name}")
+        return command
     
     def execute(self, query: str, return_raw: bool = False) -> Tuple[str, Any]:
         """
@@ -100,13 +179,13 @@ class ShellExecutor:
             
         except json.JSONDecodeError as e:
             error_msg = f"[ERROR]\n====\nInvalid JSON query: {str(e)}\n====\n"
-            logger.error(error_msg)
-            error_data = {'error': str(e), 'query': query}
+            logger.error(f"JSON decode error: {e}")
+            error_data = {'error': str(e), 'query': query[:200]}
             return (error_msg, error_data) if return_raw else error_msg
         
         except Exception as e:
             error_msg = f"[ERROR]\n====\nCommand execution failed: {str(e)}\n====\n"
-            logger.error(error_msg, exc_info=True)
+            logger.error(f"Command execution error: {e}", exc_info=True)
             error_data = {'error': str(e)}
             return (error_msg, error_data) if return_raw else error_msg
 
@@ -120,21 +199,35 @@ class ShellExecutor:
         Returns:
             Tuple of (formatted_output, raw_data)
         """
+        # Sanitize command
+        command = self._sanitize_command(command)
+        
         stdout, stderr, exit_code = self.ssh.execute_command(command)
         
         if exit_code != 0 and not stdout:
             raise RuntimeError(f"Command failed with exit code {exit_code}: {stderr}")
         
+        # Safely extract command name
+        cmd_parts = command.strip().split() if command else []
+        cmd_name = cmd_parts[0].lower() if cmd_parts else ''
+        
+        # Handle paths in command name
+        if '/' in cmd_name:
+            cmd_name = cmd_name.split('/')[-1]
+        
         # Commands that legitimately may return no results
-        empty_ok_commands = ['find', 'grep', 'locate', 'ls']
-        is_empty_ok = any(cmd in command.lower().split()[0] for cmd in empty_ok_commands)
+        is_empty_ok = cmd_name in self.EMPTY_OK_COMMANDS
         
         if not stdout or not stdout.strip():
             if is_empty_ok:
                 # Empty result is normal for these commands (e.g., no files found)
-                note_msg = "[NOTE]\n====\nNo results found (this may be normal - e.g., no temporary files exist).\n====\n"
+                note_msg = (
+                    "[NOTE]\n====\n"
+                    "No results found (this may be normal - e.g., no matching files/processes).\n"
+                    "====\n"
+                )
             else:
-                logger.warning(f"Empty output from command: {command}")
+                logger.warning(f"Empty output from command: {command[:50]}...")
                 note_msg = "[NOTE]\n====\nNo output from command.\n====\n"
             
             raw_data = {
@@ -183,7 +276,12 @@ class ShellExecutor:
         parsed_data = parser.parse(command, stdout)
         
         # Format output
-        formatted = self.formatter.format_table(parsed_data) if isinstance(parsed_data, list) else str(parsed_data)
+        if isinstance(parsed_data, list):
+            formatted = self.formatter.format_table(parsed_data)
+        elif isinstance(parsed_data, dict):
+            formatted = self.formatter.format_literal(str(parsed_data))
+        else:
+            formatted = str(parsed_data)
         
         return formatted, parsed_data
     
