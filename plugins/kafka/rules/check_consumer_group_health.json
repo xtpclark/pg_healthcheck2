@@ -1,0 +1,47 @@
+{
+  "unhealthy_consumer_group": {
+    "metric_keywords": ["consumer_group_health", "consumer_groups", "state", "members", "total_lag"],
+    "rules": [
+      {
+        "expression": "data.get('state') != 'Stable'",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Consumer group '{data.get('group_id')}' is in unstable state '{data.get('state')}', which may indicate rebalancing or failures.",
+        "recommendations": [
+          "Check consumer logs for errors and ensure all members are healthy.",
+          "Avoid frequent group membership changes to prevent rebalancing."
+        ]
+      },
+      {
+        "expression": "data.get('members', 0) < 1",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "Consumer group '{data.get('group_id')}' has no active members, leading to stalled consumption.",
+        "recommendations": [
+          "Deploy or restart consumers for this group immediately.",
+          "Monitor for consumer crashes or network issues."
+        ]
+      },
+      {
+        "expression": "data.get('total_lag', 0) > 10000",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "Consumer group '{data.get('group_id')}' has critical total lag of {data.get('total_lag')} messages.",
+        "recommendations": [
+          "Scale up consumers or optimize processing logic.",
+          "Check for bottlenecks in consumer applications."
+        ]
+      },
+      {
+        "expression": "data.get('total_lag', 0) > 1000",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Consumer group '{data.get('group_id')}' has high total lag of {data.get('total_lag')} messages.",
+        "recommendations": [
+          "Monitor consumption rate and adjust resources.",
+          "Review topic production rate vs. consumption capacity."
+        ]
+      }
+    ]
+  }
+}
