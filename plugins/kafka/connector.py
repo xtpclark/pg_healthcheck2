@@ -1,104 +1,53 @@
-import json
-import logging
-from kafka import KafkaConsumer
-from kafka.admin import KafkaAdminClient, ConfigResource, ConfigResourceType
-from kafka.structs import TopicPartition
-from typing import Dict, List, Optional
+"""Kafka connector implementation."""
 
-# Import shared utilities
-from plugins.common import (
-    SSHConnectionManager,
-    ShellExecutor,
-    AsciiDocFormatter,
-    SSHSupportMixin
-)
+import logging
+import json
+from kafka import KafkaAdminClient, KafkaConsumer
+from kafka.admin import NewTopic, ConfigResource, ConfigResourceType
+from plugins.common.ssh_mixin import SSHSupportMixin
+from plugins.common.output_formatters import AsciiDocFormatter
 
 logger = logging.getLogger(__name__)
 
 
 class KafkaConnector(SSHSupportMixin):
-    """
-    Handles all direct communication with Kafka, including Admin API and shell commands.
+    """Connector for Kafka clusters with multi-broker SSH support."""
     
-    This connector provides a unified interface for:
-    1. Kafka Admin API operations (topics, consumer groups, configs, etc.)
-    2. Shell commands (via SSH for OS-level metrics)
-    
-    Query Formats:
-        Admin API:
-            {"operation": "list_topics"}
-            {"operation": "describe_topics", "topics": []}
-            {"operation": "consumer_lag", "group_id": "my-group"}
-            {"operation": "consumer_lag", "group_id": "*"}
-        
-        Shell command:
-            {"operation": "shell", "command": "df -h /var/lib/kafka"}
-    
-    SSH Configuration (optional, for shell commands):
-        - ssh_host: Hostname or IP of Kafka broker
-        - ssh_user: SSH username
-        - ssh_key_file: Path to private key (or ssh_password)
-        - ssh_timeout: Connection timeout in seconds (default: 10)
-    
-    Example:
-        connector = KafkaConnector(settings)
-        connector.connect()
-        
-        # Admin API query
-        result = connector.execute_query('{"operation": "list_topics"}')
-        
-        # Shell command (requires SSH)
-        result = connector.execute_query('{"operation": "shell", "command": "df -h"}')
-    """
-
     def __init__(self, settings):
+        """Initialize Kafka connector."""
         self.settings = settings
         self.admin_client = None
-        self._version_info = None
-        
-        # Initialize formatter (single instance for consistency)
+        self._version_info = {}
         self.formatter = AsciiDocFormatter()
         
-        # Initialize SSH support
-        self.ssh_manager = None
-        self.shell_executor = None
+        # Initialize SSH support (from mixin)
+        self.initialize_ssh()
         
-        # Initialize SSH if configured
-        if settings.get('ssh_host'):
-            try:
-                self.ssh_manager = SSHConnectionManager(settings)
-                # Share formatter with ShellExecutor for consistent output
-                self.shell_executor = ShellExecutor(self.ssh_manager, self.formatter)
-                logger.info("SSH support enabled for Kafka connector")
-            except Exception as e:
-                logger.warning(f"SSH configuration present but invalid: {e}")
-                self.ssh_manager = None
-                self.shell_executor = None
-
+        logger.info(f"Kafka connector initialized")
+    
     def connect(self):
-        """Establishes a connection to the Kafka cluster."""
+        """Establishes connections to Kafka cluster and all SSH hosts."""
         try:
             bootstrap_servers = self.settings.get('bootstrap_servers', ['localhost:9092'])
-    
+
             # Handle both list and string formats
             if isinstance(bootstrap_servers, str):
                 bootstrap_servers = [s.strip() for s in bootstrap_servers.split(',')]
-    
+
             self.admin_client = KafkaAdminClient(
                 bootstrap_servers=bootstrap_servers,
                 client_id='healthcheck_client',
                 request_timeout_ms=30000
             )
-    
+
             self._version_info = self._get_version_info()
             
-            # Connect SSH if configured
-            if self.ssh_manager:
-                try:
-                    self.ssh_manager.connect()
-                    logger.info("SSH connection established")
-                except Exception as e:
-                    logger.warning(f"SSH connection failed: {e}")
+            # Connect all SSH hosts (from mixin)
+            connected_ssh_hosts = self.connect_all_ssh()
+            
+            # Map SSH hosts to broker IDs
+            if connected_ssh_hosts:
+                self._map_ssh_hosts_to_brokers()
             
             # Display connection status
             print("✅ Successfully connected to Kafka cluster")
@@ -111,13 +60,13 @@ class KafkaConnector(SSHSupportMixin):
                 brokers = list(cluster.brokers())
                 broker_count = len(brokers)
                 
-                # Get cluster ID - it's a property, not a method
+                # Get cluster ID
                 try:
                     cluster_id = cluster.cluster_id if hasattr(cluster, 'cluster_id') else 'Unknown'
                 except:
                     cluster_id = 'Unknown'
                 
-                # Get controller info - handle both property and method
+                # Get controller info
                 try:
                     controller = cluster.controller
                     if callable(controller):
@@ -130,13 +79,11 @@ class KafkaConnector(SSHSupportMixin):
                 print(f"   - Brokers: {broker_count}")
                 if controller_id != -1:
                     print(f"   - Controller: Broker {controller_id}")
-                else:
-                    print(f"   - Controller: Unknown")
                 
                 # Show broker addresses
                 if broker_count > 0:
                     print(f"   - Broker Addresses:")
-                    for broker in brokers[:5]:  # Limit to first 5
+                    for broker in brokers[:5]:
                         try:
                             broker_id = broker.nodeId if hasattr(broker, 'nodeId') else broker.id
                             print(f"      • {broker.host}:{broker.port} (ID: {broker_id})")
@@ -145,46 +92,51 @@ class KafkaConnector(SSHSupportMixin):
                     if broker_count > 5:
                         print(f"      ... and {broker_count - 5} more")
                 
-                # SSH status
-                if self.ssh_manager:
-                    ssh_host = self.settings.get('ssh_host')
-                    print(f"   - SSH: Connected to {ssh_host}")
+                # SSH status (from mixin)
+                if self.has_ssh_support():
+                    print(f"   - SSH: Connected to {len(connected_ssh_hosts)}/{len(self.get_ssh_hosts())} host(s)")
+                    for ssh_host in connected_ssh_hosts:
+                        broker_id = self.ssh_host_to_node.get(ssh_host, '?')
+                        print(f"      • {ssh_host} (Broker {broker_id})")
                 else:
                     print(f"   - SSH: Not configured (OS-level checks unavailable)")
                     
             except Exception as e:
                 logger.warning(f"Could not retrieve detailed cluster info: {e}")
-                print(f"   - Version: {self._version_info.get('version_string', 'Unknown')}")
-                print(f"   - Brokers: {self._version_info.get('broker_count', 0)}")
-                if self.ssh_manager:
-                    print(f"   - SSH: Connected to {self.settings.get('ssh_host')}")
-                else:
-                    print(f"   - SSH: Not configured")
             
             logger.info("✅ Connected to Kafka cluster")
             
         except Exception as e:
             logger.error(f"Failed to connect to Kafka: {e}")
             raise ConnectionError(f"Could not connect to Kafka: {e}")
-        
+    
     def disconnect(self):
-        """Closes all connections."""
+        """Closes connections to Kafka and all SSH hosts."""
         if self.admin_client:
-            try:
-                self.admin_client.close()
-                logger.info("Disconnected from Kafka")
-            except Exception as e:
-                logger.warning(f"Error during disconnect: {e}")
-            finally:
-                self.admin_client = None
+            self.admin_client.close()
+            logger.info("Disconnected from Kafka cluster")
         
-        # Disconnect SSH if connected
-        if self.ssh_manager:
-            try:
-                self.ssh_manager.disconnect()
-                logger.info("SSH connection closed")
-            except Exception as e:
-                logger.warning(f"Error closing SSH connection: {e}")
+        # Disconnect all SSH (from mixin)
+        self.disconnect_all_ssh()
+    
+    def _map_ssh_hosts_to_brokers(self):
+        """Kafka-specific logic to map SSH hosts to broker IDs."""
+        try:
+            cluster = self.admin_client._client.cluster
+            cluster.request_update()
+            
+            # Build host-to-broker mapping
+            host_node_mapping = {}
+            for broker in cluster.brokers():
+                broker_id = broker.nodeId if hasattr(broker, 'nodeId') else broker.id
+                broker_host = broker.host
+                host_node_mapping[broker_host] = broker_id
+            
+            # Use mixin's mapping method
+            self.map_ssh_hosts_to_nodes(host_node_mapping)
+                    
+        except Exception as e:
+            logger.warning(f"Could not map SSH hosts to broker IDs: {e}")
 
     def close(self):
         """Alias for disconnect()."""

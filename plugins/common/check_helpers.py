@@ -11,52 +11,67 @@ from typing import Tuple, Dict, Any, Optional, List, Union
 logger = logging.getLogger(__name__)
 
 
-def require_ssh(connector: Any, operation_name: Optional[str] = None) -> Tuple[bool, str, Dict]:
+
+def require_ssh(connector, operation_name):
     """
-    Check if SSH is available and return appropriate response if not.
+    Check if SSH is available for the connector.
+    
+    Works with both old (single ssh_manager) and new (multi-host mixin) patterns.
     
     Args:
-        connector: Database connector with SSHSupportMixin
-        operation_name: Optional description of what SSH is needed for
+        connector: The database connector instance
+        operation_name: Human-readable name of the operation requiring SSH
     
     Returns:
-        tuple: (ssh_available: bool, skip_message: str, skip_data: dict)
-        
+        tuple: (available: bool, skip_message: str, skip_data: dict)
+            - If SSH is available: (True, None, None)
+            - If SSH is not available: (False, adoc_skip_message, structured_data)
+    
     Example:
-        ssh_ok, skip_msg, skip_data = require_ssh(connector, "nodetool commands")
-        if not ssh_ok:
+        available, skip_msg, skip_data = require_ssh(connector, "disk usage check")
+        if not available:
             return skip_msg, skip_data
-        # Continue with check...
+        
+        # Proceed with SSH operations...
     """
-    if hasattr(connector, 'has_ssh_support') and connector.has_ssh_support():
-        return True, "", {}
+    # NEW PATTERN: Check if connector uses SSHSupportMixin
+    if hasattr(connector, 'has_ssh_support') and callable(connector.has_ssh_support):
+        if not connector.has_ssh_support():
+            # Use mixin's skip message method if available
+            if hasattr(connector, 'get_ssh_skip_message'):
+                return (False,) + connector.get_ssh_skip_message(operation_name)
+            else:
+                # Fallback message
+                skip_msg = (
+                    f"[IMPORTANT]\n"
+                    f"====\n"
+                    f"{operation_name} requires SSH access, which is not configured.\n"
+                    f"====\n"
+                )
+                skip_data = {"status": "skipped", "reason": "SSH not configured"}
+                return False, skip_msg, skip_data
+        
+        # SSH is available
+        return True, None, None
     
-    # SSH not available
-    if hasattr(connector, 'get_ssh_skip_message'):
-        skip_msg, skip_data = connector.get_ssh_skip_message(operation_name)
-    else:
-        # Fallback if connector doesn't have the mixin
-        op_text = f" for {operation_name}" if operation_name else ""
+    # OLD PATTERN: Check for single ssh_manager (backward compatibility)
+    if not hasattr(connector, 'ssh_manager') or connector.ssh_manager is None:
         skip_msg = (
-            "[IMPORTANT]\n"
-            "====\n"
-            f"This check requires SSH access{op_text}.\n\n"
-            "Configure the following in your settings:\n\n"
-            "* `ssh_host`: Hostname or IP address of the database server\n"
-            "* `ssh_user`: SSH username\n"
-            "* `ssh_key_file` OR `ssh_password`: Authentication method\n\n"
-            "Optional:\n\n"
-            "* `ssh_port`: SSH port (default: 22)\n"
-            "* `ssh_timeout`: Connection timeout in seconds (default: 10)\n"
-            "====\n"
+            f"[IMPORTANT]\n"
+            f"====\n"
+            f"{operation_name} requires SSH access, which is not configured.\n\n"
+            f"Configure the following in your settings:\n\n"
+            f"* `ssh_host`: Hostname or IP address\n"
+            f"* `ssh_user`: SSH username\n"
+            f"* `ssh_key_file` OR `ssh_password`: Authentication method\n"
+            f"====\n"
         )
-        skip_data = {
-            "status": "skipped",
-            "reason": "SSH not configured",
-            "required_settings": ["ssh_host", "ssh_user", "ssh_key_file or ssh_password"]
-        }
+        skip_data = {"status": "skipped", "reason": "SSH not configured"}
+        return False, skip_msg, skip_data
     
-    return False, skip_msg, skip_data
+    # Old pattern SSH is available
+    return True, None, None
+
 
 
 def require_aws(connector: Any, operation_name: Optional[str] = None) -> Tuple[bool, str, Dict]:
