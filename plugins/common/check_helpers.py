@@ -490,3 +490,627 @@ def format_bytes(bytes_value: int, decimal_places: int = 2) -> str:
         unit_index += 1
     
     return f"{value:.{decimal_places}f} {units[unit_index]}"
+
+
+# ============================================================================
+# CheckContentBuilder - Optional builder for cleaner check code
+# ============================================================================
+# BACKWARD COMPATIBILITY GUARANTEE:
+# - This is purely additive - all existing checks continue to work unchanged
+# - All existing helper functions remain unchanged and fully supported
+# - Opt-in only - no migration required
+# ============================================================================
+
+
+class CheckContentBuilder:
+    """
+    Optional builder for constructing check AsciiDoc content with minimal typing.
+    
+    Reduces boilerplate in check modules by providing fluent methods for common
+    patterns. Integrates seamlessly with existing helpers.
+    
+    BACKWARD COMPATIBILITY:
+    - Purely additive - existing checks work unchanged
+    - Opt-in only - use for new checks or when refactoring
+    - Works with all existing helpers (format_check_header, safe_execute_query, etc.)
+    
+    Quick Example:
+        builder = CheckContentBuilder(connector.formatter)
+        builder.h3("Disk Usage Check")
+        builder.para("Checking disk usage across all brokers...")
+        
+        if critical:
+            builder.critical("Broker 1 at 95% capacity!")
+        
+        builder.h4("Summary")
+        builder.table(disk_data)
+        builder.recs(["Increase disk space", "Enable log cleanup"])
+        
+        return builder.build(), structured_data
+    
+    Advanced Example:
+        # Mix with existing helpers
+        builder.add_header("Schema Check", "Description", requires_ssh=True)
+        
+        success, formatted, raw = safe_execute_query(...)
+        builder.add(formatted)  # Add pre-formatted content
+        
+        if not success:
+            return builder.build(), structured_data
+        
+        builder.critical_block(
+            "Schema Inconsistency",
+            ["Version mismatch detected", "3 nodes out of sync"]
+        )
+    """
+    
+    def __init__(self, formatter=None):
+        """
+        Initialize builder.
+        
+        Args:
+            formatter: Optional AsciiDocFormatter instance (for table formatting)
+        """
+        self._lines = []
+        self._formatter = formatter
+    
+    # ========================================================================
+    # Core Methods - Accept pre-formatted content
+    # ========================================================================
+    
+    def add(self, content):
+        """
+        Add pre-formatted content (from connectors, existing helpers, etc.).
+        
+        Args:
+            content: String or list of strings to add
+        
+        Returns:
+            self (for chaining)
+        
+        Example:
+            success, formatted, raw = safe_execute_query(...)
+            builder.add(formatted)
+        """
+        if content:
+            if isinstance(content, list):
+                self._lines.extend(content)
+            else:
+                self._lines.append(str(content))
+        return self
+    
+    def add_lines(self, lines):
+        """
+        Add multiple lines from existing helpers.
+        
+        Args:
+            lines: List of strings
+        
+        Returns:
+            self (for chaining)
+        
+        Example:
+            header = format_check_header("Title", "Desc")
+            builder.add_lines(header)
+        """
+        if lines:
+            if isinstance(lines, list):
+                self._lines.extend(lines)
+            else:
+                self._lines.append(str(lines))
+        return self
+    
+    def blank(self):
+        """Add blank line for spacing."""
+        self._lines.append("")
+        return self
+    
+    # ========================================================================
+    # Headers - Minimal typing
+    # ========================================================================
+    
+    def h3(self, text):
+        """
+        Add level 3 header (===).
+        
+        Args:
+            text: Header text
+        
+        Returns:
+            self (for chaining)
+        """
+        self._lines.append(f"=== {text}")
+        self._lines.append("")
+        return self
+    
+    def h4(self, text):
+        """
+        Add level 4 header (====).
+        
+        Args:
+            text: Header text
+        
+        Returns:
+            self (for chaining)
+        """
+        self._lines.append(f"==== {text}")
+        self._lines.append("")
+        return self
+    
+    def add_header(self, check_name, description, 
+                   requires_ssh=False, requires_aws=False,
+                   requires_azure=False, requires_instaclustr=False):
+        """
+        Add standard check header using existing format_check_header().
+        
+        Args:
+            check_name: Name of the check
+            description: Description text
+            requires_ssh: SSH requirement flag
+            requires_aws: AWS requirement flag
+            requires_azure: Azure requirement flag
+            requires_instaclustr: Instaclustr requirement flag
+        
+        Returns:
+            self (for chaining)
+        
+        Example:
+            builder.add_header("Disk Check", "Monitors disk usage", requires_ssh=True)
+        """
+        header_lines = format_check_header(
+            check_name, description,
+            requires_ssh=requires_ssh,
+            requires_aws=requires_aws,
+            requires_azure=requires_azure,
+            requires_instaclustr=requires_instaclustr
+        )
+        self._lines.extend(header_lines)
+        return self
+    
+    # ========================================================================
+    # Text Content
+    # ========================================================================
+    
+    def para(self, text):
+        """
+        Add paragraph text with trailing blank line.
+        
+        Args:
+            text: Paragraph text
+        
+        Returns:
+            self (for chaining)
+        """
+        if text:
+            self._lines.append(str(text))
+            self._lines.append("")
+        return self
+    
+    def text(self, text):
+        """
+        Add text without trailing blank line.
+        
+        Args:
+            text: Text to add
+        
+        Returns:
+            self (for chaining)
+        """
+        if text:
+            self._lines.append(str(text))
+        return self
+    
+    # ========================================================================
+    # Admonition Blocks - Super short names
+    # ========================================================================
+    
+    def note(self, message):
+        """
+        Add NOTE admonition block.
+        
+        Args:
+            message: Note message
+        
+        Returns:
+            self (for chaining)
+        """
+        self._lines.append("[NOTE]")
+        self._lines.append("====")
+        self._lines.append(str(message))
+        self._lines.append("====")
+        self._lines.append("")
+        return self
+    
+    def tip(self, message):
+        """
+        Add TIP admonition block.
+        
+        Args:
+            message: Tip message
+        
+        Returns:
+            self (for chaining)
+        """
+        self._lines.append("[TIP]")
+        self._lines.append("====")
+        self._lines.append(str(message))
+        self._lines.append("====")
+        self._lines.append("")
+        return self
+    
+    def warning(self, message):
+        """
+        Add WARNING admonition block.
+        
+        Args:
+            message: Warning message
+        
+        Returns:
+            self (for chaining)
+        """
+        self._lines.append("[WARNING]")
+        self._lines.append("====")
+        self._lines.append(str(message))
+        self._lines.append("====")
+        self._lines.append("")
+        return self
+    
+    def critical(self, message):
+        """
+        Add IMPORTANT/CRITICAL admonition block.
+        
+        Args:
+            message: Critical message
+        
+        Returns:
+            self (for chaining)
+        """
+        self._lines.append("[IMPORTANT]")
+        self._lines.append("====")
+        self._lines.append(str(message))
+        self._lines.append("====")
+        self._lines.append("")
+        return self
+    
+    def error(self, message):
+        """
+        Add CAUTION/ERROR admonition block.
+        
+        Args:
+            message: Error message
+        
+        Returns:
+            self (for chaining)
+        """
+        self._lines.append("[CAUTION]")
+        self._lines.append("====")
+        self._lines.append(str(message))
+        self._lines.append("====")
+        self._lines.append("")
+        return self
+    
+    # ========================================================================
+    # Structured Admonition Blocks - For detailed issues
+    # ========================================================================
+    
+    def issue(self, title, details, level="IMPORTANT"):
+        """
+        Add structured issue block with title and key-value details.
+        
+        Args:
+            title: Issue title (bold)
+            details: Dict of key-value pairs or list of strings
+            level: Admonition level (IMPORTANT, WARNING, CAUTION, NOTE)
+        
+        Returns:
+            self (for chaining)
+        
+        Example:
+            builder.issue(
+                "Critical Heap Usage",
+                {
+                    "Broker": "1 (192.168.1.113)",
+                    "Heap": "95.3% (threshold: 90%)",
+                    "Status": "CRITICAL"
+                }
+            )
+        """
+        self._lines.append(f"[{level}]")
+        self._lines.append("====")
+        self._lines.append(f"**{title}**")
+        self._lines.append("")
+        
+        if isinstance(details, dict):
+            for key, value in details.items():
+                self._lines.append(f"* **{key}:** {value}")
+        elif isinstance(details, list):
+            for item in details:
+                if not item.startswith('*'):
+                    item = f"* {item}"
+                self._lines.append(item)
+        else:
+            self._lines.append(str(details))
+        
+        self._lines.append("====")
+        self._lines.append("")
+        return self
+    
+    def critical_issue(self, title, details):
+        """Shortcut for critical issue (IMPORTANT level)."""
+        return self.issue(title, details, "IMPORTANT")
+    
+    def warning_issue(self, title, details):
+        """Shortcut for warning issue (WARNING level)."""
+        return self.issue(title, details, "WARNING")
+    
+    # ========================================================================
+    # Tables - Use existing formatter
+    # ========================================================================
+    
+    def table(self, data):
+        """
+        Add table from list of dicts using AsciiDocFormatter.
+        
+        Args:
+            data: List of dictionaries (keys are column headers)
+        
+        Returns:
+            self (for chaining)
+        
+        Example:
+            builder.table([
+                {"Broker": 1, "Usage": "95%", "Status": "CRITICAL"},
+                {"Broker": 2, "Usage": "65%", "Status": "OK"}
+            ])
+        """
+        if self._formatter:
+            table_str = self._formatter.format_table(data)
+            self._lines.append(table_str)
+            self._lines.append("")
+        else:
+            # Fallback: basic table
+            if data and len(data) > 0:
+                headers = list(data[0].keys())
+                self._lines.append("|===")
+                self._lines.append("|" + "|".join(headers))
+                for row in data:
+                    values = [str(row.get(h, "")) for h in headers]
+                    self._lines.append("|" + "|".join(values))
+                self._lines.append("|===")
+                self._lines.append("")
+        return self
+    
+    def dict_table(self, data, key_header="Key", value_header="Value"):
+        """
+        Add two-column table from dictionary.
+        
+        Args:
+            data: Dictionary to display
+            key_header: Header for key column
+            value_header: Header for value column
+        
+        Returns:
+            self (for chaining)
+        """
+        if self._formatter:
+            table_str = self._formatter.format_dict_as_table(data, key_header, value_header)
+            self._lines.append(table_str)
+            self._lines.append("")
+        else:
+            # Fallback
+            self._lines.append("|===")
+            self._lines.append(f"|{key_header}|{value_header}")
+            for k, v in data.items():
+                self._lines.append(f"|{k}|{v}")
+            self._lines.append("|===")
+            self._lines.append("")
+        return self
+    
+    def table_with_indicators(self, headers, rows, indicator_col=None, 
+                             warning_threshold=None, critical_threshold=None):
+        """
+        Add table with status indicators (🔴/⚠️) based on thresholds.
+        
+        Args:
+            headers: List of column header strings
+            rows: List of row data (each row is a list matching headers)
+            indicator_col: Index of column to add indicators to (optional)
+            warning_threshold: Value for warning indicator
+            critical_threshold: Value for critical indicator
+        
+        Returns:
+            self (for chaining)
+        
+        Example:
+            builder.table_with_indicators(
+                headers=["Broker", "Usage %"],
+                rows=[[1, 95], [2, 65], [3, 78]],
+                indicator_col=1,
+                warning_threshold=70,
+                critical_threshold=90
+            )
+        """
+        self._lines.append("|===")
+        self._lines.append("|" + "|".join(headers))
+        
+        for row in rows:
+            # Add indicators if specified
+            if indicator_col is not None and warning_threshold is not None:
+                value = row[indicator_col]
+                indicator = ""
+                if critical_threshold and value >= critical_threshold:
+                    indicator = "🔴 "
+                elif value >= warning_threshold:
+                    indicator = "⚠️ "
+                
+                # Insert indicator
+                row_copy = list(row)
+                row_copy[indicator_col] = f"{indicator}{value}"
+                self._lines.append("|" + "|".join(str(x) for x in row_copy))
+            else:
+                self._lines.append("|" + "|".join(str(x) for x in row))
+        
+        self._lines.append("|===")
+        self._lines.append("")
+        return self
+    
+    # ========================================================================
+    # Recommendations - Minimal typing
+    # ========================================================================
+    
+    def recs(self, recommendations, title="Recommendations"):
+        """
+        Add recommendations section (ultra-short alias).
+        
+        Args:
+            recommendations: List of recommendation strings or dict with priorities
+            title: Section title (default: "Recommendations")
+        
+        Returns:
+            self (for chaining)
+        
+        Simple Example:
+            builder.recs([
+                "Increase heap size",
+                "Enable GC logging"
+            ])
+        
+        Structured Example:
+            builder.recs({
+                "critical": ["Immediate action needed", "Fix now"],
+                "high": ["Plan optimization"],
+                "general": ["Best practices"]
+            })
+        """
+        if not recommendations:
+            return self
+        
+        self._lines.append(f"==== {title}")
+        self._lines.append("")
+        self._lines.append("[TIP]")
+        self._lines.append("====")
+        
+        if isinstance(recommendations, dict):
+            # Structured recommendations by priority
+            if "critical" in recommendations and recommendations["critical"]:
+                self._lines.append("**🔴 Critical Priority (Immediate Action):**")
+                self._lines.append("")
+                for rec in recommendations["critical"]:
+                    if not rec.startswith('*'):
+                        rec = f"* {rec}"
+                    self._lines.append(rec)
+                self._lines.append("")
+            
+            if "high" in recommendations and recommendations["high"]:
+                self._lines.append("**⚠️ High Priority (Plan Optimization):**")
+                self._lines.append("")
+                for rec in recommendations["high"]:
+                    if not rec.startswith('*'):
+                        rec = f"* {rec}"
+                    self._lines.append(rec)
+                self._lines.append("")
+            
+            if "general" in recommendations and recommendations["general"]:
+                self._lines.append("**📋 General Best Practices:**")
+                self._lines.append("")
+                for rec in recommendations["general"]:
+                    if not rec.startswith('*'):
+                        rec = f"* {rec}"
+                    self._lines.append(rec)
+        
+        elif isinstance(recommendations, list):
+            # Simple list of recommendations
+            for rec in recommendations:
+                if not rec.startswith('*'):
+                    rec = f"* {rec}"
+                self._lines.append(rec)
+        
+        self._lines.append("====")
+        self._lines.append("")
+        return self
+    
+    def recommendations(self, recommendations, title="Recommendations"):
+        """Alias for recs() with full name for clarity."""
+        return self.recs(recommendations, title)
+    
+    # ========================================================================
+    # Literal/Code Blocks
+    # ========================================================================
+    
+    def literal(self, text, language="text"):
+        """
+        Add literal/code block.
+        
+        Args:
+            text: Literal text content
+            language: Source language for syntax highlighting (default: text)
+        
+        Returns:
+            self (for chaining)
+        """
+        self._lines.append(f"[source,{language}]")
+        self._lines.append("----")
+        self._lines.append(str(text))
+        self._lines.append("----")
+        self._lines.append("")
+        return self
+    
+    def code(self, code, language="bash"):
+        """
+        Add code block (alias for literal with bash default).
+        
+        Args:
+            code: Code content
+            language: Programming language (default: bash)
+        
+        Returns:
+            self (for chaining)
+        """
+        return self.literal(code, language)
+    
+    # ========================================================================
+    # Quick Status Messages
+    # ========================================================================
+    
+    def success(self, message="✅ All checks passed. No issues detected."):
+        """Add success note with checkmark."""
+        return self.note(message)
+    
+    def skip(self, reason):
+        """Add skip message."""
+        return self.note(f"Check skipped: {reason}")
+    
+    # ========================================================================
+    # Build Final Output
+    # ========================================================================
+    
+    def build(self):
+        """
+        Build final AsciiDoc string.
+        
+        Returns:
+            String with proper line joining
+        """
+        return "\n".join(self._lines)
+    
+    # ========================================================================
+    # Convenience: Full section patterns
+    # ========================================================================
+    
+    def summary_section(self, title, data, status_message=None):
+        """
+        Add complete summary section with table.
+        
+        Args:
+            title: Section title
+            data: Table data (list of dicts)
+            status_message: Optional status note to add after table
+        
+        Returns:
+            self (for chaining)
+        """
+        self.h4(title)
+        self.table(data)
+        if status_message:
+            self.note(status_message)
+        return self

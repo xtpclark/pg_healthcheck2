@@ -604,6 +604,47 @@ class KafkaConnector(SSHSupportMixin):
             return (error_msg, {'error': str(e)}) if return_raw else error_msg
 
     def _get_cluster_metadata(self, return_raw=False):
+            """Gets cluster-wide metadata."""
+            try:
+                cluster = self.admin_client._client.cluster
+                cluster.request_update()
+                
+                brokers = []
+                for broker in cluster.brokers():
+                    brokers.append({
+                        'id': broker.nodeId if hasattr(broker, 'nodeId') else broker.id,
+                        'host': broker.host,
+                        'port': broker.port
+                    })
+                
+                # Get controller - it's an object, not a method
+                controller = cluster.controller
+                controller_id = controller.nodeId if hasattr(controller, 'nodeId') else controller.id
+                
+                # Get cluster_id - it's a property, not a method
+                cluster_id = cluster.cluster_id if hasattr(cluster, 'cluster_id') else 'Unknown'
+                
+                raw = {
+                    'cluster_id': cluster_id,
+                    'controller_id': controller_id,
+                    'brokers': brokers
+                }
+                
+                formatted = f"Cluster ID: {raw['cluster_id']}\n"
+                formatted += f"Controller: {raw['controller_id']}\n\n"
+                formatted += "Brokers:\n"
+                formatted += self.formatter.format_table(brokers)
+                
+                return (formatted, raw) if return_raw else formatted
+                
+            except Exception as e:
+                error_msg = self.formatter.format_error(f"Failed to get cluster metadata: {e}")
+                return (error_msg, {'error': str(e)}) if return_raw else error_msg
+
+
+
+
+    def _old_get_cluster_metadata(self, return_raw=False):
         """Gets cluster-wide metadata."""
         try:
             cluster = self.admin_client._client.cluster

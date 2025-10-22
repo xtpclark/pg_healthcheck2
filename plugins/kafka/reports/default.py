@@ -1,18 +1,12 @@
 REPORT_SECTIONS = [
     {
-        "title": "Default Section",
+        "title": "Kafka Health Check",
         "actions": []
     },
     {
         "title": "Kafka Cluster Health",
         "actions": [
-            {'type': 'module', 'module': 'plugins.kafka.checks.under_replicated_partitions', 'function': 'run_under_replicated_partitions'},
             {'type': 'module', 'module': 'plugins.kafka.checks.check_partition_balance', 'function': 'run_partition_balance'},
-        ]
-    },
-    {
-        "title": "Topic Configurations",
-        "actions": [
         ]
     },
     {
@@ -24,6 +18,8 @@ REPORT_SECTIONS = [
     {
         "title": "Performance Monitoring",
         "actions": [
+            {'type': 'module', 'module': 'plugins.kafka.checks.check_iostat', 'function': 'run_check_iostat'},
+            {'type': 'module', 'module': 'plugins.kafka.checks.check_jvm_stats', 'function': 'run_check_jvm_stats'},
         ]
     },
     {
@@ -36,6 +32,7 @@ REPORT_SECTIONS = [
         'title': 'Kafka Storage Health',
         'actions': [
             {'type': 'module', 'module': 'plugins.kafka.checks.check_storage_health', 'function': 'run_check_storage_health'},
+            {'type': 'module', 'module': 'plugins.kafka.checks.check_disk_usage', 'function': 'run_check_disk_usage'},
         ]
     },
     {
@@ -52,13 +49,7 @@ REPORT_SECTIONS = [
         ]
     },
     {
-        'title': '[Consumer Group Health]',
-        'actions': [
-            {'type': 'module', 'module': 'plugins.kafka.checks.down_members', 'function': 'run_down_members'},
-        ]
-    },
-    {
-        'title': '[Consumer Health]',
+        'title': 'Consumer Health',
         'actions': [
             {'type': 'module', 'module': 'plugins.kafka.checks.check_consumer_lag', 'function': 'run_consumer_lag'},
         ]

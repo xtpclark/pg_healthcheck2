@@ -42,9 +42,9 @@ REPORT_SECTIONS = [
         ]
     },
     {
-        'title': 'Data Durability',
+        'title': 'Hardware',
         'actions': [
-
+             {'type': 'module', 'module': 'plugins.cassandra.checks.check_disk_usage', 'function': 'run_check_disk_usage'},       
         ]
     },
     {
