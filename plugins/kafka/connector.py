@@ -95,9 +95,18 @@ class KafkaConnector(SSHSupportMixin):
                 # SSH status (from mixin)
                 if self.has_ssh_support():
                     print(f"   - SSH: Connected to {len(connected_ssh_hosts)}/{len(self.get_ssh_hosts())} host(s)")
+                    unmapped_hosts = []
                     for ssh_host in connected_ssh_hosts:
-                        broker_id = self.ssh_host_to_node.get(ssh_host, '?')
-                        print(f"      • {ssh_host} (Broker {broker_id})")
+                        broker_id = self.ssh_host_to_node.get(ssh_host)
+                        if broker_id is not None:
+                            print(f"      • {ssh_host} (Broker {broker_id})")
+                        else:
+                            print(f"      • {ssh_host} (⚠️  Not recognized as cluster broker)")
+                            unmapped_hosts.append(ssh_host)
+
+                    if unmapped_hosts:
+                        print(f"   ⚠️  WARNING: {len(unmapped_hosts)} SSH host(s) are not recognized as cluster brokers!")
+                        print(f"      This may indicate brokers that are down or not part of the cluster.")
                 else:
                     print(f"   - SSH: Not configured (OS-level checks unavailable)")
                     

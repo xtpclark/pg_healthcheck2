@@ -261,12 +261,15 @@ def run_check_jvm_stats(connector, settings):
         command = """
 # Find Cassandra Java process
 CASSANDRA_PID=$(ps aux | grep -i cassandra | grep java | grep -v grep | awk '{print $2}' | head -1)
-# CASSANDRA_USER=$(ps aux | grep -i cassandra | grep java | grep -v grep | awk '{print $1}' | head -1)
-CASSANDRA_USER=cassandra
+CASSANDRA_USER=$(ps aux | grep -i cassandra | grep java | grep -v grep | awk '{print $1}' | head -1)
 
 if [ -z "$CASSANDRA_PID" ]; then
     echo "ERROR: Cassandra process not found"
     exit 1
+fi
+
+if [ -z "$CASSANDRA_USER" ]; then
+    CASSANDRA_USER=cassandra
 fi
 
 echo "CASSANDRA_PID=$CASSANDRA_PID"
@@ -275,17 +278,17 @@ echo "CASSANDRA_USER=$CASSANDRA_USER"
 # Get GC stats (run as Cassandra user if not already that user)
 echo "=== GC_STATS ==="
 if [ "$(whoami)" = "$CASSANDRA_USER" ]; then
-    jstat -gc $CASSANDRA_PID
+    jstat -gc $CASSANDRA_PID 2>&1
 else
-    sudo -u $CASSANDRA_USER jstat -gc $CASSANDRA_PID
+    sudo -u $CASSANDRA_USER jstat -gc $CASSANDRA_PID 2>&1
 fi
 
 # Get GC summary
 echo "=== GC_UTIL ==="
 if [ "$(whoami)" = "$CASSANDRA_USER" ]; then
-    jstat -gcutil $CASSANDRA_PID
+    jstat -gcutil $CASSANDRA_PID 2>&1
 else
-    sudo -u $CASSANDRA_USER jstat -gcutil $CASSANDRA_PID
+    sudo -u $CASSANDRA_USER jstat -gcutil $CASSANDRA_PID 2>&1
 fi
 
 """

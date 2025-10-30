@@ -136,9 +136,18 @@ class CassandraConnector(SSHSupportMixin):
                 # SSH status (from mixin)
                 if self.has_ssh_support():
                     print(f"   - SSH: Connected to {len(connected_ssh_hosts)}/{len(self.get_ssh_hosts())} host(s)")
+                    unmapped_hosts = []
                     for ssh_host in connected_ssh_hosts:
-                        node_id = self.ssh_host_to_node.get(ssh_host, '?')
-                        print(f"      • {ssh_host} (Node: {node_id})")
+                        node_id = self.ssh_host_to_node.get(ssh_host)
+                        if node_id:
+                            print(f"      • {ssh_host} (Node: {node_id})")
+                        else:
+                            print(f"      • {ssh_host} (⚠️  Not in cluster membership)")
+                            unmapped_hosts.append(ssh_host)
+
+                    if unmapped_hosts:
+                        print(f"   ⚠️  WARNING: {len(unmapped_hosts)} SSH host(s) are not recognized as cluster members!")
+                        print(f"      This may indicate nodes that are down or not fully joined to the cluster.")
                 else:
                     print(f"   - SSH: Not configured (nodetool checks unavailable)")
                     
@@ -192,44 +201,63 @@ class CassandraConnector(SSHSupportMixin):
 
     def _discover_nodes(self):
         """
-        Discover all nodes in the cluster from system tables.
-        
+        Discover all nodes in the cluster using the driver's metadata API.
+
+        This is more reliable than querying system tables because the driver
+        round-robins queries across contact points, which can lead to
+        inconsistent results when querying system.local and system.peers_v2.
+
         Returns:
             list[str]: List of node IP addresses in the cluster
         """
         nodes = []
-        
-        try:
-            # Get local node
-            local = self.session.execute("SELECT broadcast_address, listen_address FROM system.local")
-            local_row = list(local)
-            if local_row:
-                local_addr = (
-                    local_row[0].get('broadcast_address') or 
-                    local_row[0].get('listen_address')
-                )
-                if local_addr:
-                    nodes.append(str(local_addr))
-            
-            # Get peer nodes (use peers_v2 for Cassandra 4.x+)
-            if self.version_info.get('major_version', 0) >= 4:
-                peers = self.session.execute("SELECT peer FROM system.peers_v2")
-            else:
-                peers = self.session.execute("SELECT peer FROM system.peers")
-            
-            for peer in peers:
-                peer_addr = peer.get('peer')
-                if peer_addr:
-                    nodes.append(str(peer_addr))
 
-            # Remove duplicates while preserving order
-            nodes = list(dict.fromkeys(nodes))
-                    
-            logger.info(f"Discovered {len(nodes)} nodes in cluster: {nodes}")
-            
+        try:
+            # Use Cassandra driver's cluster metadata (more reliable than system tables)
+            # The metadata is already populated when we connect
+            if self.cluster and self.cluster.metadata:
+                all_hosts = self.cluster.metadata.all_hosts()
+                for host in all_hosts:
+                    # host.address is the broadcast_address or rpc_address
+                    nodes.append(str(host.address))
+
+                logger.info(f"Discovered {len(nodes)} nodes via cluster metadata: {nodes}")
+            else:
+                logger.warning("Cluster metadata not available, falling back to system tables")
+
+                # Fallback to system tables (less reliable due to round-robin)
+                local = self.session.execute("SELECT broadcast_address, listen_address FROM system.local")
+                local_row = list(local)
+
+                if local_row:
+                    local_addr = (
+                        local_row[0].get('broadcast_address') or
+                        local_row[0].get('listen_address')
+                    )
+                    if local_addr:
+                        nodes.append(str(local_addr))
+
+                # Get peer nodes
+                major_version = self.version_info.get('major_version', 0)
+                if major_version >= 4:
+                    peers = self.session.execute("SELECT peer FROM system.peers_v2")
+                else:
+                    peers = self.session.execute("SELECT peer FROM system.peers")
+
+                for peer in list(peers):
+                    peer_addr = peer.get('peer')
+                    if peer_addr:
+                        nodes.append(str(peer_addr))
+
+                # Remove duplicates
+                nodes = list(dict.fromkeys(nodes))
+                logger.info(f"Discovered {len(nodes)} nodes via system tables: {nodes}")
+
         except Exception as e:
             logger.error(f"Failed to discover cluster nodes: {e}")
-        
+            import traceback
+            logger.error(traceback.format_exc())
+
         return nodes
 
     def _get_version_info(self):

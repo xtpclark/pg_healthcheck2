@@ -1,8 +1,12 @@
 import json
 
 def get_describe_log_dirs_query(connector):
-    """Returns a JSON query to describe log directories for all brokers."""
+    """
+    Returns a nodetool command to get Cassandra data directories.
+
+    For Cassandra, we use 'nodetool info' which shows data file locations.
+    """
     return json.dumps({
-        "operation": "describe_log_dirs",
-        "broker_ids": []
+        "operation": "nodetool",
+        "command": "info"
     })

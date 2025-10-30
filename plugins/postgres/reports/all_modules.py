@@ -42,6 +42,8 @@ REPORT_SECTIONS = [
         'title': 'Cloud-Specific Metrics (AWS)',
         'actions': [
             {'type': 'module', 'module': 'plugins.postgres.checks.aws_cloudwatch_metrics', 'function': 'run_aws_cloudwatch_metrics'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_aurora_version_upgrades', 'function': 'run_check_aurora_version_upgrades'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_postgres_version_upgrades', 'function': 'run_check_postgres_version_upgrades'},
             {'type': 'module', 'module': 'plugins.postgres.checks.aurora_stat_statements', 'function': 'run_aurora_stat_statements'},
         ]
     },
@@ -109,6 +111,7 @@ REPORT_SECTIONS = [
             {'type': 'module', 'module': 'plugins.postgres.checks.vacuum_analysis', 'function': 'run_vacuum_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.table_health_analysis', 'function': 'run_table_health_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.index_bloat_analysis',  'function': 'run_index_bloat_analysis'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_cross_node_index_usage', 'function': 'run_check_cross_node_index_usage'},
             {'type': 'module', 'module': 'plugins.postgres.checks.missing_index_opportunities', 'function': 'run_missing_index_opportunities'},
             {'type': 'module', 'module': 'plugins.postgres.checks.missing_primary_keys', 'function': 'run_missing_primary_keys'},
             {'type': 'module', 'module': 'plugins.postgres.checks.foreign_key_audit', 'function': 'run_foreign_key_audit'},
