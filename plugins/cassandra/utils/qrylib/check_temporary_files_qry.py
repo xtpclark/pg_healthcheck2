@@ -1,13 +1,13 @@
 """Temporary files queries for Cassandra (shell commands)."""
 
 __all__ = [
-    'get_temporary_files_query'
+    'get_check_temporary_files_query'
 ]
 
 import json
 
 
-def get_temporary_files_query(connector, data_dir='/var/lib/cassandra/data'):
+def get_check_temporary_files_query(connector, data_dir='/var/lib/cassandra/data'):
     """
     Returns JSON request for finding temporary files in Cassandra data directory.
     
