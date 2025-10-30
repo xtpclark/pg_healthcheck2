@@ -104,6 +104,38 @@ class KafkaPlugin(BasePlugin):
 
     def get_db_version_from_findings(self, findings: dict) -> str:
         """
+        Extracts the Kafka version from the findings.
+        Looks in kafka_overview check results.
+        """
+        try:
+            # Kafka-specific path to version info
+            version_info = findings.get("kafka_overview", {}).get("version_info", {})
+            if version_info.get("status") == "success":
+                data = version_info.get("data", [{}])
+                if data and len(data) > 0:
+                    return data[0].get("version", "N/A")
+            return "N/A"
+        except (IndexError, AttributeError, KeyError):
+            return "N/A"
+    
+    
+    def get_db_name_from_findings(self, findings: dict) -> str:
+        """
+        Extracts the Kafka cluster ID from findings.
+        For Kafka, cluster_id serves as the "database name".
+        """
+        try:
+            cluster_info = findings.get("kafka_overview", {}).get("cluster_metadata", {})
+            if cluster_info.get("status") == "success":
+                data = cluster_info.get("data", [{}])
+                if data and len(data) > 0:
+                    return data[0].get("cluster_id", "N/A")
+            return "N/A"
+        except (IndexError, AttributeError, KeyError):
+            return "N/A"
+
+    def old_get_db_version_from_findings(self, findings: dict) -> str:
+        """
         Extracts database version from findings structure.
         Override this to match your specific findings structure.
         
@@ -119,7 +151,7 @@ class KafkaPlugin(BasePlugin):
         # return findings.get("kafka_overview", {}).get("version", {}).get("data", [{}])[0].get("version", "N/A")
         return "N/A"
 
-    def get_db_name_from_findings(self, findings: dict) -> str:
+    def old_get_db_name_from_findings(self, findings: dict) -> str:
         """
         Extracts database name from findings structure.
         Override this to match your specific findings structure.

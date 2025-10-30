@@ -4,6 +4,18 @@ REPORT_SECTIONS = [
         "actions": []
     },
     {
+        "title": "Kafka Overview",
+        "actions": [
+            {'type': 'module', 'module': 'plugins.kafka.checks.kafka_overview', 'function': 'run_kafka_overview'},
+        ]
+    },
+    {
+        "title": "Kafka Purgatory",
+        "actions": [
+            {'type': 'module', 'module': 'plugins.kafka.checks.check_purgatory_size', 'function': 'run_check_purgatory_size'},
+        ]
+    },
+    {
         "title": "Kafka Cluster Health",
         "actions": [
             {'type': 'module', 'module': 'plugins.kafka.checks.check_partition_balance', 'function': 'run_partition_balance'},

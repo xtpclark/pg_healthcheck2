@@ -1,5 +1,5 @@
 """
-JVM statistics check for Kafka brokers.
+JVM statistics check for Cassandra brokers.
 
 Monitors JVM heap usage, garbage collection activity, and memory pool
 statistics across all broker nodes. This module serves as a template
@@ -214,7 +214,7 @@ def calculate_gc_metrics(gc_data, gcutil_data):
 
 def run_check_jvm_stats(connector, settings):
     """
-    Checks JVM memory and GC statistics on all Kafka brokers via SSH.
+    Checks JVM memory and GC statistics on all Cassandra brokers via SSH.
     
     This is a TEMPLATE CHECK that demonstrates the pattern for JVM monitoring
     across distributed systems. It can be adapted for:
@@ -248,43 +248,44 @@ def run_check_jvm_stats(connector, settings):
     
     try:
         # === STEP 1: GET THRESHOLDS ===
-        heap_warning_percent = settings.get('kafka_jvm_heap_warning_percent', 75)
-        heap_critical_percent = settings.get('kafka_jvm_heap_critical_percent', 90)
-        old_gen_warning_percent = settings.get('kafka_jvm_old_gen_warning_percent', 80)
-        old_gen_critical_percent = settings.get('kafka_jvm_old_gen_critical_percent', 90)
-        metaspace_warning_percent = settings.get('kafka_jvm_metaspace_warning_percent', 85)
-        metaspace_critical_percent = settings.get('kafka_jvm_metaspace_critical_percent', 95)
-        fgc_warning_count = settings.get('kafka_jvm_fgc_warning_count', 10)
-        fgc_critical_count = settings.get('kafka_jvm_fgc_critical_count', 50)
+        heap_warning_percent = settings.get('cassandra_jvm_heap_warning_percent', 75)
+        heap_critical_percent = settings.get('cassandra_jvm_heap_critical_percent', 90)
+        old_gen_warning_percent = settings.get('cassandra_jvm_old_gen_warning_percent', 80)
+        old_gen_critical_percent = settings.get('cassandra_jvm_old_gen_critical_percent', 90)
+        metaspace_warning_percent = settings.get('cassandra_jvm_metaspace_warning_percent', 85)
+        metaspace_critical_percent = settings.get('cassandra_jvm_metaspace_critical_percent', 95)
+        fgc_warning_count = settings.get('cassandra_jvm_fgc_warning_count', 10)
+        fgc_critical_count = settings.get('cassandra_jvm_fgc_critical_count', 50)
         
         # === STEP 2: EXECUTE ON ALL HOSTS ===
         command = """
-# Find Kafka Java process
-KAFKA_PID=$(ps aux | grep -i kafka | grep java | grep -v grep | awk '{print $2}' | head -1)
-KAFKA_USER=$(ps aux | grep -i kafka | grep java | grep -v grep | awk '{print $1}' | head -1)
+# Find Cassandra Java process
+CASSANDRA_PID=$(ps aux | grep -i cassandra | grep java | grep -v grep | awk '{print $2}' | head -1)
+# CASSANDRA_USER=$(ps aux | grep -i cassandra | grep java | grep -v grep | awk '{print $1}' | head -1)
+CASSANDRA_USER=cassandra
 
-if [ -z "$KAFKA_PID" ]; then
-    echo "ERROR: Kafka process not found"
+if [ -z "$CASSANDRA_PID" ]; then
+    echo "ERROR: Cassandra process not found"
     exit 1
 fi
 
-echo "KAFKA_PID=$KAFKA_PID"
-echo "KAFKA_USER=$KAFKA_USER"
+echo "CASSANDRA_PID=$CASSANDRA_PID"
+echo "CASSANDRA_USER=$CASSANDRA_USER"
 
-# Get GC stats (run as kafka user if not already that user)
+# Get GC stats (run as Cassandra user if not already that user)
 echo "=== GC_STATS ==="
-if [ "$(whoami)" = "$KAFKA_USER" ]; then
-    jstat -gc $KAFKA_PID
+if [ "$(whoami)" = "$CASSANDRA_USER" ]; then
+    jstat -gc $CASSANDRA_PID
 else
-    sudo -u $KAFKA_USER jstat -gc $KAFKA_PID
+    sudo -u $CASSANDRA_USER jstat -gc $CASSANDRA_PID
 fi
 
 # Get GC summary
 echo "=== GC_UTIL ==="
-if [ "$(whoami)" = "$KAFKA_USER" ]; then
-    jstat -gcutil $KAFKA_PID
+if [ "$(whoami)" = "$CASSANDRA_USER" ]; then
+    jstat -gcutil $CASSANDRA_PID
 else
-    sudo -u $KAFKA_USER jstat -gcutil $KAFKA_PID
+    sudo -u $CASSANDRA_USER jstat -gcutil $CASSANDRA_PID
 fi
 
 """
@@ -321,7 +322,7 @@ fi
             # Parse output
             output = result['output'].strip()
             if not output or "ERROR" in output:
-                error_msg = "Kafka process not found" if "not found" in output else "Unknown error"
+                error_msg = "Cassandra process not found" if "not found" in output else "Unknown error"
                 errors.append({
                     'host': host,
                     'broker_id': broker_id,
@@ -335,8 +336,8 @@ fi
                 continue
             
             # Extract PID
-            pid_match = re.search(r'KAFKA_PID=(\d+)', output)
-            kafka_pid = pid_match.group(1) if pid_match else 'unknown'
+            pid_match = re.search(r'CASSANDRA_PID=(\d+)', output)
+            cassandra_pid = pid_match.group(1) if pid_match else 'unknown'
             
             # Extract sections
             gc_stats_section = re.search(r'=== GC_STATS ===\n(.*?)\n===', output, re.DOTALL)
@@ -375,7 +376,7 @@ fi
             jvm_info = {
                 'host': host,
                 'broker_id': broker_id,
-                'kafka_pid': kafka_pid,
+                'cassandra_pid': cassandra_pid,
                 **heap_usage,
                 **gc_metrics
             }
@@ -533,7 +534,7 @@ fi
             
             if critical_brokers:
                 adoc_content.append("**🔴 Critical Priority (Immediate Action):**\n\n")
-                adoc_content.append("* **Increase heap size:** Add -Xmx and -Xms JVM options (recommend 6-8GB for Kafka)\n")
+                adoc_content.append("* **Increase heap size:** Add -Xmx and -Xms JVM options (recommend 6-8GB for Cassandra)\n")
                 adoc_content.append("* **Tune GC settings:** Consider G1GC with appropriate pause time goals\n")
                 adoc_content.append("* **Review memory leaks:** Check for growing old generation over time\n")
                 adoc_content.append("* **Monitor Full GCs:** Frequent Full GCs indicate insufficient heap\n")

@@ -1,6 +1,6 @@
 {
   "critical_disk_usage": {
-    "metric_keywords": ["disk_usage", "kafka"],
+    "metric_keywords": ["disk_usage", "cassandra"],
     "rules": [
       {
         "expression": "data.get('use_percent', 0) >= 95",

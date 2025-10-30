@@ -30,6 +30,13 @@ REPORT_SECTIONS = [
         ]
     },
 
+    {
+        'title': 'Database Structure',
+        'actions': [
+            {'type': 'module', 'module': 'plugins.postgres.checks.table_count', 'function': 'run_table_count'},
+        ]
+    },
+
     # --- Section 3: Cloud-Specific Metrics (AWS) ---
     {
         'title': 'Cloud-Specific Metrics (AWS)',
@@ -108,6 +115,14 @@ REPORT_SECTIONS = [
             {'type': 'module', 'module': 'plugins.postgres.checks.primary_key_analysis', 'function': 'run_primary_key_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.data_checksums_analysis', 'function': 'run_data_checksums_analysis'},
             {'type': 'module', 'module': 'plugins.postgres.checks.high_insert_tables', 'function': 'run_high_insert_tables'},
+        ]
+    },
+
+    # --- Section 9: Schema Health ---
+    {
+        'title': 'Schema Health',
+        'actions': [
+            {'type': 'module', 'module': 'plugins.postgres.checks.table_count_check', 'function': 'run_table_count_check'},
         ]
     },
 ]

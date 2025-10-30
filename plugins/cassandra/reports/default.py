@@ -47,6 +47,14 @@ REPORT_SECTIONS = [
              {'type': 'module', 'module': 'plugins.cassandra.checks.check_disk_usage', 'function': 'run_check_disk_usage'},       
         ]
     },
+
+    {
+        'title': 'Cassandra Storage Health',
+        'actions': [
+            {'type': 'module', 'module': 'plugins.cassandra.checks.check_disk_usage', 'function': 'run_check_disk_usage'},
+        ]
+    },
+
     {
         'title': 'Performance Monitoring',
         'actions': [
@@ -60,6 +68,15 @@ REPORT_SECTIONS = [
 #            {'type': 'module', 'module': 'plugins.cassandra.checks.role_permission_audit', 'function': 'run_role_permission_audit'},
         ]
     },
+
+    {
+        "title": "Performance Monitoring",
+        "actions": [
+      #      {'type': 'module', 'module': 'plugins.kafka.checks.check_iostat', 'function': 'run_check_iostat'},
+            {'type': 'module', 'module': 'plugins.cassandra.checks.check_jvm_stats', 'function': 'run_check_jvm_stats'},
+        ]
+    },
+
 ]
 
 def get_default_report_definition(connector, settings):

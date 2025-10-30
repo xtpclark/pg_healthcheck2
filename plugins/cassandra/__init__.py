@@ -104,31 +104,32 @@ class CassandraPlugin(BasePlugin):
 
     def get_db_version_from_findings(self, findings: dict) -> str:
         """
-        Extracts database version from findings structure.
-        Override this to match your specific findings structure.
-        
-        Args:
-            findings: The structured_findings dictionary
-            
-        Returns:
-            str: Database version or "N/A"
+        Extracts the Cassandra version from the findings.
+        Looks in check_node_info check results.
         """
-        # TODO: Implement based on your findings structure
-        # Example patterns:
-        # return findings.get("system_info", {}).get("version", "N/A")
-        # return findings.get("cassandra_overview", {}).get("version", {}).get("data", [{}])[0].get("version", "N/A")
-        return "N/A"
+        try:
+            # Cassandra-specific path to version info
+            node_info = findings.get("check_node_info", {}).get("node_info", {})
+            if node_info.get("status") == "success":
+                data = node_info.get("data", [{}])
+                if data and len(data) > 0:
+                    return data[0].get("release_version", "N/A")
+            return "N/A"
+        except (IndexError, AttributeError, KeyError):
+            return "N/A"
 
     def get_db_name_from_findings(self, findings: dict) -> str:
         """
-        Extracts database name from findings structure.
-        Override this to match your specific findings structure.
-        
-        Args:
-            findings: The structured_findings dictionary
-            
-        Returns:
-            str: Database name or "N/A"
+        Extracts the Cassandra keyspace from findings.
+        For Cassandra, keyspace serves as the "database name".
         """
-        # TODO: Implement based on your findings structure
-        return "N/A"
+        try:
+            node_info = findings.get("check_node_info", {}).get("node_info", {})
+            if node_info.get("status") == "success":
+                data = node_info.get("data", [{}])
+                if data and len(data) > 0:
+                    keyspace = data[0].get("keyspace")
+                    return keyspace if keyspace else "system"
+            return "system"
+        except (IndexError, AttributeError, KeyError):
+            return "system"
