@@ -127,7 +127,13 @@ class HealthCheck:
 
         try:
             print("\n--- Handing off findings to Trend Shipper ---")
-            trend_shipper.run(self.all_structured_findings, self.settings, self.adoc_content)
+            # Pass analysis_output to store triggered rules for trend analysis
+            trend_shipper.run(
+                self.all_structured_findings, 
+                self.settings, 
+                self.adoc_content,
+                analysis_results=self.analysis_output  # NEW: Pass analysis results for rule tracking
+            )
         except Exception as e:
             print(f"CRITICAL: The trend shipper module failed with an unexpected error: {e}")
 
