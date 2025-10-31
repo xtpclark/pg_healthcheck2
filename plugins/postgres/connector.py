@@ -682,7 +682,12 @@ class PostgresConnector(SSHSupportMixin):
             self.has_pgstat_new_io_time = False
 
     def get_db_metadata(self):
-        """Fetches basic metadata like version and database name."""
+        """
+        Fetches cluster-level metadata including environment information.
+
+        Returns:
+            dict: {'version': str, 'db_name': str, 'environment': str, 'environment_details': dict}
+        """
         try:
             dbname_query = "SELECT current_database();"
             self.cursor.execute(dbname_query)
@@ -690,13 +695,17 @@ class PostgresConnector(SSHSupportMixin):
 
             return {
                 'version': self.version_info.get('version_string', 'N/A'),
-                'db_name': db_name
+                'db_name': db_name,
+                'environment': self.environment or 'unknown',
+                'environment_details': self.environment_details or {}
             }
         except Exception as e:
             print(f"Warning: Could not fetch database metadata: {e}")
             return {
                 'version': self.version_info.get('version_string', 'N/A'),
-                'db_name': 'N/A'
+                'db_name': 'N/A',
+                'environment': self.environment or 'unknown',
+                'environment_details': self.environment_details or {}
             }
 
     def execute_query(self, query, params=None, is_check=False, return_raw=False):
