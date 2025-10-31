@@ -167,7 +167,7 @@ def _process_findings_recursively(current_findings, settings, analysis_rules, al
         elif 'status' not in value:
             _process_findings_recursively(value, settings, analysis_rules, all_findings, rule_stats, issue_lists, module_issue_map, parent_key=metric_name, verbose=verbose)
 
-def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_version, db_name, active_plugin, verbose=False):
+def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, db_metadata, active_plugin, verbose=False):
     """Orchestrates the analysis of findings to generate a final AI prompt.
 
     This is the main function of the module. It performs several key steps:
@@ -183,8 +183,8 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
         all_structured_findings (dict): The complete raw findings from all checks.
         settings (dict): The main application settings, including token limits.
         analysis_rules (dict): The loaded rule configurations.
-        db_version (str): The version string of the database being analyzed.
-        db_name (str): The name of the database being analyzed.
+        db_metadata (dict): Database metadata including version, db_name, environment,
+            and environment_details from the connector.
         active_plugin (object): The active plugin instance, used to get module
             weights and template paths.
         verbose (bool, optional): Enables detailed debug printing.
@@ -192,7 +192,7 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
     Returns:
         dict: A dictionary containing the final rendered 'prompt' and other
               analysis artifacts like 'summarized_findings', 'critical_issues',
-              'high_priority_issues', 'medium_priority_issues', and 
+              'high_priority_issues', 'medium_priority_issues', and
               'rule_application_stats'.
     """
 
@@ -282,14 +282,16 @@ def generate_dynamic_prompt(all_structured_findings, settings, analysis_rules, d
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(template_dir)), trim_blocks=True, lstrip_blocks=True)
     template_name = settings.get('prompt_template', 'default_prompt.j2')
     template = env.get_template(template_name)
-    
+
     analysis_timestamp = datetime.utcnow().isoformat() + "Z"
 
     prompt = template.render(
         findings_json=json.dumps(findings_for_prompt, indent=2),
         settings=settings,
-        db_version=db_version,
-        database_name=db_name,
+        db_version=db_metadata.get('version', 'N/A'),
+        database_name=db_metadata.get('db_name', 'N/A'),
+        environment=db_metadata.get('environment', 'unknown'),
+        environment_details=db_metadata.get('environment_details', {}),
         analysis_timestamp=analysis_timestamp,
         critical_issues=critical_issues,
         high_priority_issues=high_priority_issues,
