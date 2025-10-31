@@ -7,6 +7,7 @@ REPORT_SECTIONS = [
             {"type": "module", "module": "plugins.cassandra.checks.disk_space_per_keyspace", "function": "run_disk_space_per_keyspace_check"},
             {"type": "module", "module": "plugins.cassandra.checks.data_directory_disk_space_check", "function": "run_data_directory_disk_space_check"},
             {"type": "module", "module": "plugins.cassandra.checks.memory_usage_check", "function": "run_memory_usage_check"},
+            {'type': 'module', 'module': 'plugins.cassandra.checks.check_jvm_stats', 'function': 'run_check_jvm_stats'},
             {'type': 'module', 'module': 'plugins.cassandra.checks.cpu_load_average_check', 'function': 'run_cpu_load_average_check'},
             {'type': 'module', 'module': 'plugins.cassandra.checks.check_temporary_files', 'function': 'run_temporary_files_check'},
             {'type': 'module', 'module': 'plugins.cassandra.checks.gcstats_check', 'function': 'run_gcstats_check'},
