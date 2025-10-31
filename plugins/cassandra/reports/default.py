@@ -2,6 +2,20 @@ REPORT_SECTIONS = [
     {
         "title": "Operational Health",
         "actions": [
+            # Prometheus-based checks (Instaclustr managed clusters)
+            {"type": "module", "module": "plugins.cassandra.checks.prometheus_jvm_heap", "function": "check_prometheus_jvm_heap"},
+            {"type": "module", "module": "plugins.cassandra.checks.prometheus_cpu", "function": "check_prometheus_cpu"},
+            {"type": "module", "module": "plugins.cassandra.checks.prometheus_disk_usage", "function": "check_prometheus_disk_usage"},
+            {"type": "module", "module": "plugins.cassandra.checks.prometheus_compaction", "function": "check_prometheus_compaction"},
+            {"type": "module", "module": "plugins.cassandra.checks.prometheus_latency", "function": "check_prometheus_latency"},
+
+            # CQL-based checks (work on all clusters)
+            {"type": "module", "module": "plugins.cassandra.checks.table_statistics", "function": "check_table_statistics"},
+            {"type": "module", "module": "plugins.cassandra.checks.read_repair_settings", "function": "check_read_repair_settings"},
+            {"type": "module", "module": "plugins.cassandra.checks.secondary_indexes", "function": "check_secondary_indexes"},
+            {"type": "module", "module": "plugins.cassandra.checks.network_topology", "function": "check_network_topology"},
+
+            # Traditional nodetool-based checks (SSH-enabled clusters)
             {"type": "module", "module": "plugins.cassandra.checks.check_compaction_pending_tasks", "function": "run_compaction_pending_tasks"},
             {"type": "module", "module": "plugins.cassandra.checks.check_schema_version_consistency", "function": "run_schema_version_consistency_check"},
             {"type": "module", "module": "plugins.cassandra.checks.disk_space_per_keyspace", "function": "run_disk_space_per_keyspace_check"},
