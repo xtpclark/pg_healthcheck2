@@ -138,5 +138,99 @@
         ]
       }
     ]
+  },
+  "full_gc_allocation_failures": {
+    "metric_keywords": ["jvm_summary"],
+    "rules": [
+      {
+        "expression": "data.get('full_gc_allocation_failures', 0) >= 5",
+        "level": "critical",
+        "score": 10,
+        "reasoning": "CRITICAL: Detected {data.get('full_gc_allocation_failures')} Full GC events caused by Allocation Failure in recent logs. This indicates the heap is completely full and unable to allocate new objects - risk of application failure and severe latency spikes.",
+        "recommendations": [
+          "IMMEDIATE ACTION REQUIRED: Increase heap size (-Xmx) significantly",
+          "Allocation Failure Full GCs are the most severe type - heap is exhausted",
+          "Monitor application behavior - users are experiencing timeouts",
+          "Review application memory usage and object allocation patterns",
+          "Consider scaling up instance size or adding more nodes",
+          "Check for memory leaks - heap should not constantly fill up"
+        ]
+      },
+      {
+        "expression": "data.get('full_gc_allocation_failures', 0) >= 1",
+        "level": "high",
+        "score": 8,
+        "reasoning": "Detected {data.get('full_gc_allocation_failures')} Full GC event(s) caused by Allocation Failure. Heap memory is critically low.",
+        "recommendations": [
+          "Allocation Failure Full GCs indicate heap exhaustion",
+          "Plan to increase heap size before problem worsens",
+          "Monitor for additional Full GC events",
+          "Review heap usage trends - should not be constantly at capacity",
+          "Check application workload for memory-intensive operations"
+        ]
+      }
+    ]
+  },
+  "full_gc_events_detected": {
+    "metric_keywords": ["jvm_summary"],
+    "rules": [
+      {
+        "expression": "data.get('total_full_gc_events_from_logs', 0) >= 10",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Detected {data.get('total_full_gc_events_from_logs')} Full GC events in recent log history. Full GCs pause the entire application and cause latency spikes and timeouts.",
+        "recommendations": [
+          "Full GCs should be rare - frequent Full GCs indicate memory pressure",
+          "Review Full GC causes in the detailed events table",
+          "Increase heap size if caused by Allocation Failures",
+          "Disable explicit GC calls with -XX:+DisableExplicitGC if caused by System.gc()",
+          "Tune GC settings to reduce Full GC frequency",
+          "Monitor application latency during Full GC events"
+        ]
+      },
+      {
+        "expression": "data.get('total_full_gc_events_from_logs', 0) >= 3",
+        "level": "medium",
+        "score": 5,
+        "reasoning": "Detected {data.get('total_full_gc_events_from_logs')} Full GC events in recent logs. Monitor for increasing frequency.",
+        "recommendations": [
+          "Track Full GC frequency over time",
+          "Review causes in the Full GC Events table",
+          "Plan heap tuning if events increase",
+          "Check application workload patterns"
+        ]
+      }
+    ]
+  },
+  "full_gc_long_pauses": {
+    "metric_keywords": ["full_gc_events", "data"],
+    "rules": [
+      {
+        "expression": "data.get('pause_time_ms', 0) >= 2000",
+        "level": "critical",
+        "score": 9,
+        "reasoning": "Full GC event on broker {data.get('broker_id')} had pause time of {data.get('pause_time_ms'):.0f}ms (>{2} seconds). This causes severe application timeouts.",
+        "recommendations": [
+          "Full GC pauses over 2 seconds cause critical application impact",
+          "Reduce heap size if using very large heaps (>32GB loses compressed oops)",
+          "Switch to G1GC if using CMS/Parallel GC",
+          "Tune GC pause time goals: -XX:MaxGCPauseMillis=200",
+          "Review heap size - may be too large for acceptable pause times",
+          "Consider off-heap storage to reduce heap pressure"
+        ]
+      },
+      {
+        "expression": "data.get('pause_time_ms', 0) >= 1000",
+        "level": "high",
+        "score": 7,
+        "reasoning": "Full GC event had pause time of {data.get('pause_time_ms'):.0f}ms (>1 second). Users experience noticeable latency.",
+        "recommendations": [
+          "Full GC pauses over 1 second impact user experience",
+          "Review GC algorithm choice - consider G1GC for large heaps",
+          "Tune GC settings for shorter pause times",
+          "Monitor application latency metrics"
+        ]
+      }
+    ]
   }
 }

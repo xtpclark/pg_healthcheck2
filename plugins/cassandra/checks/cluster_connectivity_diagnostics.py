@@ -421,7 +421,7 @@ def run_cluster_connectivity_diagnostics(connector, settings):
             if log_lines:
                 has_log_issues = True
                 builder.text(f"**Node {node_id}:** (Last 20 connection-related log entries)")
-                builder.code_block('\n'.join(log_lines[-20:]))
+                builder.literal('\n'.join(log_lines[-20:]))
                 builder.blank()
 
         if not has_log_issues:
