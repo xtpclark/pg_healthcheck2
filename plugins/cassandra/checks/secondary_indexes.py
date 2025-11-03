@@ -103,6 +103,67 @@ def check_secondary_indexes(connector, settings):
         custom_count = findings['index_summary']['custom_count']
         builder.warning(f"⚠️ Found {total_indexes} secondary index(es): {standard_count} standard, {sasi_count} SASI, {custom_count} custom")
 
+        # Add explanation
+        builder.blank()
+        builder.text("*Why This Matters:*")
+        builder.text("Secondary indexes in Cassandra should be used sparingly. They work well for low-cardinality ")
+        builder.text("columns (where <10% of values are unique) but can cause severe performance degradation on ")
+        builder.text("high-cardinality columns. Each indexed read requires querying all nodes that own the data, ")
+        builder.text("potentially resulting in cluster-wide scans.")
+        builder.blank()
+
+        # Add current configuration breakdown
+        builder.text("*Current Configuration:*")
+        if standard_count > 0:
+            builder.text(f"- *Standard Indexes ({standard_count})*: Traditional secondary indexes using COMPOSITES")
+            # Show a few examples
+            standard_examples = findings['standard_indexes']['data'][:3]
+            for idx in standard_examples:
+                builder.text(f"  • {idx['keyspace']}.{idx['table']}.{idx['index_name']} on column '{idx.get('indexed_column', 'unknown')}'")
+            if len(findings['standard_indexes']['data']) > 3:
+                builder.text(f"  • ...and {len(findings['standard_indexes']['data']) - 3} more")
+
+        if sasi_count > 0:
+            builder.text(f"- *SASI Indexes ({sasi_count})*: SSTable Attached Secondary Index (experimental)")
+            sasi_examples = findings['sasi_indexes']['data'][:2]
+            for idx in sasi_examples:
+                builder.text(f"  • {idx['keyspace']}.{idx['table']}.{idx['index_name']}")
+
+        if custom_count > 0:
+            builder.text(f"- *Custom Indexes ({custom_count})*: Custom implementation")
+            custom_examples = findings['custom_indexes']['data'][:2]
+            for idx in custom_examples:
+                builder.text(f"  • {idx['keyspace']}.{idx['table']}.{idx['index_name']} ({idx.get('class_name', 'Unknown')})")
+        builder.blank()
+
+        # Add recommendations
+        builder.text("*Recommended Actions:*")
+        if standard_count > 0:
+            builder.text("1. *Review Standard Indexes*: Verify indexed columns have low cardinality (<10% unique values)")
+            builder.text("   - Use `SELECT COUNT(DISTINCT column) FROM table` to check cardinality")
+            builder.text("   - Consider materialized views or denormalization for high-cardinality queries")
+
+        if sasi_count > 0:
+            builder.text("2. *SASI Indexes*: Monitor performance closely - this feature is experimental")
+            builder.text("   - Have rollback plan ready")
+            builder.text("   - Consider migrating to standard approaches if issues arise")
+
+        if custom_count > 0:
+            builder.text("3. *Custom Indexes*: Ensure proper monitoring and maintenance")
+            builder.text("   - Verify implementation handles compaction and repair correctly")
+            builder.text("   - Document behavior and performance characteristics")
+
+        if standard_count > 5:
+            builder.text(f"4. *Data Model Review*: {standard_count} indexes suggests query-driven redesign may be needed")
+            builder.text("   - Consider creating dedicated query tables (denormalization)")
+            builder.text("   - Review whether Cassandra is the right fit for this access pattern")
+        builder.blank()
+
+        builder.text("*Alternatives to Consider*:")
+        builder.text("- *Materialized Views*: Automatically maintained query tables (better than indexes for many cases)")
+        builder.text("- *Denormalization*: Create duplicate tables optimized for specific queries")
+        builder.text("- *External Search*: Use Elasticsearch/Solr for complex search requirements")
+
         return builder.build(), {'secondary_indexes': findings}
 
     except Exception as e:

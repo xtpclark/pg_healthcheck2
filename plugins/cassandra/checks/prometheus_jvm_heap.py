@@ -38,7 +38,7 @@ def check_prometheus_jvm_heap(connector, settings):
 
     # Check if Prometheus is enabled
     if not settings.get('instaclustr_prometheus_enabled'):
-        builder.info("⏭️  Check skipped - Prometheus monitoring not enabled")
+        # Check skipped - Prometheus monitoring not enabled
         findings = {
             'prometheus_jvm_heap': {
                 'status': 'skipped',

@@ -145,6 +145,76 @@ def check_network_topology(connector, settings):
         else:
             builder.warning(f"⚠️ {warning_count} topology concern(s): {total_nodes} node(s) across {total_datacenters} datacenter(s) and {total_racks} rack(s)")
 
+            # Add explanation
+            builder.blank()
+            builder.text("*Why This Matters:*")
+            builder.text("Cassandra's availability and fault tolerance depend heavily on proper topology configuration. ")
+            builder.text("With NetworkTopologyStrategy and RF=3, Cassandra distributes replicas across racks to ensure ")
+            builder.text("data remains available during rack or node failures. Single-rack deployments create a single ")
+            builder.text("point of failure, while insufficient nodes prevent proper quorum operations.")
+            builder.blank()
+
+            # Add datacenter distribution details
+            builder.text("*Current Distribution:*")
+            for dc_info in findings['datacenter_summary']['data']:
+                builder.text(f"- *Datacenter '{dc_info['datacenter']}'*: {dc_info['node_count']} node(s) across {dc_info['rack_count']} rack(s)")
+            builder.blank()
+
+            # Show rack breakdown
+            builder.text("*Rack Distribution:*")
+            for rack_info in findings['rack_distribution']['data']:
+                builder.text(f"- {rack_info['datacenter']}:{rack_info['rack']} → {rack_info['node_count']} node(s)")
+            builder.blank()
+
+            # Add topology warnings
+            topology_warnings = findings['topology_analysis']['warnings']
+            if topology_warnings:
+                builder.text("*Identified Concerns:*")
+                for idx, warning in enumerate(topology_warnings, 1):
+                    severity_emoji = "🔴" if warning['severity'] == 'critical' else "⚠️" if warning['severity'] == 'warning' else "ℹ️"
+                    builder.text(f"{idx}. {severity_emoji} *{warning['issue']}*")
+                    builder.text(f"   - Impact: {warning['impact']}")
+                    if 'recommendation' in warning:
+                        builder.text(f"   - Action: {warning['recommendation']}")
+                builder.blank()
+
+            # Add recommendations
+            builder.text("*Recommended Actions:*")
+
+            # Check for specific issues and provide targeted advice
+            has_single_rack = any(w['severity'] == 'warning' and 'rack' in w['issue'].lower() for w in topology_warnings)
+            has_small_cluster = any('node(s)' in w['issue'] and w['severity'] == 'warning' for w in topology_warnings)
+            has_version_mismatch = any('version' in w['issue'].lower() for w in topology_warnings)
+
+            if has_single_rack:
+                builder.text("1. *Deploy Across Multiple Racks*: Minimum 3 racks recommended for RF=3")
+                builder.text("   - Add nodes to different racks to eliminate single rack SPOF")
+                builder.text("   - Ensure rack names are properly configured in cassandra.yaml (GossipingPropertyFileSnitch)")
+                builder.text("   - After adding nodes, run `nodetool rebuild` to redistribute data")
+
+            if has_small_cluster:
+                builder.text("2. *Scale to Minimum 3 Nodes Per DC*: Required for RF=3 with proper quorum")
+                builder.text("   - RF=3 with 2 nodes: quorum reads/writes cannot tolerate any node failure")
+                builder.text("   - 3 nodes allows QUORUM (2 nodes) to succeed with 1 node down")
+                builder.text("   - Add nodes incrementally and run `nodetool cleanup` on existing nodes")
+
+            if has_version_mismatch:
+                builder.text("3. *Standardize Cassandra Versions*: All nodes should run the same version")
+                builder.text("   - Plan rolling upgrade to bring all nodes to latest stable version")
+                builder.text("   - Version mismatches can cause protocol incompatibilities and data corruption")
+
+            if total_datacenters == 1:
+                builder.text("4. *Consider Multi-DC for DR*: Single DC = no geographic redundancy")
+                builder.text("   - Multi-DC provides disaster recovery capability")
+                builder.text("   - Use NetworkTopologyStrategy: `{'class': 'NetworkTopologyStrategy', 'dc1': 3, 'dc2': 3}`")
+            builder.blank()
+
+            builder.text("*Best Practices:*")
+            builder.text("- *Minimum Configuration*: 3 nodes per DC, distributed across 3+ racks, RF=3")
+            builder.text("- *Rack Awareness*: Configure `endpoint_snitch` (GossipingPropertyFileSnitch recommended)")
+            builder.text("- *Balanced Distribution*: Equal node counts across racks prevents hotspots")
+            builder.text("- *Multi-DC Strategy*: For production, consider 2+ DCs for disaster recovery")
+
         return builder.build(), {'network_topology': findings}
 
     except Exception as e:
