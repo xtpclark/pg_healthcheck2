@@ -67,6 +67,11 @@ REPORT_SECTIONS = [
             {'type': 'module', 'module': 'plugins.postgres.checks.security_and_encryption', 'function': 'run_security_and_encryption'},
             {'type': 'module', 'module': 'plugins.postgres.checks.function_audit', 'function': 'run_function_audit'},
             {'type': 'module', 'module': 'plugins.postgres.checks.replication_health', 'function': 'run_replication_health'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_patroni_topology', 'function': 'check_patroni_topology'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_patroni_health_status', 'function': 'check_patroni_health_status'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_patroni_failover_history', 'function': 'check_patroni_failover_history'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_patroni_configuration', 'function': 'check_patroni_configuration'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_patroni_dcs_health', 'function': 'check_patroni_dcs_health'},
         ]
     },
 

@@ -136,6 +136,14 @@ class PostgresConnector(SSHSupportMixin):
             details['detection_method'] = 'rds_indicators'
             return 'rds', details
 
+        # Detect Patroni
+        patroni_detected, patroni_details = self._detect_patroni()
+        if patroni_detected:
+            details.update(patroni_details)
+            details['detection_method'] = 'patroni_indicators'
+            details['ha_solution'] = 'patroni'
+            return 'patroni', details
+
         # Default to bare_metal
         details['detection_method'] = 'default'
         return 'bare_metal', details
@@ -227,6 +235,171 @@ class PostgresConnector(SSHSupportMixin):
 
         except Exception as e:
             logger.error(f"Error during RDS detection: {e}")
+            return False, {'error': str(e)}
+
+    def _detect_patroni(self):
+        """
+        Detect Patroni HA cluster using multiple detection methods.
+
+        Patroni is a template for PostgreSQL HA using Python and a distributed
+        configuration store (etcd, Consul, ZooKeeper, or Kubernetes).
+
+        Returns:
+            tuple: (is_patroni: bool, details: dict)
+        """
+        details = {}
+        confidence_score = 0
+        detection_methods = []
+
+        try:
+            cursor = self.conn.cursor()
+
+            # Signal 1: Check for Patroni-created replication slots
+            # Patroni typically creates slots named like 'patroni' or with cluster name
+            try:
+                cursor.execute("""
+                    SELECT slot_name, slot_type, active
+                    FROM pg_replication_slots
+                    WHERE slot_name LIKE '%patroni%'
+                       OR slot_name LIKE '%pgsql%'
+                       OR slot_name ~ '^[a-z]+-cluster-[0-9]+'
+                    LIMIT 5;
+                """)
+                patroni_slots = cursor.fetchall()
+                if patroni_slots:
+                    confidence_score += 30
+                    details['patroni_replication_slots'] = [
+                        {'name': row[0], 'type': row[1], 'active': row[2]}
+                        for row in patroni_slots
+                    ]
+                    detection_methods.append('replication_slots')
+                    logger.debug(f"Found {len(patroni_slots)} Patroni-like replication slots")
+            except psycopg2.Error as e:
+                logger.debug(f"Could not check replication slots: {e}")
+
+            # Signal 2: Check for Patroni-specific application names in pg_stat_activity
+            try:
+                cursor.execute("""
+                    SELECT DISTINCT application_name
+                    FROM pg_stat_activity
+                    WHERE application_name ILIKE '%patroni%'
+                       OR application_name ILIKE '%pgsql%'
+                    LIMIT 5;
+                """)
+                patroni_apps = cursor.fetchall()
+                if patroni_apps:
+                    confidence_score += 25
+                    details['patroni_applications'] = [row[0] for row in patroni_apps]
+                    detection_methods.append('application_names')
+                    logger.debug(f"Found Patroni application names: {[row[0] for row in patroni_apps]}")
+            except psycopg2.Error as e:
+                logger.debug(f"Could not check pg_stat_activity: {e}")
+
+            # Signal 3: Check for Patroni REST API (default port 8008)
+            # Try to detect if Patroni REST API is accessible
+            try:
+                import requests
+                from requests.exceptions import RequestException
+
+                patroni_host = self.settings.get('host')
+                patroni_port = self.settings.get('patroni_port', 8008)
+
+                # Try multiple endpoints
+                endpoints_to_check = [
+                    f"http://{patroni_host}:{patroni_port}/patroni",
+                    f"http://{patroni_host}:{patroni_port}/health",
+                    f"http://{patroni_host}:{patroni_port}/leader"
+                ]
+
+                for endpoint in endpoints_to_check:
+                    try:
+                        response = requests.get(endpoint, timeout=2)
+                        if response.status_code in [200, 503]:  # 503 = replica in Patroni
+                            confidence_score += 35
+                            details['patroni_api_endpoint'] = endpoint
+                            details['patroni_api_accessible'] = True
+                            detection_methods.append('rest_api')
+
+                            # Try to parse response for cluster info
+                            try:
+                                api_data = response.json()
+                                if 'role' in api_data or 'state' in api_data or 'cluster' in api_data:
+                                    details['patroni_node_role'] = api_data.get('role', 'unknown')
+                                    details['patroni_state'] = api_data.get('state', 'unknown')
+                                    details['patroni_cluster'] = api_data.get('cluster', 'unknown')
+                                    confidence_score += 10
+                                    logger.debug(f"Patroni API returned: role={api_data.get('role')}, state={api_data.get('state')}")
+                            except Exception:
+                                pass
+                            break
+                    except RequestException:
+                        continue
+            except ImportError:
+                logger.debug("requests library not available for Patroni API detection")
+            except Exception as e:
+                logger.debug(f"Could not check Patroni REST API: {e}")
+
+            # Signal 4: Check for Patroni via SSH (if SSH is configured)
+            if self.has_ssh_support():
+                try:
+                    # Check for Patroni process
+                    result = self.execute_ssh_command("ps aux | grep -i '[p]atroni' | head -1")
+                    if result and result['success'] and result['stdout']:
+                        confidence_score += 20
+                        details['patroni_process_detected'] = True
+                        details['patroni_process_info'] = result['stdout'].strip()[:200]
+                        detection_methods.append('process_check')
+                        logger.debug("Patroni process detected via SSH")
+
+                    # Check for Patroni config file
+                    config_paths = [
+                        '/etc/patroni/patroni.yml',
+                        '/etc/patroni.yml',
+                        '/var/lib/postgresql/patroni.yml'
+                    ]
+                    for config_path in config_paths:
+                        result = self.execute_ssh_command(f"test -f {config_path} && echo 'exists' || echo 'not_found'")
+                        if result and result['success'] and 'exists' in result['stdout']:
+                            confidence_score += 15
+                            details['patroni_config_file'] = config_path
+                            detection_methods.append('config_file')
+                            logger.debug(f"Patroni config found at {config_path}")
+                            break
+                except Exception as e:
+                    logger.debug(f"Could not check Patroni via SSH: {e}")
+
+            # Signal 5: Check PostgreSQL configuration for Patroni indicators
+            try:
+                cursor.execute("""
+                    SELECT name, setting
+                    FROM pg_settings
+                    WHERE name IN ('archive_command', 'restore_command', 'primary_conninfo')
+                       AND setting ILIKE '%patroni%'
+                    LIMIT 5;
+                """)
+                patroni_settings = cursor.fetchall()
+                if patroni_settings:
+                    confidence_score += 15
+                    details['patroni_config_params'] = {row[0]: row[1] for row in patroni_settings}
+                    detection_methods.append('config_params')
+                    logger.debug(f"Found Patroni references in PostgreSQL config")
+            except psycopg2.Error as e:
+                logger.debug(f"Could not check PostgreSQL settings: {e}")
+
+            # Calculate final result
+            is_patroni = confidence_score >= 30  # Threshold for Patroni detection
+            details['confidence_score'] = confidence_score
+            details['detection_methods'] = detection_methods
+
+            if is_patroni:
+                logger.info(f"✅ Patroni cluster detected (confidence: {confidence_score}%, methods: {', '.join(detection_methods)})")
+            else:
+                logger.debug(f"Patroni not detected (confidence: {confidence_score}%)")
+
+            return is_patroni, details
+
+        except Exception as e:
+            logger.error(f"Error during Patroni detection: {e}")
             return False, {'error': str(e)}
 
     def _discover_cluster_topology(self):
@@ -486,6 +659,23 @@ class PostgresConnector(SSHSupportMixin):
         # Aurora-specific info
         if self.environment == 'aurora' and 'aurora_version' in self.environment_details:
             print(f"   - Aurora Version: {self.environment_details['aurora_version']}")
+
+        # Patroni-specific info
+        if self.environment == 'patroni':
+            print(f"   - HA Solution: Patroni")
+            if 'patroni_node_role' in self.environment_details:
+                print(f"   - Node Role: {self.environment_details['patroni_node_role']}")
+            if 'patroni_state' in self.environment_details:
+                print(f"   - State: {self.environment_details['patroni_state']}")
+            if 'patroni_cluster' in self.environment_details:
+                print(f"   - Cluster: {self.environment_details['patroni_cluster']}")
+            if 'patroni_api_endpoint' in self.environment_details:
+                print(f"   - REST API: {self.environment_details['patroni_api_endpoint']}")
+
+            # Show detection methods used
+            detection_methods = self.environment_details.get('detection_methods', [])
+            if detection_methods:
+                print(f"   - Detected via: {', '.join(detection_methods)}")
 
         # Node topology
         if self.cluster_topology:
