@@ -393,21 +393,49 @@ def create_patroni_client_from_settings(settings: Dict) -> Optional[PatroniClien
     """
     Create a Patroni client from settings configuration.
 
+    IMPORTANT: This function creates a client for Patroni's REST API (default port 8008).
+    When connecting through a proxy (PgBouncer/HAProxy), we need to use the actual
+    Patroni node's host, NOT the proxy host.
+
+    Priority order:
+    1. patroni_api_url (explicit override)
+    2. patroni_direct.host (actual Patroni node, bypasses proxy)
+    3. host (primary connection host - may be proxy, use with warning)
+
     Args:
         settings: Configuration dictionary
 
     Returns:
         PatroniClient instance or None if not configured
     """
-    patroni_host = settings.get('host')
     patroni_port = settings.get('patroni_port', 8008)
     patroni_timeout = settings.get('patroni_timeout', 5)
 
-    # Allow explicit API URL override
+    # Priority 1: Allow explicit API URL override
     if settings.get('patroni_api_url'):
         base_url = settings['patroni_api_url']
-    elif patroni_host:
+        logger.debug(f"Using explicit patroni_api_url: {base_url}")
+
+    # Priority 2: Use patroni_direct host (actual Patroni node, bypasses proxy)
+    elif settings.get('patroni_direct', {}).get('host'):
+        patroni_host = settings['patroni_direct']['host']
         base_url = f"http://{patroni_host}:{patroni_port}"
+        logger.debug(f"Using patroni_direct.host for API: {base_url}")
+
+    # Priority 3: Fall back to primary host (may be proxy - issue warning)
+    elif settings.get('host'):
+        patroni_host = settings['host']
+        base_url = f"http://{patroni_host}:{patroni_port}"
+
+        # Warn if this might be a proxy host
+        if settings.get('pgbouncer_host') or settings.get('haproxy_host'):
+            logger.warning(
+                f"Using proxy host ({patroni_host}) for Patroni REST API. "
+                f"This may return incorrect cluster status. Consider configuring "
+                f"patroni_direct.host with the actual Patroni node address."
+            )
+        logger.debug(f"Using primary host for API: {base_url}")
+
     else:
         logger.warning("Cannot create Patroni client: no host configured")
         return None

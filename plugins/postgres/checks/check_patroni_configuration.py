@@ -20,7 +20,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Tuple
 from plugins.common.check_helpers import CheckContentBuilder
-from plugins.postgres.utils.patroni_client import PatroniClient
+from plugins.postgres.utils.patroni_client import create_patroni_client_from_settings
 from plugins.postgres.utils.patroni_helpers import (
     skip_if_not_patroni,
     build_error_result
@@ -146,17 +146,9 @@ def _fetch_patroni_configuration(settings: Dict) -> Dict:
     Returns:
         Dictionary with success flag and config data
     """
-    patroni_host = settings.get('host')
-    patroni_port = settings.get('patroni_port', 8008)
-    timeout = settings.get('patroni_timeout', 5)
-
-    if not patroni_host:
-        return {'success': False, 'error': 'No Patroni host configured'}
-
-    client = PatroniClient(
-        f"http://{patroni_host}:{patroni_port}",
-        timeout=timeout
-    )
+    client = create_patroni_client_from_settings(settings)
+    if not client:
+        return {'success': False, 'error': 'Could not create Patroni client - check configuration'}
 
     try:
         success, result = client.get_config()
@@ -355,21 +347,44 @@ def _build_configuration_output(
     builder.table(param_table)
     builder.blank()
 
-    # Issues section with detailed explanations
+    # Issues section with detailed explanations - group by severity
     issues = analysis['issues']
     if issues:
-        builder.text("*⚠️  Configuration Issues*")
-        builder.blank()
+        # Group issues by severity
+        high_issues = [i for i in issues if i.get('severity') == 'high']
+        warning_issues = [i for i in issues if i.get('severity') == 'warning']
+        info_issues = [i for i in issues if i.get('severity') == 'info']
 
-        for issue in issues:
-            severity_icon = "❌" if issue['severity'] == 'high' else "⚠️" if issue['severity'] == 'warning' else "ℹ️"
+        # Format issue details for admonition blocks
+        if high_issues:
+            details = []
+            for issue in high_issues:
+                details.append(f"*{issue['parameter']}*")
+                details.append(f"Current: `{issue['current_value']}`")
+                details.append(f"Recommended: `{issue['recommended_value']}`")
+                details.append(f"Issue: {issue['message']}")
+                details.append(f"*Action*: {issue['action']}")
+            builder.critical_issue("High Priority Configuration Issues", details)
 
-            builder.text(f"{severity_icon} *{issue['parameter']}*")
-            builder.text(f"   Current: `{issue['current_value']}`")
-            builder.text(f"   Recommended: `{issue['recommended_value']}`")
-            builder.text(f"   Issue: {issue['message']}")
-            builder.text(f"   *Action*: {issue['action']}")
-            builder.blank()
+        if warning_issues:
+            details = []
+            for issue in warning_issues:
+                details.append(f"*{issue['parameter']}*")
+                details.append(f"Current: `{issue['current_value']}`")
+                details.append(f"Recommended: `{issue['recommended_value']}`")
+                details.append(f"Issue: {issue['message']}")
+                details.append(f"*Action*: {issue['action']}")
+            builder.warning_issue("Configuration Warnings", details)
+
+        if info_issues:
+            details = []
+            for issue in info_issues:
+                details.append(f"*{issue['parameter']}*")
+                details.append(f"Current: `{issue['current_value']}`")
+                details.append(f"Recommended: `{issue['recommended_value']}`")
+                details.append(f"Issue: {issue['message']}")
+                details.append(f"*Action*: {issue['action']}")
+            builder.note(f"**Configuration Notes**\n\n" + "\n\n".join(details))
 
     # Recommendations section
     recommendations = analysis['recommendations']

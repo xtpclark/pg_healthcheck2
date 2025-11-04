@@ -19,7 +19,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Tuple
 from plugins.common.check_helpers import CheckContentBuilder
-from plugins.postgres.utils.patroni_client import PatroniClient
+from plugins.postgres.utils.patroni_client import PatroniClient, create_patroni_client_from_settings
 from plugins.postgres.utils.patroni_helpers import (
     skip_if_not_patroni,
     build_error_result
@@ -102,24 +102,19 @@ def _discover_cluster_nodes(settings: Dict, connector) -> List[Dict]:
 
     # Try discovery via Patroni API
     try:
-        patroni_host = settings.get('host')
-        patroni_port = settings.get('patroni_port', 8008)
-
-        if patroni_host:
-            client = PatroniClient(
-                f"http://{patroni_host}:{patroni_port}",
-                timeout=settings.get('patroni_timeout', 5)
-            )
-
+        client = create_patroni_client_from_settings(settings)
+        if client:
             success, result = client.get_cluster_topology()
             client.close()
 
             if success and result.get('data'):
                 members = result['data'].get('members', [])
+                patroni_port = settings.get('patroni_port', 8008)
+
                 for member in members:
                     nodes.append({
                         'name': member.get('name', 'unknown'),
-                        'host': member.get('host', patroni_host),
+                        'host': member.get('host', 'unknown'),
                         'port': patroni_port,
                         'role': member.get('role', 'unknown')
                     })
@@ -275,21 +270,40 @@ def _build_health_output(builder: CheckContentBuilder, health_data: List[Dict]):
     builder.table(table_data)
     builder.blank()
 
-    # Issues section
+    # Issues section - group by severity
     issues = _identify_issues(health_data)
     if issues:
-        builder.text("*⚠️  Issues Detected*")
-        builder.blank()
-        for issue in issues:
-            builder.text(f"• *{issue['node']}*: {issue['message']}")
-            if issue.get('recommendation'):
-                builder.text(f"  _Recommendation_: {issue['recommendation']}")
-        builder.blank()
+        # Group issues by severity
+        critical_issues = [i for i in issues if i.get('severity') == 'critical']
+        high_issues = [i for i in issues if i.get('severity') == 'high']
+        warning_issues = [i for i in issues if i.get('severity') == 'warning']
+
+        # Format issue details for admonition blocks
+        if critical_issues:
+            details = []
+            for issue in critical_issues:
+                details.append(f"*{issue['node']}*: {issue['message']}")
+                if issue.get('recommendation'):
+                    details.append(f"_Recommendation_: {issue['recommendation']}")
+            builder.critical_issue("Critical Health Issues", details)
+
+        if high_issues:
+            details = []
+            for issue in high_issues:
+                details.append(f"*{issue['node']}*: {issue['message']}")
+                if issue.get('recommendation'):
+                    details.append(f"_Recommendation_: {issue['recommendation']}")
+            builder.warning_issue("High Priority Health Issues", details)
+
+        if warning_issues:
+            details = []
+            for issue in warning_issues:
+                details.append(f"*{issue['node']}*: {issue['message']}")
+                if issue.get('recommendation'):
+                    details.append(f"_Recommendation_: {issue['recommendation']}")
+            builder.warning_issue("Health Warnings", details)
     else:
-        builder.text("*✅ No Issues Detected*")
-        builder.blank()
-        builder.text("All nodes are healthy, alive, and ready for traffic.")
-        builder.blank()
+        builder.note("**All Nodes Healthy**\n\nAll nodes are healthy, alive, and ready for traffic.")
 
 
 def _format_status(status: bool) -> str:

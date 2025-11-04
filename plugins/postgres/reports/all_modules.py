@@ -23,6 +23,7 @@ REPORT_SECTIONS = [
         'title': 'System Overview',
         'actions': [
             {'type': 'module', 'module': 'plugins.postgres.checks.postgres_overview', 'function': 'run_postgres_overview'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_pgbouncer_detection', 'function': 'check_pgbouncer_detection'},
             {'type': 'module', 'module': 'plugins.postgres.checks.table_object_counts', 'function': 'run_table_object_counts'},
             {'type': 'module', 'module': 'plugins.postgres.checks.database_object_inventory', 'function': 'run_database_object_inventory_query'},
             {'type': 'module', 'module': 'plugins.postgres.checks.extensions_update_check', 'function': 'run_extensions_update_check'},
@@ -79,6 +80,10 @@ REPORT_SECTIONS = [
     {
         'title': 'Connection Management',
         'actions': [
+            # pgbouncer detection moved higher under system overview.
+          #  {'type': 'module', 'module': 'plugins.postgres.checks.check_pgbouncer_detection', 'function': 'check_pgbouncer_detection'},
+            # Note: check_pgbouncer_health moved to final section to count all fallback events
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_connection_stability', 'function': 'check_connection_stability'},
             {'type': 'module', 'module': 'plugins.postgres.checks.connection_metrics', 'function': 'run_connection_metrics'},
             {'type': 'module', 'module': 'plugins.postgres.checks.superuser_reserved', 'function': 'run_superuser_reserved'},
         ]
@@ -131,6 +136,15 @@ REPORT_SECTIONS = [
         'title': 'Schema Health',
         'actions': [
             {'type': 'module', 'module': 'plugins.postgres.checks.table_count_check', 'function': 'run_table_count_check'},
+        ]
+    },
+
+    # --- Section 10: PgBouncer Health Summary (MUST BE LAST) ---
+    # This section MUST run last to count all fallback events from previous checks
+    {
+        'title': 'PgBouncer Health Summary',
+        'actions': [
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_pgbouncer_health', 'function': 'check_pgbouncer_health'},
         ]
     },
 ]

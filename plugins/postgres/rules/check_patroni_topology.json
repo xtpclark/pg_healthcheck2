@@ -128,18 +128,18 @@
   "patroni_timeline_mismatch": {
     "metric_keywords": ["patroni_topology"],
     "data_conditions": [
-      { "key": "members", "exists": true }
+      { "key": "timeline_divergence", "exists": true }
     ],
     "rules": [
       {
-        "expression": "len(set(member.get('timeline') for member in data.get('members', []) if member.get('timeline') is not None)) > 1",
+        "expression": "data.get('timeline_divergence') == True",
         "level": "critical",
         "score": 10,
-        "reasoning": "Timeline mismatch detected between cluster members. This indicates a split-brain condition or incomplete failover where nodes are on different WAL timelines.",
+        "reasoning": "Timeline divergence detected between cluster members ({data.get('unique_timeline_count')} different timelines). This indicates a split-brain condition or incomplete failover where nodes are on different WAL timelines.",
         "recommendations": [
           "This is a CRITICAL situation requiring immediate action.",
           "Stop all write traffic to the database immediately.",
-          "Identify which timeline is correct (usually the leader's timeline).",
+          "Identify which timeline is correct (usually the leader's timeline: {data.get('leader_timeline')}).",
           "Nodes on incorrect timelines must be rebuilt using pg_rewind or from a fresh backup.",
           "DO NOT attempt to manually fix this without understanding PostgreSQL timelines.",
           "Consider engaging PostgreSQL DBA support for recovery."

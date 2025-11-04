@@ -20,7 +20,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from plugins.common.check_helpers import CheckContentBuilder
-from plugins.postgres.utils.patroni_client import PatroniClient
+from plugins.postgres.utils.patroni_client import create_patroni_client_from_settings
 from plugins.postgres.utils.patroni_helpers import (
     skip_if_not_patroni,
     build_error_result,
@@ -109,17 +109,9 @@ def _fetch_failover_history(settings: Dict) -> Dict:
     Returns:
         Dictionary with success flag and events list
     """
-    patroni_host = settings.get('host')
-    patroni_port = settings.get('patroni_port', 8008)
-    timeout = settings.get('patroni_timeout', 5)
-
-    if not patroni_host:
-        return {'success': False, 'error': 'No Patroni host configured'}
-
-    client = PatroniClient(
-        f"http://{patroni_host}:{patroni_port}",
-        timeout=timeout
-    )
+    client = create_patroni_client_from_settings(settings)
+    if not client:
+        return {'success': False, 'error': 'Could not create Patroni client - check configuration'}
 
     try:
         success, result = client.get_history()
@@ -175,6 +167,11 @@ def _analyze_failover_history(events: List[Dict], settings: Dict) -> Dict:
     unplanned_events = []
 
     for event in events:
+        # Skip if event is not a dict (Patroni sometimes returns array format)
+        if not isinstance(event, dict):
+            logger.debug(f"Skipping non-dict event: {type(event).__name__}")
+            continue
+
         # Parse timestamp
         try:
             event_time = _parse_event_timestamp(event)
@@ -394,6 +391,11 @@ def _build_history_output(
         event_table = []
 
         for event in recent_events:
+            # Skip if event is not a dict (Patroni sometimes returns array format)
+            if not isinstance(event, dict):
+                logger.debug(f"Skipping non-dict event in output: {type(event).__name__}")
+                continue
+
             # Extract event details
             timestamp = event.get('timestamp', event.get('time', 'Unknown'))
             try:
@@ -413,18 +415,38 @@ def _build_history_output(
     else:
         builder.note("**No failover events recorded**\n\nThis could indicate:\n\n• A newly deployed cluster with no history\n• History retention is configured to clear old events\n• The /history endpoint is not enabled")
 
-    # Issues and recommendations
+    # Issues and recommendations - group by severity
     issues = analysis.get('issues', [])
     if issues:
-        builder.text("*⚠️  Issues Detected*")
-        builder.blank()
+        # Group issues by severity
+        critical_issues = [i for i in issues if i['severity'] == 'critical']
+        high_issues = [i for i in issues if i['severity'] == 'high']
+        warning_issues = [i for i in issues if i['severity'] == 'warning']
 
-        for issue in issues:
-            severity_icon = "❌" if issue['severity'] == 'critical' else "⚠️" if issue['severity'] == 'high' else "ℹ️"
-            builder.text(f"{severity_icon} *{issue['type'].replace('_', ' ').title()}*")
-            builder.text(f"   {issue['message']}")
-            builder.text(f"   _Action_: {issue['recommendation']}")
-            builder.blank()
+        # Format issue details for admonition blocks
+        if critical_issues:
+            details = []
+            for issue in critical_issues:
+                details.append(f"*{issue['type'].replace('_', ' ').title()}*")
+                details.append(f"{issue['message']}")
+                details.append(f"_Action_: {issue['recommendation']}")
+            builder.critical_issue("Critical Failover Issues", details)
+
+        if high_issues:
+            details = []
+            for issue in high_issues:
+                details.append(f"*{issue['type'].replace('_', ' ').title()}*")
+                details.append(f"{issue['message']}")
+                details.append(f"_Action_: {issue['recommendation']}")
+            builder.warning_issue("High Priority Failover Issues", details)
+
+        if warning_issues:
+            details = []
+            for issue in warning_issues:
+                details.append(f"*{issue['type'].replace('_', ' ').title()}*")
+                details.append(f"{issue['message']}")
+                details.append(f"_Action_: {issue['recommendation']}")
+            builder.warning_issue("Failover Warnings", details)
 
 
 def _build_findings(events: List[Dict], analysis: Dict, timestamp: str) -> Dict:

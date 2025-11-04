@@ -62,34 +62,75 @@ def check_patroni_topology(connector, settings):
         # Build visualization
         _build_topology_visualization(builder, topology_data, health_analysis)
 
-        # Add health warnings if any
+        # Add health warnings if any using admonition wrappers
         if health_analysis['critical_issues']:
-            builder.blank()
-            builder.text("*⚠️  Critical Issues:*")
-            for issue in health_analysis['critical_issues']:
-                builder.text(f"- {issue}")
+            builder.critical_issue(
+                "Critical Cluster Issues Detected",
+                health_analysis['critical_issues']
+            )
 
         if health_analysis['warnings']:
-            builder.blank()
-            builder.text("*⚠️  Warnings:*")
-            for warning in health_analysis['warnings']:
-                builder.text(f"- {warning}")
+            builder.warning_issue(
+                "Cluster Warnings",
+                health_analysis['warnings']
+            )
 
-        # Build structured findings
-        findings = {
-            'patroni_topology': {
-                'status': 'success',
-                'timestamp': timestamp,
-                'cluster': topology_data,
-                'health': health_analysis,
-                'metadata': {
-                    'source': topology_data.get('source', 'unknown'),
-                    'detection_methods': topology_data.get('detection_methods', [])
-                }
+        # Build structured findings for rules engine
+        # Report builder wraps with module name (check_patroni_topology)
+        # Return structured_data directly like legacy checks
+
+        # CRITICAL: Do NOT include list values in data dict!
+        # The rules engine will recurse into dicts with list values instead of evaluating them
+        # Pre-compute values needed for rule evaluation
+
+        members = topology_data.get('members', [])
+        replicas = topology_data.get('replicas', [])
+
+        # Extract timelines from members to check for divergence
+        timelines = set()
+        for member in members:
+            if isinstance(member, dict) and member.get('timeline') is not None:
+                timelines.add(member.get('timeline'))
+
+        # Count unique timelines (divergence if > 1)
+        unique_timeline_count = len(timelines)
+        timeline_divergence = unique_timeline_count > 1
+
+        # Get leader info
+        leader = topology_data.get('leader', {})
+        leader_timeline = leader.get('timeline') if isinstance(leader, dict) else None
+
+        structured_data = {
+            'status': 'success',
+            'timestamp': timestamp,
+            'data': {
+                # Cluster topology data (for rules to access) - SCALARS ONLY
+                'cluster_name': topology_data.get('cluster_name'),
+                'total_nodes': topology_data.get('total_nodes', 0),
+                'replica_count': len(replicas),
+                'member_count': len(members),
+
+                # Timeline information for rule evaluation
+                'unique_timeline_count': unique_timeline_count,
+                'timeline_divergence': timeline_divergence,
+                'leader_timeline': leader_timeline,
+
+                # Leader info (dict but no lists inside)
+                'leader_name': leader.get('name') if isinstance(leader, dict) else None,
+                'leader_host': leader.get('host') if isinstance(leader, dict) else None,
+                'leader_state': leader.get('state') if isinstance(leader, dict) else None,
+
+                # Health analysis data (for rules to access)
+                'health_score': health_analysis.get('health_score', 0),
+                'critical_issue_count': len(health_analysis.get('critical_issues', [])),
+                'warning_count': len(health_analysis.get('warnings', [])),
+
+                # Metadata
+                'source': topology_data.get('source', 'unknown'),
             }
         }
 
-        return builder.build(), findings
+        return builder.build(), structured_data
 
     except Exception as e:
         logger.error(f"Failed to check Patroni topology: {e}", exc_info=True)
@@ -210,7 +251,8 @@ def _discover_via_patroni_api(connector, settings) -> Dict:
 def _discover_via_pg_views(connector) -> Dict:
     """Discover topology via PostgreSQL replication views."""
     try:
-        cursor = connector.cursor
+        # Use direct Patroni connection if available, otherwise use primary connection
+        conn, cursor = connector.get_patroni_connection()
 
         # Check if we're on the leader by querying pg_stat_replication
         cursor.execute("""
