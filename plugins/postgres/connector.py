@@ -2,6 +2,7 @@ import psycopg2
 import subprocess
 import logging
 import re
+from datetime import datetime
 from plugins.base import BasePlugin
 from plugins.common.ssh_mixin import SSHSupportMixin
 from plugins.common.output_formatters import AsciiDocFormatter
@@ -23,12 +24,28 @@ class PostgresConnector(SSHSupportMixin):
 
     def __init__(self, settings):
         self.settings = settings
-        self.conn = None  # Primary connection
+        self.conn = None  # Primary connection (may be via proxy)
         self.cursor = None
         self.version_info = {}
         self.has_pgstat = False
         self.has_pgstat_legacy_io_time = False
         self.has_pgstat_new_io_time = False
+
+        # Direct connection (bypasses proxies for Patroni/cluster checks)
+        self.patroni_direct_conn = None
+        self.patroni_direct_cursor = None
+        self.has_direct_connection = False
+
+        # Connection health tracking
+        self.reconnection_count = 0
+        self.connection_failures = []
+
+        # Fallback tracking - when queries fail through primary (PgBouncer) but succeed via direct
+        self.fallback_stats = {
+            'count': 0,
+            'queries': [],  # List of {query, timestamp, primary_error} dicts
+            'last_reset': None
+        }
 
         # Multi-environment support
         self.environment = None  # 'aurora', 'rds', 'ec2', 'bare_metal'
@@ -56,22 +73,50 @@ class PostgresConnector(SSHSupportMixin):
         try:
             # 1. Connect to primary database
             timeout = self.settings.get('statement_timeout', 30000)
-            self.conn = psycopg2.connect(
-                host=self.settings['host'],
-                port=self.settings['port'],
-                dbname=self.settings['database'],
-                user=self.settings['user'],
-                password=self.settings['password'],
-                options=f"-c statement_timeout={timeout}"
-            )
+
+            # Check if connecting via PgBouncer (doesn't support options parameter)
+            is_pgbouncer = bool(self.settings.get('pgbouncer_host'))
+
+            if is_pgbouncer:
+                # PgBouncer doesn't support startup parameters in options
+                # Explicitly pass empty options to override PGOPTIONS environment variable
+                self.conn = psycopg2.connect(
+                    host=self.settings['host'],
+                    port=self.settings['port'],
+                    dbname=self.settings['database'],
+                    user=self.settings['user'],
+                    password=self.settings['password'],
+                    options=""  # Override PGOPTIONS env var
+                )
+            else:
+                # Direct PostgreSQL connection - can use options
+                self.conn = psycopg2.connect(
+                    host=self.settings['host'],
+                    port=self.settings['port'],
+                    dbname=self.settings['database'],
+                    user=self.settings['user'],
+                    password=self.settings['password'],
+                    options=f"-c statement_timeout={timeout}"
+                )
+
             self.conn.autocommit = self.settings.get('autocommit', True)
             self.cursor = self.conn.cursor()
+
+            # Set statement timeout after connection for PgBouncer
+            if is_pgbouncer and timeout:
+                try:
+                    self.cursor.execute(f"SET statement_timeout = {timeout}")
+                except Exception as e:
+                    logger.debug(f"Could not set statement_timeout via SET command: {e}")
 
             # 2. Get version info
             self.version_info = self._get_version_info()
 
             # 3. Detect environment
             self.environment, self.environment_details = self._detect_environment()
+
+            # 3.5. Connect directly to Patroni if configured (bypasses proxies)
+            self._connect_patroni_direct()
 
             # 4. Discover cluster topology
             self.cluster_topology = self._discover_cluster_topology()
@@ -99,6 +144,50 @@ class PostgresConnector(SSHSupportMixin):
         except psycopg2.Error as e:
             print(f"❌ Error connecting to PostgreSQL: {e}")
             raise
+
+    def _connect_patroni_direct(self):
+        """
+        Establish direct connection to Patroni, bypassing proxies.
+
+        This connection is used for:
+        - Patroni topology detection
+        - Patroni failover history
+        - Patroni configuration
+        - DCS health checks
+
+        While the primary connection may go through PgBouncer/HAProxy/etc,
+        this direct connection ensures we can access Patroni-specific metadata.
+        """
+        # Check if direct connection is configured
+        patroni_direct = self.settings.get('patroni_direct', {})
+        if not patroni_direct or not patroni_direct.get('enabled'):
+            logger.debug("Direct Patroni connection not configured")
+            return
+
+        try:
+            logger.info("Connecting directly to Patroni (bypassing proxies)...")
+
+            timeout = patroni_direct.get('statement_timeout', 30000)
+
+            self.patroni_direct_conn = psycopg2.connect(
+                host=patroni_direct['host'],
+                port=patroni_direct.get('port', 5432),
+                dbname=patroni_direct.get('database', 'postgres'),
+                user=patroni_direct['user'],
+                password=patroni_direct['password'],
+                connect_timeout=patroni_direct.get('connect_timeout', 10),
+                options=f"-c statement_timeout={timeout}"
+            )
+            self.patroni_direct_conn.autocommit = True
+            self.patroni_direct_cursor = self.patroni_direct_conn.cursor()
+            self.has_direct_connection = True
+
+            logger.info(f"✅ Direct Patroni connection established: {patroni_direct['host']}:{patroni_direct.get('port', 5432)}")
+
+        except Exception as e:
+            logger.warning(f"Could not establish direct Patroni connection: {e}")
+            logger.warning("Patroni-specific checks may be limited")
+            self.has_direct_connection = False
 
     def _detect_environment(self):
         """
@@ -135,6 +224,14 @@ class PostgresConnector(SSHSupportMixin):
             details.update(rds_details)
             details['detection_method'] = 'rds_indicators'
             return 'rds', details
+
+        # Detect Patroni
+        patroni_detected, patroni_details = self._detect_patroni()
+        if patroni_detected:
+            details.update(patroni_details)
+            details['detection_method'] = 'patroni_indicators'
+            details['ha_solution'] = 'patroni'
+            return 'patroni', details
 
         # Default to bare_metal
         details['detection_method'] = 'default'
@@ -227,6 +324,184 @@ class PostgresConnector(SSHSupportMixin):
 
         except Exception as e:
             logger.error(f"Error during RDS detection: {e}")
+            return False, {'error': str(e)}
+
+    def _detect_patroni(self):
+        """
+        Detect Patroni HA cluster using multiple detection methods.
+
+        Patroni is a template for PostgreSQL HA using Python and a distributed
+        configuration store (etcd, Consul, ZooKeeper, or Kubernetes).
+
+        Uses the direct connection if available, otherwise falls back to primary connection.
+
+        Returns:
+            tuple: (is_patroni: bool, details: dict)
+        """
+        details = {}
+        confidence_score = 0
+        detection_methods = []
+
+        try:
+            # Use direct connection for Patroni detection if available
+            # This ensures we can detect Patroni even when connecting via proxies
+            if self.has_direct_connection:
+                cursor = self.patroni_direct_cursor
+                detection_conn = self.patroni_direct_conn
+                details['detection_connection'] = 'direct'
+                logger.debug("Using direct connection for Patroni detection")
+            else:
+                cursor = self.conn.cursor()
+                detection_conn = self.conn
+                details['detection_connection'] = 'primary'
+                logger.debug("Using primary connection for Patroni detection")
+
+            # Signal 1: Check for Patroni-created replication slots
+            # Patroni typically creates slots named like 'patroni' or with cluster name
+            try:
+                cursor.execute("""
+                    SELECT slot_name, slot_type, active
+                    FROM pg_replication_slots
+                    WHERE slot_name LIKE '%patroni%'
+                       OR slot_name LIKE '%pgsql%'
+                       OR slot_name ~ '^[a-z]+-cluster-[0-9]+'
+                    LIMIT 5;
+                """)
+                patroni_slots = cursor.fetchall()
+                if patroni_slots:
+                    confidence_score += 30
+                    details['patroni_replication_slots'] = [
+                        {'name': row[0], 'type': row[1], 'active': row[2]}
+                        for row in patroni_slots
+                    ]
+                    detection_methods.append('replication_slots')
+                    logger.debug(f"Found {len(patroni_slots)} Patroni-like replication slots")
+            except psycopg2.Error as e:
+                logger.debug(f"Could not check replication slots: {e}")
+
+            # Signal 2: Check for Patroni-specific application names in pg_stat_activity
+            try:
+                cursor.execute("""
+                    SELECT DISTINCT application_name
+                    FROM pg_stat_activity
+                    WHERE application_name ILIKE '%patroni%'
+                       OR application_name ILIKE '%pgsql%'
+                    LIMIT 5;
+                """)
+                patroni_apps = cursor.fetchall()
+                if patroni_apps:
+                    confidence_score += 25
+                    details['patroni_applications'] = [row[0] for row in patroni_apps]
+                    detection_methods.append('application_names')
+                    logger.debug(f"Found Patroni application names: {[row[0] for row in patroni_apps]}")
+            except psycopg2.Error as e:
+                logger.debug(f"Could not check pg_stat_activity: {e}")
+
+            # Signal 3: Check for Patroni REST API (default port 8008)
+            # Try to detect if Patroni REST API is accessible
+            try:
+                import requests
+                from requests.exceptions import RequestException
+
+                patroni_host = self.settings.get('host')
+                patroni_port = self.settings.get('patroni_port', 8008)
+
+                # Try multiple endpoints
+                endpoints_to_check = [
+                    f"http://{patroni_host}:{patroni_port}/patroni",
+                    f"http://{patroni_host}:{patroni_port}/health",
+                    f"http://{patroni_host}:{patroni_port}/leader"
+                ]
+
+                for endpoint in endpoints_to_check:
+                    try:
+                        response = requests.get(endpoint, timeout=2)
+                        if response.status_code in [200, 503]:  # 503 = replica in Patroni
+                            confidence_score += 35
+                            details['patroni_api_endpoint'] = endpoint
+                            details['patroni_api_accessible'] = True
+                            detection_methods.append('rest_api')
+
+                            # Try to parse response for cluster info
+                            try:
+                                api_data = response.json()
+                                if 'role' in api_data or 'state' in api_data or 'cluster' in api_data:
+                                    details['patroni_node_role'] = api_data.get('role', 'unknown')
+                                    details['patroni_state'] = api_data.get('state', 'unknown')
+                                    details['patroni_cluster'] = api_data.get('cluster', 'unknown')
+                                    confidence_score += 10
+                                    logger.debug(f"Patroni API returned: role={api_data.get('role')}, state={api_data.get('state')}")
+                            except Exception:
+                                pass
+                            break
+                    except RequestException:
+                        continue
+            except ImportError:
+                logger.debug("requests library not available for Patroni API detection")
+            except Exception as e:
+                logger.debug(f"Could not check Patroni REST API: {e}")
+
+            # Signal 4: Check for Patroni via SSH (if SSH is configured)
+            if self.has_ssh_support():
+                try:
+                    # Check for Patroni process
+                    result = self.execute_ssh_command("ps aux | grep -i '[p]atroni' | head -1")
+                    if result and result['success'] and result['stdout']:
+                        confidence_score += 20
+                        details['patroni_process_detected'] = True
+                        details['patroni_process_info'] = result['stdout'].strip()[:200]
+                        detection_methods.append('process_check')
+                        logger.debug("Patroni process detected via SSH")
+
+                    # Check for Patroni config file
+                    config_paths = [
+                        '/etc/patroni/patroni.yml',
+                        '/etc/patroni.yml',
+                        '/var/lib/postgresql/patroni.yml'
+                    ]
+                    for config_path in config_paths:
+                        result = self.execute_ssh_command(f"test -f {config_path} && echo 'exists' || echo 'not_found'")
+                        if result and result['success'] and 'exists' in result['stdout']:
+                            confidence_score += 15
+                            details['patroni_config_file'] = config_path
+                            detection_methods.append('config_file')
+                            logger.debug(f"Patroni config found at {config_path}")
+                            break
+                except Exception as e:
+                    logger.debug(f"Could not check Patroni via SSH: {e}")
+
+            # Signal 5: Check PostgreSQL configuration for Patroni indicators
+            try:
+                cursor.execute("""
+                    SELECT name, setting
+                    FROM pg_settings
+                    WHERE name IN ('archive_command', 'restore_command', 'primary_conninfo')
+                       AND setting ILIKE '%patroni%'
+                    LIMIT 5;
+                """)
+                patroni_settings = cursor.fetchall()
+                if patroni_settings:
+                    confidence_score += 15
+                    details['patroni_config_params'] = {row[0]: row[1] for row in patroni_settings}
+                    detection_methods.append('config_params')
+                    logger.debug(f"Found Patroni references in PostgreSQL config")
+            except psycopg2.Error as e:
+                logger.debug(f"Could not check PostgreSQL settings: {e}")
+
+            # Calculate final result
+            is_patroni = confidence_score >= 30  # Threshold for Patroni detection
+            details['confidence_score'] = confidence_score
+            details['detection_methods'] = detection_methods
+
+            if is_patroni:
+                logger.info(f"✅ Patroni cluster detected (confidence: {confidence_score}%, methods: {', '.join(detection_methods)})")
+            else:
+                logger.debug(f"Patroni not detected (confidence: {confidence_score}%)")
+
+            return is_patroni, details
+
+        except Exception as e:
+            logger.error(f"Error during Patroni detection: {e}")
             return False, {'error': str(e)}
 
     def _discover_cluster_topology(self):
@@ -487,6 +762,23 @@ class PostgresConnector(SSHSupportMixin):
         if self.environment == 'aurora' and 'aurora_version' in self.environment_details:
             print(f"   - Aurora Version: {self.environment_details['aurora_version']}")
 
+        # Patroni-specific info
+        if self.environment == 'patroni':
+            print(f"   - HA Solution: Patroni")
+            if 'patroni_node_role' in self.environment_details:
+                print(f"   - Node Role: {self.environment_details['patroni_node_role']}")
+            if 'patroni_state' in self.environment_details:
+                print(f"   - State: {self.environment_details['patroni_state']}")
+            if 'patroni_cluster' in self.environment_details:
+                print(f"   - Cluster: {self.environment_details['patroni_cluster']}")
+            if 'patroni_api_endpoint' in self.environment_details:
+                print(f"   - REST API: {self.environment_details['patroni_api_endpoint']}")
+
+            # Show detection methods used
+            detection_methods = self.environment_details.get('detection_methods', [])
+            if detection_methods:
+                print(f"   - Detected via: {', '.join(detection_methods)}")
+
         # Node topology
         if self.cluster_topology:
             # Count nodes by endpoint type
@@ -530,6 +822,13 @@ class PostgresConnector(SSHSupportMixin):
 
                 if unmapped_hosts:
                     print(f"   ⚠️  WARNING: {len(unmapped_hosts)} SSH host(s) not in replication topology!")
+
+        # Direct Patroni connection status
+        if self.has_direct_connection:
+            direct_config = self.settings.get('patroni_direct', {})
+            print(f"   - Direct Patroni Connection: ✅ Active")
+            print(f"      • Host: {direct_config.get('host')}:{direct_config.get('port', 5432)}")
+            print(f"      • Purpose: Cluster topology & Patroni checks")
 
         # pg_stat_statements info
         print(f"   - pg_stat_statements: {'Enabled' if self.has_pgstat else 'Not Found'}")
@@ -603,6 +902,22 @@ class PostgresConnector(SSHSupportMixin):
 
         return endpoints
 
+    def get_patroni_connection(self):
+        """
+        Get the appropriate connection for Patroni checks.
+
+        Returns the direct connection if available, otherwise the primary connection.
+        Patroni checks should use this method to ensure they work even when
+        connecting via proxies.
+
+        Returns:
+            tuple: (connection, cursor)
+        """
+        if self.has_direct_connection:
+            return self.patroni_direct_conn, self.patroni_direct_cursor
+        else:
+            return self.conn, self.cursor
+
     def disconnect(self):
         """Closes all database connections."""
         # Close replica connections
@@ -613,6 +928,14 @@ class PostgresConnector(SSHSupportMixin):
             except Exception as e:
                 logger.warning(f"Error closing replica connection {host}: {e}")
 
+        # Close direct Patroni connection
+        if self.patroni_direct_conn:
+            try:
+                self.patroni_direct_conn.close()
+                logger.debug("Closed direct Patroni connection")
+            except Exception as e:
+                logger.warning(f"Error closing direct Patroni connection: {e}")
+
         # Close primary connection
         if self.conn:
             self.conn.close()
@@ -620,6 +943,72 @@ class PostgresConnector(SSHSupportMixin):
 
         # Disconnect SSH
         self.disconnect_all_ssh()
+
+    def _reconnect_primary(self):
+        """
+        Reconnect to the primary database after connection loss.
+
+        This is called when the primary connection is detected as closed during query execution.
+        """
+        from datetime import datetime
+
+        try:
+            # Track reconnection attempt
+            self.reconnection_count += 1
+
+            # Close existing connection if it exists
+            if self.conn:
+                try:
+                    self.conn.close()
+                except:
+                    pass
+
+            # Reconnect using same logic as initial connection
+            timeout = self.settings.get('statement_timeout', 30000)
+            is_pgbouncer = bool(self.settings.get('pgbouncer_host'))
+
+            if is_pgbouncer:
+                # PgBouncer doesn't support startup parameters in options
+                self.conn = psycopg2.connect(
+                    host=self.settings['host'],
+                    port=self.settings['port'],
+                    dbname=self.settings['database'],
+                    user=self.settings['user'],
+                    password=self.settings['password'],
+                    options=""  # Override PGOPTIONS env var
+                )
+            else:
+                # Direct PostgreSQL connection - can use options
+                self.conn = psycopg2.connect(
+                    host=self.settings['host'],
+                    port=self.settings['port'],
+                    dbname=self.settings['database'],
+                    user=self.settings['user'],
+                    password=self.settings['password'],
+                    options=f"-c statement_timeout={timeout}"
+                )
+
+            self.conn.autocommit = self.settings.get('autocommit', True)
+            self.cursor = self.conn.cursor()
+
+            # Set statement timeout after connection for PgBouncer
+            if is_pgbouncer and timeout:
+                try:
+                    self.cursor.execute(f"SET statement_timeout = {timeout}")
+                except Exception as e:
+                    logger.debug(f"Could not set statement_timeout via SET command: {e}")
+
+            logger.info(f"Primary connection successfully reconnected (attempt #{self.reconnection_count})")
+
+        except psycopg2.Error as e:
+            # Track failure
+            self.connection_failures.append({
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'error': str(e),
+                'attempt': self.reconnection_count
+            })
+            logger.error(f"Failed to reconnect to primary database: {e}")
+            raise
 
     def _get_version_info(self):
         """Get PostgreSQL version information."""
@@ -708,9 +1097,27 @@ class PostgresConnector(SSHSupportMixin):
                 'environment_details': self.environment_details or {}
             }
 
-    def execute_query(self, query, params=None, is_check=False, return_raw=False):
-        """Executes a query and returns formatted and raw results."""
+    def execute_query(self, query, params=None, is_check=False, return_raw=False, allow_fallback=False):
+        """Executes a query and returns formatted and raw results.
+
+        Args:
+            query: SQL query to execute
+            params: Query parameters
+            is_check: If True, return single value check result
+            return_raw: If True, return tuple of (formatted, raw_results)
+            allow_fallback: If True and query fails through primary connection (PgBouncer),
+                          automatically retry through direct connection to PostgreSQL
+
+        Returns:
+            Formatted results, or tuple of (formatted, raw) if return_raw=True
+        """
         try:
+            # Check if connection is closed and reconnect if needed
+            if not self.conn or self.conn.closed:
+                logger.warning("Primary connection closed unexpectedly, attempting to reconnect...")
+                self._reconnect_primary()
+
+            # Check if cursor is closed and recreate if needed
             if not self.cursor or self.cursor.closed:
                 self.cursor = self.conn.cursor()
 
@@ -741,8 +1148,60 @@ class PostgresConnector(SSHSupportMixin):
         except psycopg2.Error as e:
             if self.conn:
                 self.conn.rollback()
+
+            # Try fallback to direct connection if enabled and available
+            if allow_fallback and self.has_direct_connection:
+                logger.warning(f"Query failed through primary connection (PgBouncer): {e}")
+                logger.info("Retrying query through direct PostgreSQL connection...")
+                try:
+                    # Record the fallback event before attempting
+                    self._record_fallback_event(query, str(e))
+                    return self._execute_query_direct(query, params, is_check, return_raw)
+                except Exception as fallback_error:
+                    logger.error(f"Fallback query also failed: {fallback_error}")
+                    error_str = f"[ERROR]\n====\nQuery failed through both PgBouncer and direct connection.\nPgBouncer error: {e}\nDirect error: {fallback_error}\n====\n"
+                    return (error_str, {"error": str(e), "fallback_error": str(fallback_error), "query": query}) if return_raw else error_str
+
             error_str = f"[ERROR]\n====\nQuery failed: {e}\n====\n"
             return (error_str, {"error": str(e), "query": query}) if return_raw else error_str
+
+    def _execute_query_direct(self, query, params=None, is_check=False, return_raw=False):
+        """Execute query directly against PostgreSQL (bypassing PgBouncer).
+
+        This is used as a fallback when queries through PgBouncer fail.
+        """
+        if not self.patroni_direct_conn or self.patroni_direct_conn.closed:
+            raise Exception("Direct connection not available or closed")
+
+        if not self.patroni_direct_cursor or self.patroni_direct_cursor.closed:
+            self.patroni_direct_cursor = self.patroni_direct_conn.cursor()
+
+        self.patroni_direct_cursor.execute(query, params)
+
+        if is_check:
+            result = self.patroni_direct_cursor.fetchone()[0] if self.patroni_direct_cursor.rowcount > 0 else ""
+            logger.info(f"✓ Query succeeded via direct connection (bypassed PgBouncer)")
+            return (str(result), result) if return_raw else str(result)
+
+        if self.patroni_direct_cursor.description is None:
+            return ("", []) if return_raw else ""
+
+        columns = [desc[0] for desc in self.patroni_direct_cursor.description]
+        results = self.patroni_direct_cursor.fetchall()
+        raw_results = [dict(zip(columns, row)) for row in results]
+
+        if not results:
+            return "[NOTE]\n====\nNo results returned.\n====\n", [] if return_raw else ""
+
+        table = ['|===', '|' + '|'.join(columns)]
+        for row in results:
+            sanitized_row = [str(v).replace('|', '\\|') if v is not None else '' for v in row]
+            table.append('|' + '|'.join(sanitized_row))
+        table.append('|===')
+        formatted = '\n'.join(table)
+
+        logger.info(f"✓ Query succeeded via direct connection (bypassed PgBouncer)")
+        return (formatted, raw_results) if return_raw else formatted
 
     def has_select_privilege(self, view_name):
         """Checks if the current user has SELECT privilege on a given view/table."""
@@ -753,3 +1212,50 @@ class PostgresConnector(SSHSupportMixin):
         except Exception as e:
             print(f"Warning: Could not check privilege for {view_name}: {e}")
             return False
+
+    def _record_fallback_event(self, query: str, primary_error: str):
+        """
+        Record when a query failed through primary connection (PgBouncer)
+        but succeeded via direct connection.
+
+        Args:
+            query: The SQL query that failed through PgBouncer
+            primary_error: The error message from PgBouncer
+        """
+        # Truncate query for readability (first 100 chars)
+        query_preview = query[:100] + '...' if len(query) > 100 else query
+
+        self.fallback_stats['count'] += 1
+        self.fallback_stats['queries'].append({
+            'query': query_preview,
+            'full_query': query,
+            'primary_error': primary_error,
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        })
+
+        logger.info(f"Fallback event recorded (total: {self.fallback_stats['count']})")
+
+    def get_fallback_stats(self) -> dict:
+        """
+        Get current fallback statistics.
+
+        Returns:
+            Dictionary with fallback count and query details
+        """
+        return {
+            'count': self.fallback_stats['count'],
+            'queries': self.fallback_stats['queries'],
+            'last_reset': self.fallback_stats['last_reset']
+        }
+
+    def reset_fallback_stats(self):
+        """
+        Reset fallback statistics.
+        Typically called at the start of a new health check run.
+        """
+        self.fallback_stats = {
+            'count': 0,
+            'queries': [],
+            'last_reset': datetime.utcnow().isoformat() + 'Z'
+        }
+        logger.debug("Fallback stats reset")
