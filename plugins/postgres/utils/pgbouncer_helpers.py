@@ -19,7 +19,8 @@ def skip_if_not_pgbouncer(settings: Dict) -> Optional[Tuple[str, Dict]]:
 
     This function performs a quick, low-cost detection:
     1. If explicit PgBouncer config provided -> Proceed (user wants monitoring)
-    2. If no config AND quick detection fails -> Skip silently
+    2. If Aurora environment -> Skip (Aurora never has PgBouncer)
+    3. If no config AND quick detection fails -> Skip silently
 
     Args:
         settings: Configuration dictionary
@@ -39,6 +40,16 @@ def skip_if_not_pgbouncer(settings: Dict) -> Optional[Tuple[str, Dict]]:
     if has_explicit_config:
         logger.debug("PgBouncer config provided, proceeding with check")
         return None
+
+    # Aurora never has PgBouncer - skip automatically
+    if settings.get('is_aurora'):
+        logger.debug("Aurora environment detected, skipping PgBouncer check")
+        builder = CheckContentBuilder()
+        builder.text("⏭️  Skipped - PgBouncer not available on Aurora")
+        return builder.build(), {
+            'status': 'skipped',
+            'reason': 'Aurora environment (PgBouncer not supported)'
+        }
 
     # No explicit config - try quick detection
     logger.debug("No PgBouncer config found, attempting quick detection")

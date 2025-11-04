@@ -5,9 +5,12 @@ Fetches CloudWatch metrics and RDS instance details for AWS RDS/Aurora environme
 Uses the connector's AWS clients and topology information for automatic discovery.
 """
 
-from plugins.postgres.utils.aws import get_cloudwatch_metrics, get_instance_details
+from plugins.postgres.utils.aws import get_cloudwatch_metrics, get_instance_details, discover_rds_proxy
 from plugins.common.check_helpers import CheckContentBuilder
 from decimal import Decimal
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_weight():
     """Returns the importance score for this module."""
@@ -85,6 +88,16 @@ def run_aws_cloudwatch_metrics(connector, settings):
             {'Namespace': 'AWS/RDS', 'MetricName': 'AuroraReplicaLag', 'Statistic': 'Average', 'Unit': 'Milliseconds'},
         ]
 
+        # Detect if Aurora and get cluster ID for cluster-level metrics
+        is_aurora = connector.environment == 'aurora'
+        cluster_id = None
+        if is_aurora:
+            # Extract cluster ID from topology
+            for node in connector.cluster_topology:
+                if node.get('cluster_id'):
+                    cluster_id = node['cluster_id']
+                    break
+
         # Iterate through all instances in the topology
         for instance_info in instance_identifiers:
             db_identifier = instance_info['id']
@@ -101,15 +114,67 @@ def run_aws_cloudwatch_metrics(connector, settings):
 
                 # Display instance details
                 detail_lines = [
-                    f"- **Instance Class**: {instance_details.get('instance_class')}",
-                    f"- **Allocated Storage**: {instance_details.get('allocated_storage_gb')} GB"
+                    f"- **Instance Class**: {instance_details.get('instance_class')}"
                 ]
+
+                # For Aurora, don't show the meaningless AllocatedStorage
+                # We'll get real storage from VolumeBytesUsed metric below
+                if not is_aurora:
+                    detail_lines.append(f"- **Allocated Storage**: {instance_details.get('allocated_storage_gb')} GB")
+
                 builder.add_lines(detail_lines)
 
             # --- Fetch CloudWatch Metrics for this Instance ---
             db_dimensions = [{'Name': 'DBInstanceIdentifier', 'Value': db_identifier}]
             fetched_db_metrics = get_cloudwatch_metrics(aws_region, db_dimensions, db_metrics_to_fetch)
             normalized_db_metrics = _transform_aws_metrics(fetched_db_metrics)
+
+            # For Aurora writer, fetch cluster-level storage metric separately
+            if is_aurora and cluster_id and instance_role.lower() == 'writer':
+                cluster_metrics_to_fetch = [
+                    {'Namespace': 'AWS/RDS', 'MetricName': 'VolumeBytesUsed', 'Statistic': 'Average'}
+                ]
+                cluster_dimensions = [{'Name': 'DBClusterIdentifier', 'Value': cluster_id}]
+                fetched_cluster_metrics = get_cloudwatch_metrics(aws_region, cluster_dimensions, cluster_metrics_to_fetch)
+                normalized_cluster_metrics = _transform_aws_metrics(fetched_cluster_metrics)
+
+                # Extract and display storage prominently
+                if normalized_cluster_metrics:
+                    volume_bytes = next((m['value'] for m in normalized_cluster_metrics if m['metric_name'] == 'VolumeBytesUsed'), None)
+                    if volume_bytes and isinstance(volume_bytes, (int, float)):
+                        storage_gb = float(volume_bytes) / (1024**3)
+                        storage_tb = storage_gb / 1024
+
+                        # Aurora PostgreSQL has a 128 TiB limit
+                        max_storage_tib = 128
+                        percent_used = (storage_tb / max_storage_tib) * 100
+
+                        builder.blank()
+                        builder.text(f"**Aurora Cluster Storage (Billable)**")
+                        builder.text(f"- **Used**: {storage_gb:.2f} GB ({storage_tb:.2f} TB)")
+                        builder.text(f"- **Limit**: {max_storage_tib} TiB (Aurora PostgreSQL maximum)")
+                        builder.text(f"- **Utilization**: {percent_used:.1f}% of maximum capacity")
+                        builder.blank()
+
+                        # Add informational note explaining the difference
+                        builder.note(
+                            "**Aurora Storage Architecture**\n\n"
+                            "This is the **billable storage** from AWS CloudWatch (`VolumeBytesUsed`), which shows actual "
+                            "storage consumption in Aurora's distributed storage layer. This may differ from the logical "
+                            "database size reported by PostgreSQL (`pg_database_size()`) due to:\n\n"
+                            "- Aurora's log-structured storage optimization\n"
+                            "- Exclusion of temporary files and non-billable internal allocations\n"
+                            "- Efficient compression and replication schemes\n\n"
+                            "The billable storage is typically 30-40% of the logical size, which is normal and expected. "
+                            "Use this metric for capacity planning and cost estimation."
+                        )
+                        builder.blank()
+
+                    # Add cluster metrics to the main list
+                    for metric in normalized_cluster_metrics:
+                        metric['instance_id'] = cluster_id
+                        metric['role'] = 'cluster'
+                    all_normalized_metrics.extend(normalized_cluster_metrics)
 
             if normalized_db_metrics:
                 # Add role context to metrics
@@ -119,7 +184,7 @@ def run_aws_cloudwatch_metrics(connector, settings):
                 all_normalized_metrics.extend(normalized_db_metrics)
 
                 # Format metrics for display
-                builder.add("\n**Metrics (Last 24 hours, hourly average)**\n")
+                builder.add("\n**Instance Metrics (Last 24 hours, hourly average)**\n")
                 metric_table = _format_metrics_table(normalized_db_metrics)
                 builder.table(metric_table)
             else:
@@ -129,8 +194,30 @@ def run_aws_cloudwatch_metrics(connector, settings):
         if all_instance_details:
             structured_data["instance_details"] = {"status": "success", "data": all_instance_details}
 
-        # --- Fetch RDS Proxy Metrics (if configured) ---
+        # --- Discover or Use Configured RDS Proxy ---
         rds_proxy_name = settings.get('rds_proxy_name')
+
+        # If not explicitly configured, try to auto-discover
+        if not rds_proxy_name and instance_identifiers:
+            # Try to discover proxy using first instance or cluster info
+            first_instance = instance_identifiers[0]['id']
+
+            # Check if we have cluster information from topology
+            cluster_id = None
+            for node in connector.cluster_topology:
+                if node.get('cluster_id'):
+                    cluster_id = node['cluster_id']
+                    break
+
+            discovered_proxy = discover_rds_proxy(aws_region, first_instance, cluster_id)
+            if discovered_proxy:
+                rds_proxy_name = discovered_proxy
+                logger.info(f"Auto-discovered RDS Proxy: {rds_proxy_name}")
+                builder.blank()
+                builder.text(f"ℹ️  _Auto-discovered RDS Proxy: **{rds_proxy_name}**_")
+                builder.blank()
+
+        # --- Fetch RDS Proxy Metrics (if configured or discovered) ---
         if rds_proxy_name:
             builder.h4(f"RDS Proxy: {rds_proxy_name}")
 
@@ -149,7 +236,19 @@ def run_aws_cloudwatch_metrics(connector, settings):
                 proxy_table = _format_metrics_table(normalized_proxy_metrics)
                 builder.table(proxy_table)
             else:
-                builder.note("No RDS Proxy CloudWatch metrics could be fetched. Verify the proxy name and permissions.")
+                builder.warning(
+                    "**RDS Proxy Metrics Unavailable**\n\n"
+                    f"Could not fetch CloudWatch metrics for RDS Proxy '{rds_proxy_name}'.\n\n"
+                    "**Possible Causes:**\n"
+                    "- IAM user/role lacks `cloudwatch:GetMetricStatistics` permission for RDS Proxy resources\n"
+                    "- RDS Proxy name is incorrect or doesn't exist\n"
+                    "- RDS Proxy is in a different AWS region\n\n"
+                    "**Required IAM Permissions:**\n"
+                    "- `rds:DescribeDBProxies`\n"
+                    "- `cloudwatch:GetMetricStatistics` for namespace `AWS/RDS` with dimension `DBProxyName`\n\n"
+                    "To monitor RDS Proxy connection efficiency, please ensure your AWS credentials have "
+                    "the necessary permissions to access RDS Proxy CloudWatch metrics."
+                )
 
         # --- Final Structured Data ---
         structured_data["cloud_metrics"] = {"status": "success", "data": all_normalized_metrics}

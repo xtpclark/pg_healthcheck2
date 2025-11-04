@@ -226,9 +226,9 @@ def _analyze_health(health_data: Dict) -> Dict:
     """
     issues = []
     health_score = 100
-    pools = health_data.get('pools', [])
+    pools = health_data.get('pools') or []
     config = health_data.get('config') or {}
-    stats = health_data.get('stats', [])
+    stats = health_data.get('stats') or []
 
     # Get configuration values (handle None config gracefully)
     pool_mode = config.get('pool_mode', 'session') if config else 'session'
