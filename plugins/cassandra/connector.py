@@ -1,8 +1,9 @@
 import json
 import logging
-from cassandra.cluster import Cluster
+from cassandra.cluster import Cluster, ExecutionProfile, EXEC_PROFILE_DEFAULT
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.query import dict_factory
+from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
 from typing import Dict, List, Optional
 
 # Import shared utilities
@@ -64,17 +65,21 @@ class CassandraConnector(SSHSupportMixin):
         self.cluster = None
         self.session = None
         self.version_info = {}
-        
+
         # Initialize formatters and parsers
         self.formatter = AsciiDocFormatter()
         self.parser = NodetoolParser()
-        
+
         # Multi-node support
         self.cluster_nodes = []  # List of discovered node addresses
-        
+
+        # Environment detection
+        self.environment = None
+        self.environment_details = {}
+
         # Initialize SSH support (from mixin)
         self.initialize_ssh()
-        
+
         logger.info("Cassandra connector initialized")
 
     def connect(self):
@@ -82,22 +87,48 @@ class CassandraConnector(SSHSupportMixin):
         try:
             contact_points = self.settings.get('hosts', ['localhost'])
             port = self.settings.get('port', 9042)
-            
+
             auth_provider = None
             if self.settings.get('user') and self.settings.get('password'):
                 auth_provider = PlainTextAuthProvider(
                     username=self.settings.get('user'),
                     password=self.settings.get('password')
                 )
-            
+
+            # Setup load balancing policy (DC-aware for multi-DC clusters)
+            local_dc = self.settings.get('local_dc') or self.settings.get('datacenter')
+            load_balancing_policy = None
+
+            if local_dc:
+                # Use DC-aware policy wrapped with token-aware for optimal routing
+                load_balancing_policy = TokenAwarePolicy(
+                    DCAwareRoundRobinPolicy(local_dc=local_dc)
+                )
+                logger.info(f"Using DC-aware load balancing policy for datacenter: {local_dc}")
+
+            # Create execution profile
+            execution_profiles = None
+            if load_balancing_policy:
+                # When using profiles, row_factory must be in the profile
+                execution_profiles = {
+                    EXEC_PROFILE_DEFAULT: ExecutionProfile(
+                        load_balancing_policy=load_balancing_policy,
+                        row_factory=dict_factory
+                    )
+                }
+
             self.cluster = Cluster(
                 contact_points=contact_points,
                 port=port,
-                auth_provider=auth_provider
+                auth_provider=auth_provider,
+                execution_profiles=execution_profiles
             )
-            
+
             self.session = self.cluster.connect()
-            self.session.row_factory = dict_factory
+
+            # Only set row_factory on session if NOT using execution profiles
+            if not execution_profiles:
+                self.session.row_factory = dict_factory
             
             # Set keyspace if specified
             keyspace = self.settings.get('keyspace')
@@ -112,7 +143,10 @@ class CassandraConnector(SSHSupportMixin):
             # Map SSH hosts to Cassandra nodes
             if connected_ssh_hosts:
                 self._map_ssh_hosts_to_nodes()
-            
+
+            # Detect environment (Instaclustr vs self-hosted)
+            self._detect_environment()
+
             # Display connection status
             print("✅ Successfully connected to Cassandra cluster")
             
@@ -267,7 +301,7 @@ class CassandraConnector(SSHSupportMixin):
             version_string = list(rows)[0]['release_version'] if rows else 'Unknown'
             parts = version_string.split('.')
             major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
-            
+
             return {
                 'version_string': version_string,
                 'major_version': major
@@ -276,12 +310,57 @@ class CassandraConnector(SSHSupportMixin):
             logger.warning(f"Could not fetch version: {e}")
             return {'version_string': 'Unknown', 'major_version': 0}
 
+    def _detect_environment(self):
+        """
+        Detect the hosting environment (Instaclustr managed vs self-hosted)
+
+        Detection logic:
+        1. Instaclustr: If instaclustr_cluster_id is configured
+        2. Self-hosted: Otherwise
+
+        Updates self.environment and self.environment_details
+        """
+        try:
+            # Check for Instaclustr configuration
+            cluster_id = self.settings.get('instaclustr_cluster_id')
+            api_username = self.settings.get('instaclustr_api_username')
+            api_key = self.settings.get('instaclustr_api_key')
+
+            if cluster_id:
+                self.environment = 'instaclustr_managed'
+                self.environment_details = {
+                    'provider': 'Instaclustr',
+                    'cluster_id': cluster_id,
+                    'api_configured': bool(api_username and api_key),
+                    'api_available': bool(api_username and api_key),
+                    'ssh_available': self.has_ssh_support(),
+                    'monitoring_via': 'API' if (api_username and api_key) else 'CQL only'
+                }
+                logger.info(f"Detected Instaclustr managed environment: {cluster_id}")
+                return
+
+            # Default to self-hosted
+            self.environment = 'self_hosted'
+            self.environment_details = {
+                'ssh_available': self.has_ssh_support(),
+                'node_count': len(self.cluster_nodes) if self.cluster_nodes else 0,
+                'datacenter': self.settings.get('local_dc') or self.settings.get('datacenter', 'unknown')
+            }
+            logger.info("Detected self-hosted Cassandra environment")
+
+        except Exception as e:
+            logger.warning(f"Could not detect environment: {e}")
+            self.environment = 'unknown'
+            self.environment_details = {}
+
     def get_db_metadata(self):
-        """Fetches basic database metadata."""
+        """Fetches basic database metadata including environment context."""
         keyspace = self.session.keyspace if self.session else 'system'
         return {
             'version': self.version_info.get('version_string', 'N/A'),
-            'db_name': keyspace
+            'db_name': keyspace,
+            'environment': self.environment or 'unknown',
+            'environment_details': self.environment_details or {}
         }
 
     def execute_query(self, query, params=None, return_raw=False):
