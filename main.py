@@ -147,7 +147,13 @@ class HealthCheck:
             analysis_rules = self.active_plugin.get_rules_config()
             db_metadata = self.connector.get_db_metadata()
             self.analysis_output = generate_dynamic_prompt(self.all_structured_findings, self.settings, analysis_rules, db_metadata, self.active_plugin)
-        
+
+        # Add db_metadata to structured findings for trend tracking
+        if hasattr(self.connector, 'get_db_metadata'):
+            db_metadata = self.connector.get_db_metadata()
+            if db_metadata:
+                self.all_structured_findings['db_metadata'] = db_metadata
+
         self.all_structured_findings['summarized_findings'] = self.analysis_output.get('summarized_findings', {})
         self.all_structured_findings['prompt_template_name'] = self.settings.get('prompt_template', 'default_prompt.j2')
         self.all_structured_findings['execution_context'] = {
