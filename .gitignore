@@ -219,3 +219,10 @@ setup_cron.sh
 module_template_generator.py
 
 doc_source/_build
+
+# Certificates and keys (exclude all except README)
+config/certs/*
+!config/certs/README.adoc
+
+# Instaclustr configs with credentials
+config/*_instaclustr.yaml

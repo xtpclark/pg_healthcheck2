@@ -2,6 +2,7 @@
 
 import logging
 import json
+import socket
 from kafka import KafkaAdminClient, KafkaConsumer
 from kafka.admin import NewTopic, ConfigResource, ConfigResourceType
 from plugins.common.ssh_mixin import SSHSupportMixin
@@ -34,11 +35,59 @@ class KafkaConnector(SSHSupportMixin):
             if isinstance(bootstrap_servers, str):
                 bootstrap_servers = [s.strip() for s in bootstrap_servers.split(',')]
 
-            self.admin_client = KafkaAdminClient(
-                bootstrap_servers=bootstrap_servers,
-                client_id='healthcheck_client',
-                request_timeout_ms=30000
-            )
+            # Build connection parameters with higher timeouts for cloud/managed services
+            connection_params = {
+                'bootstrap_servers': bootstrap_servers,
+                'client_id': 'healthcheck_client',
+                'request_timeout_ms': 60000,  # 60 seconds for cloud connections
+                'connections_max_idle_ms': 540000,  # 9 minutes
+                'metadata_max_age_ms': 300000,  # 5 minutes
+                'socket_options': [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+            }
+
+            # Specify API version for newer Kafka brokers
+            # Convert list from YAML to tuple if present
+            api_version = self.settings.get('api_version')
+            if api_version:
+                if isinstance(api_version, list):
+                    api_version = tuple(api_version)
+                connection_params['api_version'] = api_version
+                logger.info(f"Using API version: {api_version}")
+
+            # Add security configuration if present
+            security_protocol = self.settings.get('security_protocol')
+            if security_protocol:
+                connection_params['security_protocol'] = security_protocol
+                logger.info(f"Using security protocol: {security_protocol}")
+
+                # SASL configuration
+                if 'SASL' in security_protocol:
+                    sasl_mechanism = self.settings.get('sasl_mechanism', 'PLAIN')
+                    connection_params['sasl_mechanism'] = sasl_mechanism
+                    connection_params['sasl_plain_username'] = self.settings.get('sasl_username')
+                    connection_params['sasl_plain_password'] = self.settings.get('sasl_password')
+                    logger.info(f"Using SASL mechanism: {sasl_mechanism}")
+
+                # SSL/TLS configuration
+                if 'SSL' in security_protocol:
+                    ssl_cafile = self.settings.get('ssl_cafile')
+                    if ssl_cafile:
+                        connection_params['ssl_cafile'] = ssl_cafile
+                        logger.info(f"Using SSL CA file: {ssl_cafile}")
+
+                    # Optional: client certificate for mTLS
+                    ssl_certfile = self.settings.get('ssl_certfile')
+                    ssl_keyfile = self.settings.get('ssl_keyfile')
+                    if ssl_certfile and ssl_keyfile:
+                        connection_params['ssl_certfile'] = ssl_certfile
+                        connection_params['ssl_keyfile'] = ssl_keyfile
+                        logger.info("Using mTLS with client certificate")
+
+                    # SSL check hostname (default True for security)
+                    if 'ssl_check_hostname' in self.settings:
+                        connection_params['ssl_check_hostname'] = self.settings['ssl_check_hostname']
+
+            self.admin_client = KafkaAdminClient(**connection_params)
 
             self._version_info = self._get_version_info()
             
@@ -445,8 +494,33 @@ class KafkaConnector(SSHSupportMixin):
     
             partitions = list(committed_offsets.keys())
             logger.info(f"Partitions for {group_id}: {partitions}")
-            
-            consumer = KafkaConsumer(bootstrap_servers=self.settings.get('bootstrap_servers'))
+
+            # Build consumer parameters with same security config
+            consumer_params = {'bootstrap_servers': self.settings.get('bootstrap_servers')}
+
+            # Add security configuration if present
+            security_protocol = self.settings.get('security_protocol')
+            if security_protocol:
+                consumer_params['security_protocol'] = security_protocol
+
+                if 'SASL' in security_protocol:
+                    consumer_params['sasl_mechanism'] = self.settings.get('sasl_mechanism', 'PLAIN')
+                    consumer_params['sasl_plain_username'] = self.settings.get('sasl_username')
+                    consumer_params['sasl_plain_password'] = self.settings.get('sasl_password')
+
+                if 'SSL' in security_protocol:
+                    ssl_cafile = self.settings.get('ssl_cafile')
+                    if ssl_cafile:
+                        consumer_params['ssl_cafile'] = ssl_cafile
+                    ssl_certfile = self.settings.get('ssl_certfile')
+                    ssl_keyfile = self.settings.get('ssl_keyfile')
+                    if ssl_certfile and ssl_keyfile:
+                        consumer_params['ssl_certfile'] = ssl_certfile
+                        consumer_params['ssl_keyfile'] = ssl_keyfile
+                    if 'ssl_check_hostname' in self.settings:
+                        consumer_params['ssl_check_hostname'] = self.settings['ssl_check_hostname']
+
+            consumer = KafkaConsumer(**consumer_params)
             end_offsets = consumer.end_offsets(partitions)
             consumer.close()
             
