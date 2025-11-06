@@ -113,7 +113,16 @@ class HealthCheck:
         collect data, optionally triggers AI analysis, embeds metadata, ships
         the data to a trend analysis platform, and saves the final output.
         """
-        self.connector.connect()
+        try:
+            self.connector.connect()
+        except ConnectionError as e:
+            print(f"❌ Failed to connect to {self.settings.get('db_type', 'database')}: {e}")
+            print("Health check cannot proceed without a connection.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"❌ Unexpected error during connection: {e}")
+            print("Health check cannot proceed.")
+            sys.exit(1)
 
         builder = ReportBuilder(self.connector, self.settings, self.active_plugin, self.report_sections, self.app_version)
         self.adoc_content, self.all_structured_findings = builder.build()
