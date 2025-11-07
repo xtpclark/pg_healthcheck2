@@ -326,16 +326,33 @@ def detect_jmx_port(ssh_client) -> int:
 # Strategy Helper Functions
 # ============================================================================
 
-def _try_local_prometheus(metric_def: Dict[str, Any], connector, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Try to collect metric using Local Prometheus via SSH."""
-    if not metric_def.get('local_prometheus'):
-        return None
+def _fetch_all_prometheus_metrics(connector, settings: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Fetch ALL Prometheus metrics from all hosts ONCE and cache them.
 
+    This dramatically improves performance by avoiding repeated SSH + curl calls.
+    Instead of fetching metrics 15-20 times per health check run, we fetch once
+    and parse locally.
+
+    Returns:
+        Dict mapping host -> full metrics output
+    """
+    # Check if connector has cache attribute
+    if not hasattr(connector, '_prometheus_metrics_cache'):
+        connector._prometheus_metrics_cache = {}
+
+    # If cache is already populated, return it
+    if connector._prometheus_metrics_cache:
+        logger.debug(f"Using cached Prometheus metrics for {len(connector._prometheus_metrics_cache)} hosts")
+        return connector._prometheus_metrics_cache
+
+    # Fetch metrics from all hosts
     ssh_hosts = connector.get_ssh_hosts() if hasattr(connector, 'get_ssh_hosts') else []
     if not ssh_hosts:
-        return None
+        return {}
 
-    node_metrics = {}
+    logger.info(f"Fetching Prometheus metrics from {len(ssh_hosts)} hosts (will cache for all checks)...")
+
     for host in ssh_hosts:
         try:
             ssh_client = connector.get_ssh_manager(host)
@@ -345,14 +362,104 @@ def _try_local_prometheus(metric_def: Dict[str, Any], connector, settings: Dict[
             app_name = getattr(connector, 'technology_name', 'prometheus')
             prom_port = detect_prometheus_exporter_port(ssh_client, app_name)
             if not prom_port:
+                logger.debug(f"No Prometheus port found for {host}")
                 continue
 
-            value = collect_from_local_prometheus_exporter(metric_def, ssh_client, prom_port)
-            if value is not None:
-                node_metrics[host] = value
+            # Fetch ALL metrics once
+            cmd = f'curl -s http://localhost:{prom_port}/metrics 2>/dev/null'
+            stdout, stderr, exit_code = ssh_client.execute_command(cmd)
+
+            if stdout and exit_code == 0:
+                connector._prometheus_metrics_cache[host] = stdout
+                logger.debug(f"Cached {len(stdout)} bytes of metrics from {host}")
+            else:
+                logger.debug(f"Failed to fetch metrics from {host}: exit_code={exit_code}")
+
         except Exception as e:
-            logger.debug(f"Local Prometheus collection failed for {host}: {e}")
+            logger.debug(f"Failed to fetch Prometheus metrics from {host}: {e}")
             continue
+
+    logger.info(f"Cached Prometheus metrics from {len(connector._prometheus_metrics_cache)}/{len(ssh_hosts)} hosts")
+    return connector._prometheus_metrics_cache
+
+
+def _parse_metric_from_cache(metric_name: str, cached_metrics: str) -> Optional[float]:
+    """
+    Parse a specific metric from cached Prometheus metrics output.
+
+    Args:
+        metric_name: Name of the metric to extract (supports regex patterns)
+        cached_metrics: Full metrics output from Prometheus endpoint
+
+    Returns:
+        Metric value as float, or None if not found
+    """
+    if not cached_metrics:
+        return None
+
+    try:
+        # Look for the metric line (handle both simple and labeled metrics)
+        # Pattern: metric_name value OR metric_name{labels} value
+        pattern = f'^{metric_name}(\\{{|\\s)'
+
+        for line in cached_metrics.split('\n'):
+            if line.startswith('#'):
+                continue
+
+            if re.match(pattern, line):
+                # Extract numeric value (last or second-to-last token)
+                tokens = line.strip().split()
+                if len(tokens) >= 2:
+                    # Try second token (most common)
+                    try:
+                        return float(tokens[1])
+                    except ValueError:
+                        pass
+
+                    # Try last token
+                    try:
+                        return float(tokens[-1])
+                    except ValueError:
+                        pass
+
+                # Fallback: regex extraction
+                match = re.search(r'[\s}]([\d.eE+-]+)(?:\s|$)', line)
+                if match:
+                    return float(match.group(1))
+
+        return None
+
+    except Exception as e:
+        logger.debug(f"Failed to parse metric {metric_name}: {e}")
+        return None
+
+
+def _try_local_prometheus(metric_def: Dict[str, Any], connector, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Try to collect metric using Local Prometheus via SSH (with caching)."""
+    if not metric_def.get('local_prometheus'):
+        return None
+
+    # Fetch and cache all metrics from all hosts (only happens once)
+    metrics_cache = _fetch_all_prometheus_metrics(connector, settings)
+    if not metrics_cache:
+        return None
+
+    # Extract metric name from definition
+    local_prom_config = metric_def.get('local_prometheus')
+    if isinstance(local_prom_config, dict):
+        local_metric = local_prom_config.get('metric')
+    else:
+        local_metric = local_prom_config
+
+    if not local_metric:
+        return None
+
+    # Parse the specific metric from each host's cached data
+    node_metrics = {}
+    for host, cached_metrics in metrics_cache.items():
+        value = _parse_metric_from_cache(local_metric, cached_metrics)
+        if value is not None:
+            node_metrics[host] = value
 
     if node_metrics:
         return {
@@ -361,7 +468,7 @@ def _try_local_prometheus(metric_def: Dict[str, Any], connector, settings: Dict[
             'cluster_total': sum(node_metrics.values()),
             'cluster_avg': sum(node_metrics.values()) / len(node_metrics) if node_metrics else 0,
             'node_count': len(node_metrics),
-            'metadata': {}
+            'metadata': {'cache_size': len(metrics_cache)}
         }
     return None
 
@@ -420,12 +527,16 @@ def collect_metric_adaptive(
     settings: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
     """
-    Collect metric using best available method (waterfall approach).
+    Collect metric using connector's determined strategy, with fallback to alternatives.
 
-    Tries collection strategies in order:
-    1. Instaclustr Prometheus API (external, no SSH)
-    2. Local Prometheus exporter via SSH (port 7500)
-    3. Standard JMX via SSH (port 9999)
+    The connector determines the optimal collection strategy at connection time
+    via _determine_metric_collection_strategy(). This function prioritizes that
+    strategy, but will try alternatives if the metric doesn't support the primary
+    strategy (e.g., metric has 'local_prometheus': None).
+
+    Strategy Priority:
+    1. Connector's determined strategy (from connection time)
+    2. Fallback strategies (only if metric supports them)
 
     Args:
         metric_def: Metric definition dictionary with keys:
@@ -445,7 +556,7 @@ def collect_metric_adaptive(
             'node_count': count,
             'metadata': {...}
         }
-        Or None if no method worked
+        Or None if collection failed via all available strategies
 
     Example:
         >>> from plugins.common.metric_collection_strategies import collect_metric_adaptive
@@ -456,145 +567,67 @@ def collect_metric_adaptive(
         >>> if data:
         >>>     print(f"Collected via {data['method']}: {data['cluster_total']}")
     """
-    # Use connector's cached strategy if available (optimization)
-    strategy = getattr(connector, 'metric_collection_strategy', None)
+    # Get the connector's determined strategy
+    primary_strategy = getattr(connector, 'metric_collection_strategy', None)
 
+    if not primary_strategy:
+        logger.warning("Connector has no metric_collection_strategy set. Cannot collect metric.")
+        return None
+
+    # ONLY use the connector's determined strategy - no fallbacks
+    # Fallbacks cause timeouts on unavailable methods (e.g., JMX without remote port)
+    # If a metric doesn't support the primary strategy, it simply won't be collected
+    strategy = primary_strategy
+
+    if strategy not in ['instaclustr_prometheus', 'local_prometheus', 'jmx']:
+        logger.warning(f"Unknown strategy: {strategy}")
+        return None
+
+    # Check if metric supports this strategy
     if strategy == 'instaclustr_prometheus':
-        # Skip SSH attempts, go straight to Instaclustr
+        if not metric_def.get('instaclustr_prometheus'):
+            logger.debug(f"Metric does not support {strategy} collection (not defined)")
+            return None
+
         result = collect_from_instaclustr_prometheus(metric_def, connector, settings)
         if result:
-            logger.debug(f"Collected metric via cached strategy: Instaclustr Prometheus")
+            logger.debug(f"Collected metric via strategy '{strategy}'")
             return result
+
     elif strategy == 'local_prometheus':
-        # Skip Instaclustr and JMX, go straight to Local Prometheus
-        from plugins.common.check_helpers import require_ssh
-        available, _, _ = require_ssh(connector, "metric collection")
-        if available:
-            result = _try_local_prometheus(metric_def, connector, settings)
-            if result:
-                logger.debug(f"Collected metric via cached strategy: Local Prometheus")
-                return result
-    elif strategy == 'jmx':
-        # Skip Instaclustr and Local Prometheus, go straight to JMX
-        from plugins.common.check_helpers import require_ssh
-        available, _, _ = require_ssh(connector, "metric collection")
-        if available:
-            result = _try_jmx(metric_def, connector, settings)
-            if result:
-                logger.debug(f"Collected metric via cached strategy: JMX")
-                return result
+        if not metric_def.get('local_prometheus'):
+            logger.debug(f"Metric does not support {strategy} collection (not defined)")
+            return None
 
-    # Fallback to waterfall if cached strategy didn't work or isn't set
-    # Strategy 1: Try Instaclustr Prometheus API
-    if strategy != 'local_prometheus' and strategy != 'jmx':  # Skip if we know it won't work
-        result = collect_from_instaclustr_prometheus(metric_def, connector, settings)
+        from plugins.common.check_helpers import require_ssh
+        available, _, _ = require_ssh(connector, "metric collection")
+        if not available:
+            logger.debug(f"SSH not available for {strategy} collection")
+            return None
+
+        result = _try_local_prometheus(metric_def, connector, settings)
         if result:
-            logger.info(f"Collected metric via Instaclustr Prometheus API")
+            logger.debug(f"Collected metric via strategy '{strategy}'")
             return result
 
-    # Strategies 2 & 3 require SSH
-    from plugins.common.check_helpers import require_ssh
-    available, _, _ = require_ssh(connector, "metric collection")
-    if not available:
-        logger.debug("SSH not available, cannot try local collection methods")
-        return None
+    elif strategy == 'jmx':
+        if not metric_def.get('jmx'):
+            logger.debug(f"Metric does not support {strategy} collection (not defined)")
+            return None
 
-    # Get SSH hosts
-    try:
-        ssh_hosts = connector.get_ssh_hosts()
-    except AttributeError:
-        logger.debug("Connector does not support SSH (no get_ssh_hosts method)")
-        return None
+        from plugins.common.check_helpers import require_ssh
+        available, _, _ = require_ssh(connector, "metric collection")
+        if not available:
+            logger.debug(f"SSH not available for {strategy} collection")
+            return None
 
-    if not ssh_hosts:
-        logger.debug("No SSH hosts configured")
-        return None
+        result = _try_jmx(metric_def, connector, settings)
+        if result:
+            logger.debug(f"Collected metric via strategy '{strategy}'")
+            return result
 
-    # Prepare for SSH-based collection
-    node_metrics = {}
-    method_used = None
-    metadata = {}
-
-    # Strategy 2: Try local Prometheus exporter
-    if metric_def.get('local_prometheus'):
-        for host in ssh_hosts:
-            try:
-                ssh_client = connector.get_ssh_manager(host)
-                if not ssh_client:
-                    logger.debug(f"No SSH manager for host {host}")
-                    continue
-
-                # Detect Prometheus exporter port
-                app_name = getattr(connector, 'technology_name', 'prometheus')
-                prom_port = detect_prometheus_exporter_port(ssh_client, app_name)
-
-                if not prom_port:
-                    continue
-
-                value = collect_from_local_prometheus_exporter(metric_def, ssh_client, prom_port)
-                if value is not None:
-                    node_metrics[host] = value
-                    method_used = 'local_prometheus'
-                    metadata['prometheus_port'] = prom_port
-
-            except Exception as e:
-                logger.debug(f"Local Prometheus collection failed for {host}: {e}")
-                continue
-
-    # If we got data from local Prometheus, return it
-    if node_metrics and method_used == 'local_prometheus':
-        logger.info(f"Collected metric via local Prometheus exporter")
-        return {
-            'method': 'local_prometheus',
-            'node_metrics': node_metrics,
-            'cluster_total': sum(node_metrics.values()),
-            'cluster_avg': sum(node_metrics.values()) / len(node_metrics) if node_metrics else 0,
-            'node_count': len(node_metrics),
-            'metadata': metadata
-        }
-
-    # Strategy 3: Try standard JMX
-    if metric_def.get('jmx'):
-        # Detect application home directory once
-        first_ssh_client = connector.get_ssh_manager(ssh_hosts[0])
-        if first_ssh_client:
-            app_home = detect_app_home(first_ssh_client)
-            jmx_port = detect_jmx_port(first_ssh_client)
-
-            if app_home:
-                for host in ssh_hosts:
-                    try:
-                        ssh_client = connector.get_ssh_manager(host)
-                        if not ssh_client:
-                            logger.debug(f"No SSH manager for host {host}")
-                            continue
-
-                        value = collect_from_jmx(metric_def, ssh_client, jmx_port, app_home)
-
-                        if value is not None:
-                            node_metrics[host] = value
-                            method_used = 'jmx'
-                            metadata['jmx_port'] = jmx_port
-                            metadata['app_home'] = app_home
-
-                    except Exception as e:
-                        logger.debug(f"JMX collection failed for {host}: {e}")
-                        continue
-
-    # If we got data from JMX, return it
-    if node_metrics and method_used == 'jmx':
-        logger.info(f"Collected metric via standard JMX")
-        return {
-            'method': 'jmx',
-            'node_metrics': node_metrics,
-            'cluster_total': sum(node_metrics.values()),
-            'cluster_avg': sum(node_metrics.values()) / len(node_metrics) if node_metrics else 0,
-            'node_count': len(node_metrics),
-            'metadata': metadata
-        }
-
-    # Nothing worked
-    logger.warning(f"Failed to collect metric using any strategy")
+    # If we reach here, collection failed
+    logger.debug(f"Failed to collect metric via strategy '{strategy}'")
     return None
 
 
