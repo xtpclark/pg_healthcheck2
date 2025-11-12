@@ -620,7 +620,7 @@ def check_query_optimization_opportunities(connector, settings):
                             builder.text(f"*💡 Recommended Optimization: Bulk {operation_type} Operations*")
                             builder.blank()
                             builder.text("*Why This Matters:*")
-                            builder.text(f"This {operation_type} operation executes {calls_per_hour:,.0f} times/hour ({total_execs:,} total),")
+                            builder.text(f"This {operation_type} operation executes {calls_per_hour:,.0f} times/hour ({total_executions:,} total),")
                             builder.text(f"consuming {cpu_pct:.2f}% of cluster CPU. Individual {operation_type}s are inefficient at this scale.")
                             builder.blank()
                             builder.text("*Recommended Actions:*")

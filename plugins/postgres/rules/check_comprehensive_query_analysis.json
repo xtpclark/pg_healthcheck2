@@ -256,5 +256,121 @@
         ]
       }
     ]
+  },
+  "high_frequency_write_workload": {
+    "metric_keywords": [
+      "comprehensive_query_analysis"
+    ],
+    "data_conditions": [
+      {
+        "key": "queries",
+        "exists": true
+      }
+    ],
+    "rules": [
+      {
+        "expression": "any(float(q.get('calls_per_hour', 0)) > 200000 and any(op in q.get('query', '').upper() for op in ['INSERT', 'UPDATE', 'DELETE']) for q in data.get('queries', []))",
+        "level": "medium",
+        "score": 7,
+        "reasoning": "High-frequency write operations (>200K/hour) detected. At this scale, PostgreSQL may not be the optimal technology for this workload pattern.",
+        "recommendations": [
+          "ARCHITECTURAL CONSIDERATION: Event streaming platform evaluation",
+          "",
+          "Current Pattern Analysis:",
+          "  • >200,000 write operations per hour detected",
+          "  • PostgreSQL is optimized for OLTP and complex queries, not high-volume event ingestion",
+          "  • Each write operation incurs WAL logging, index maintenance, and MVCC overhead",
+          "",
+          "Technology Migration Candidates:",
+          "",
+          "1. **Apache Kafka** - Event Streaming Platform",
+          "   • Designed for millions of events/second with low latency",
+          "   • Natural fit for IoT telemetry, application logs, and event streams",
+          "   • Can feed multiple downstream consumers (PostgreSQL, analytics, ML pipelines)",
+          "   • Provides message replay and time-travel capabilities",
+          "   • Use case: Real-time event ingestion with PostgreSQL for queries/analytics",
+          "",
+          "2. **Apache Cassandra** - Wide-Column Store",
+          "   • Linear write scalability across nodes",
+          "   • Built-in TTL support for time-series data (auto-expire old events)",
+          "   • Multi-datacenter replication for globally distributed IoT devices",
+          "   • Use case: High-volume time-series data with simple key-value lookups",
+          "",
+          "3. **TimescaleDB** - PostgreSQL Extension",
+          "   • Keeps PostgreSQL compatibility and query capabilities",
+          "   • Automatic time-based partitioning (hypertables)",
+          "   • Compression for older data reduces storage by 90%+",
+          "   • Use case: Time-series workloads that need SQL and analytical queries",
+          "",
+          "Decision Framework:",
+          "  ✓ Use Trends Analysis to track write volume growth over time",
+          "  ✓ If writes continue increasing, PostgreSQL will become a bottleneck",
+          "  ✓ Consider hybrid architecture:",
+          "    - Kafka/Cassandra for event ingestion (writes)",
+          "    - PostgreSQL for complex queries and analytics (reads)",
+          "  ✓ Estimate cost: Instaclustr Kafka cluster sizing based on event rate",
+          "  ✓ Calculate ROI: Reduced PostgreSQL load + improved write latency",
+          "",
+          "Next Steps:",
+          "  1. Identify table(s) receiving high-frequency writes",
+          "  2. Analyze query patterns: Are these append-only logs or transactional updates?",
+          "  3. Review data retention requirements (can old data be archived/TTL'd?)",
+          "  4. Use trend analysis to project growth trajectory",
+          "  5. Contact Instaclustr for Kafka/Cassandra architecture consultation"
+        ]
+      },
+      {
+        "expression": "any(float(q.get('calls_per_hour', 0)) > 500000 and any(op in q.get('query', '').upper() for op in ['INSERT', 'UPDATE', 'DELETE']) for q in data.get('queries', []))",
+        "level": "high",
+        "score": 9,
+        "reasoning": "CRITICAL: Extremely high-frequency write operations (>500K/hour) detected. PostgreSQL is likely a bottleneck for this workload.",
+        "recommendations": [
+          "🚨 URGENT: Technology Migration Strongly Recommended",
+          "",
+          "Your workload is writing >500,000 events per hour (138+ events/second).",
+          "PostgreSQL was not designed for this scale of write-heavy event ingestion.",
+          "",
+          "Impact Analysis:",
+          "  • PostgreSQL must maintain ACID guarantees for every write",
+          "  • Each INSERT triggers: WAL write, index updates, MVCC row versioning, autovacuum",
+          "  • At current scale, you're likely experiencing:",
+          "    - High WAL generation (review pg_stat_database.wal_bytes)",
+          "    - Bloat accumulation requiring aggressive autovacuum",
+          "    - Index maintenance overhead slowing writes",
+          "    - Potential replication lag if using streaming replication",
+          "",
+          "Recommended Architecture:",
+          "",
+          "**Hybrid Approach (Kafka + PostgreSQL):**",
+          "  1. Kafka for event ingestion:",
+          "     • Ingest all events at source (IoT devices, application logs)",
+          "     • Kafka handles 138 events/sec easily (designed for millions/sec)",
+          "     • Provides buffering, replay, and backpressure handling",
+          "",
+          "  2. Stream processing:",
+          "     • Use Kafka Streams or Apache Flink for real-time aggregation",
+          "     • Filter, transform, and enrich events before storage",
+          "     • Batch events for efficient PostgreSQL writes (1000s → 1 batch)",
+          "",
+          "  3. PostgreSQL for analytics:",
+          "     • Store aggregated/summarized data (hourly rollups, not individual events)",
+          "     • Maintain complex query capabilities for dashboards and reporting",
+          "     • Reduce write load by 100x while keeping analytical power",
+          "",
+          "Cost-Benefit:",
+          "  • Instaclustr Kafka 3-node cluster: ~$2K/month",
+          "  • PostgreSQL savings: Reduced compute/storage needs = ~$500-1K/month",
+          "  • Performance improvement: 10-100x faster event ingestion",
+          "  • Operational benefit: PostgreSQL remains healthy for transactional queries",
+          "",
+          "Immediate Actions:",
+          "  1. Schedule Instaclustr architecture consultation (mention this health check)",
+          "  2. Identify table(s) with high INSERT rate: SELECT schemaname, tablename FROM pg_stat_user_tables ORDER BY n_tup_ins DESC LIMIT 5;",
+          "  3. Measure impact: Run EXPLAIN ANALYZE on INSERT query to see overhead",
+          "  4. Review retention: Can old event data be archived/deleted to reduce bloat?",
+          "  5. Plan migration: POC with Kafka ingestion feeding batched PostgreSQL writes"
+        ]
+      }
+    ]
   }
 }

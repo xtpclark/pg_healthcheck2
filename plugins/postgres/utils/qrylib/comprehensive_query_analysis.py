@@ -175,8 +175,8 @@ SELECT
   ) AS total_temp_written_mb,
   {wal_column}
 
-  -- Query Text (truncated for display)
-  substring(regexp_replace(pss.query, '\\s+', ' ', 'g') for 120) AS query
+  -- Query Text (full text with whitespace normalized)
+  regexp_replace(pss.query, '\\s+', ' ', 'g') AS query
 FROM
   pg_stat_statements pss
   JOIN pg_roles r ON pss.userid = r.oid

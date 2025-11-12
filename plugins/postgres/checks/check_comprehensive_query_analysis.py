@@ -123,16 +123,34 @@ def check_comprehensive_query_analysis(connector, settings):
             }
             return builder.build(), findings
 
-        # Display results
-        builder.text(formatted_result)
+        # Display results with truncated queries for readability
+        # (Full queries are preserved in structured findings)
+        display_data = []
+        for row in raw_result:
+            display_row = row.copy()
+            # Truncate query text to 120 characters for AsciiDoc display
+            if 'query' in display_row and display_row['query']:
+                full_query = display_row['query']
+                if len(full_query) > 120:
+                    display_row['query'] = full_query[:117] + '...'
+            display_data.append(display_row)
+
+        # Format truncated data for display
+        from utils.asciidoc_formatter import format_table
+        truncated_display = format_table(display_data)
+        builder.text(truncated_display)
         builder.blank()
 
         # Analyze results for key insights
         total_queries = len(raw_result)
+
+        # Configurable CPU threshold (default 5%, but can be lowered for stricter monitoring)
+        cpu_threshold = settings.get('high_cpu_threshold_percent', 5.0)
+
         high_cpu_queries = [
             q for q in raw_result
             if q.get('percent_of_total_cluster_cpu', 0) and
-            float(q['percent_of_total_cluster_cpu']) > 5.0
+            float(q['percent_of_total_cluster_cpu']) > cpu_threshold
         ]
 
         io_bound_queries = [
@@ -161,14 +179,14 @@ def check_comprehensive_query_analysis(connector, settings):
             builder.text(
                 f"⚠️  **High CPU Impact**: {len(high_cpu_queries)} "
                 f"{'query' if len(high_cpu_queries) == 1 else 'queries'} consuming "
-                f">5% of total cluster CPU"
+                f">{cpu_threshold}% of total cluster CPU"
             )
             for q in high_cpu_queries[:3]:  # Show top 3
                 cpu_pct = q.get('percent_of_total_cluster_cpu', 0)
                 user = q.get('username', 'unknown')
                 builder.text(f"  • {user}: {cpu_pct}% of cluster CPU")
         else:
-            builder.text("✅ No single query dominates cluster CPU (all <5%)")
+            builder.text(f"✅ No single query dominates cluster CPU (all <{cpu_threshold}%)")
 
         builder.blank()
 
@@ -216,7 +234,7 @@ def check_comprehensive_query_analysis(connector, settings):
         if high_cpu_queries:
             recommendations["high"].extend([
                 "Optimization Prioritization Strategy:",
-                "  1. Start with queries consuming >5% of cluster CPU",
+                f"  1. Start with queries consuming >{cpu_threshold}% of cluster CPU",
                 "  2. Calculate optimization ROI: CPU_impact × execution_frequency",
                 "  3. Run EXPLAIN (ANALYZE, BUFFERS) on identified queries",
                 "  4. Look for sequential scans, nested loops, or hash joins on large tables",
@@ -268,7 +286,7 @@ def check_comprehensive_query_analysis(connector, settings):
             "    → Monitoring tools (datadog, etc.) may appear in top consumers",
             "",
             "Next Steps:",
-            "  1. Identify queries with >5% cluster CPU impact",
+            f"  1. Identify queries with >{cpu_threshold}% cluster CPU impact",
             "  2. Review query frequency to calculate optimization value",
             "  3. Run EXPLAIN (ANALYZE, BUFFERS) on target queries",
             "  4. Create indexes for sequential scans on large tables",
