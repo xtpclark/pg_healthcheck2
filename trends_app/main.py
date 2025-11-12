@@ -24,6 +24,7 @@ from flask_login import login_required, current_user
 from .database import (get_unique_targets, load_user_preferences,
                        fetch_runs_by_ids, save_user_preference,
                        fetch_template_asset)
+from . import analysis_database
 
 from .utils import load_trends_config, format_path
 from .ai_connector import get_ai_recommendation
@@ -745,20 +746,20 @@ def generate_trend_analysis_api():
     """Generate trend analysis."""
     if not current_user.has_privilege('ViewTrendAnalysis'):
         abort(403)
-    
+
     data = request.get_json()
     company_id = data.get('company_id')
     days = data.get('days', 90)
     profile_id = data.get('profile_id')
     template_id = data.get('template_id')
-    
+
     if not all([company_id, profile_id, template_id]):
         return jsonify({"error": "Missing required parameters"}), 400
-    
+
     config = load_trends_config()
     db_settings = config.get('database')
     accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
-    
+
     from . import trends_analysis
     success, result = trends_analysis.generate_trend_analysis(
         db_config=db_settings,
@@ -769,7 +770,7 @@ def generate_trend_analysis_api():
         accessible_company_ids=accessible_company_ids,
         user_id=current_user.id
     )
-    
+
     if success:
         return jsonify({
             "status": "success",
@@ -778,3 +779,250 @@ def generate_trend_analysis_api():
         })
     else:
         return jsonify({"error": result}), 500
+
+
+# ============================================================================
+# ANALYSIS ROUTES (PostgreSQL, Executive Dashboards)
+# ============================================================================
+
+@bp.route('/analysis')
+@login_required
+def analysis_dashboard():
+    """Main analysis dashboard - shows available schemas."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    # Get schemas user can access
+    schemas = analysis_database.get_accessible_schemas(db_settings)
+
+    return render_template('analysis/dashboard.html', schemas=schemas)
+
+
+@bp.route('/analysis/postgres/migration-candidates')
+@login_required
+def postgres_migration_candidates():
+    """PostgreSQL Kafka/Cassandra migration candidates."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    # Get parameters from query string
+    limit = request.args.get('limit', 50, type=int)
+    min_frequency = request.args.get('min_frequency', 50000, type=int)
+    days = request.args.get('days', 30, type=int)
+
+    # Fetch migration candidates
+    candidates = analysis_database.get_migration_candidates(
+        db_settings, limit, min_frequency, days
+    )
+
+    return render_template(
+        'analysis/migration_candidates.html',
+        candidates=candidates,
+        limit=limit,
+        min_frequency=min_frequency,
+        days=days
+    )
+
+
+@bp.route('/analysis/postgres/write-trends/<int:company_id>')
+@login_required
+def postgres_write_trends(company_id):
+    """Write volume trends for a specific company."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    days = request.args.get('days', 90, type=int)
+
+    # Fetch trends
+    trends = analysis_database.get_write_volume_trends(
+        db_settings, company_id, days
+    )
+
+    return render_template(
+        'analysis/write_trends.html',
+        trends=trends,
+        company_id=company_id,
+        days=days
+    )
+
+
+@bp.route('/analysis/executive/migration-pipeline')
+@login_required
+def executive_migration_pipeline():
+    """Executive dashboard - migration pipeline and consulting opportunities summary."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    # Get migration summary
+    migration_summary = analysis_database.get_migration_pipeline_summary(db_settings)
+
+    # Get consulting opportunities summary
+    consulting_summary = analysis_database.get_consulting_opportunities_summary(db_settings)
+
+    # Get top migration candidates and group by company
+    all_candidates = analysis_database.get_migration_candidates(
+        db_settings, limit=50, min_frequency=100000, days=30
+    )
+
+    # Group by company - take highest priority and highest workload per company
+    company_opportunities = {}
+    for candidate in all_candidates:
+        company_id = candidate['company_id']
+        if company_id not in company_opportunities:
+            company_opportunities[company_id] = candidate
+        else:
+            # Keep the one with higher priority or higher workload
+            existing = company_opportunities[company_id]
+            priority_order = {'critical': 3, 'high': 2, 'medium': 1, 'low': 0}
+            if (priority_order.get(candidate['migration_priority'], 0) >
+                priority_order.get(existing['migration_priority'], 0)):
+                company_opportunities[company_id] = candidate
+            elif (priority_order.get(candidate['migration_priority'], 0) ==
+                  priority_order.get(existing['migration_priority'], 0) and
+                  candidate['calls_per_hour'] > existing['calls_per_hour']):
+                company_opportunities[company_id] = candidate
+
+    # Convert back to list and sort by workload
+    migration_candidates = sorted(
+        company_opportunities.values(),
+        key=lambda x: x['calls_per_hour'],
+        reverse=True
+    )[:10]  # Top 10 companies
+
+    # Get top consulting opportunities
+    consulting_opportunities = analysis_database.get_consulting_opportunities(db_settings, limit=10)
+
+    return render_template(
+        'analysis/executive_pipeline.html',
+        migration_summary=migration_summary,
+        consulting_summary=consulting_summary,
+        migration_candidates=migration_candidates,
+        consulting_opportunities=consulting_opportunities
+    )
+
+
+@bp.route('/analysis/executive/customer-footprint')
+@login_required
+def executive_customer_footprint():
+    """Executive dashboard - customer technology footprint."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    days = request.args.get('days', 90, type=int)
+
+    # Get footprint
+    footprint = analysis_database.get_customer_technology_footprint(
+        db_settings, days
+    )
+
+    return render_template(
+        'analysis/customer_footprint.html',
+        footprint=footprint,
+        days=days
+    )
+
+
+# ============================================================================
+# UPSELL ANALYSIS ROUTES (Kafka, Cassandra, OpenSearch Upgrades)
+# ============================================================================
+
+@bp.route('/analysis/kafka/capacity-upgrades')
+@login_required
+def kafka_capacity_upgrades():
+    """Kafka capacity upgrade candidates."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    # Query the view directly
+    conn = None
+    candidates = []
+    try:
+        import psycopg2
+        import psycopg2.extras
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor.execute("""
+            SELECT *
+            FROM kafka_analysis.capacity_upgrade_candidates
+            ORDER BY avg_cpu_percent DESC NULLS LAST
+            LIMIT 50
+        """)
+        candidates = cursor.fetchall()
+    except Exception as e:
+        current_app.logger.error(f"Error fetching Kafka capacity upgrades: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    return render_template(
+        'analysis/kafka_capacity_upgrades.html',
+        candidates=candidates
+    )
+
+
+@bp.route('/analysis/cassandra/performance-upgrades')
+@login_required
+def cassandra_performance_upgrades():
+    """Cassandra performance upgrade candidates."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    # Query the view directly
+    conn = None
+    candidates = []
+    try:
+        import psycopg2
+        import psycopg2.extras
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor.execute("""
+            SELECT *
+            FROM cassandra_analysis.performance_upgrade_candidates
+            ORDER BY read_p99_ms DESC NULLS LAST
+            LIMIT 50
+        """)
+        candidates = cursor.fetchall()
+    except Exception as e:
+        current_app.logger.error(f"Error fetching Cassandra performance upgrades: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    return render_template(
+        'analysis/cassandra_performance_upgrades.html',
+        candidates=candidates
+    )
+
+
+@bp.route('/analysis/opensearch/capacity-upgrades')
+@login_required
+def opensearch_capacity_upgrades():
+    """OpenSearch capacity upgrade candidates."""
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    # Query the view directly
+    conn = None
+    candidates = []
+    try:
+        import psycopg2
+        import psycopg2.extras
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor.execute("""
+            SELECT *
+            FROM opensearch_analysis.capacity_upgrade_candidates
+            ORDER BY heap_used_percent DESC NULLS LAST
+            LIMIT 50
+        """)
+        candidates = cursor.fetchall()
+    except Exception as e:
+        current_app.logger.error(f"Error fetching OpenSearch capacity upgrades: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    return render_template(
+        'analysis/opensearch_capacity_upgrades.html',
+        candidates=candidates
+    )
