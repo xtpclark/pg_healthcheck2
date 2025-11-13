@@ -84,22 +84,35 @@ class KafkaConnector(SSHSupportMixin):
 
                 # SSL/TLS configuration
                 if 'SSL' in security_protocol:
-                    ssl_cafile = self.settings.get('ssl_cafile')
-                    if ssl_cafile:
-                        connection_params['ssl_cafile'] = ssl_cafile
-                        logger.info(f"Using SSL CA file: {ssl_cafile}")
+                    # Check if custom SSL context is needed (for CERT_NONE)
+                    ssl_cert_reqs_setting = self.settings.get('ssl_cert_reqs')
 
-                    # Optional: client certificate for mTLS
-                    ssl_certfile = self.settings.get('ssl_certfile')
-                    ssl_keyfile = self.settings.get('ssl_keyfile')
-                    if ssl_certfile and ssl_keyfile:
-                        connection_params['ssl_certfile'] = ssl_certfile
-                        connection_params['ssl_keyfile'] = ssl_keyfile
-                        logger.info("Using mTLS with client certificate")
+                    if ssl_cert_reqs_setting is not None and ssl_cert_reqs_setting == 0:
+                        # Create custom SSL context that doesn't verify certificates
+                        import ssl
+                        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                        ssl_context.check_hostname = False
+                        ssl_context.verify_mode = ssl.CERT_NONE
+                        connection_params['ssl_context'] = ssl_context
+                        logger.info("Using SSL context with CERT_NONE (no certificate verification)")
+                    else:
+                        # Standard SSL configuration with verification
+                        ssl_cafile = self.settings.get('ssl_cafile')
+                        if ssl_cafile:
+                            connection_params['ssl_cafile'] = ssl_cafile
+                            logger.info(f"Using SSL CA file: {ssl_cafile}")
 
-                    # SSL check hostname (default True for security)
-                    if 'ssl_check_hostname' in self.settings:
-                        connection_params['ssl_check_hostname'] = self.settings['ssl_check_hostname']
+                        # Optional: client certificate for mTLS
+                        ssl_certfile = self.settings.get('ssl_certfile')
+                        ssl_keyfile = self.settings.get('ssl_keyfile')
+                        if ssl_certfile and ssl_keyfile:
+                            connection_params['ssl_certfile'] = ssl_certfile
+                            connection_params['ssl_keyfile'] = ssl_keyfile
+                            logger.info("Using mTLS with client certificate")
+
+                        # SSL check hostname (default True for security)
+                        if 'ssl_check_hostname' in self.settings:
+                            connection_params['ssl_check_hostname'] = self.settings['ssl_check_hostname']
 
             self.admin_client = KafkaAdminClient(**connection_params)
 
@@ -1170,16 +1183,28 @@ class KafkaConnector(SSHSupportMixin):
                     consumer_params['sasl_plain_password'] = self.settings.get('sasl_password')
 
                 if 'SSL' in security_protocol:
-                    ssl_cafile = self.settings.get('ssl_cafile')
-                    if ssl_cafile:
-                        consumer_params['ssl_cafile'] = ssl_cafile
-                    ssl_certfile = self.settings.get('ssl_certfile')
-                    ssl_keyfile = self.settings.get('ssl_keyfile')
-                    if ssl_certfile and ssl_keyfile:
-                        consumer_params['ssl_certfile'] = ssl_certfile
-                        consumer_params['ssl_keyfile'] = ssl_keyfile
-                    if 'ssl_check_hostname' in self.settings:
-                        consumer_params['ssl_check_hostname'] = self.settings['ssl_check_hostname']
+                    # Check if custom SSL context is needed (for CERT_NONE)
+                    ssl_cert_reqs_setting = self.settings.get('ssl_cert_reqs')
+
+                    if ssl_cert_reqs_setting is not None and ssl_cert_reqs_setting == 0:
+                        # Create custom SSL context that doesn't verify certificates
+                        import ssl
+                        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                        ssl_context.check_hostname = False
+                        ssl_context.verify_mode = ssl.CERT_NONE
+                        consumer_params['ssl_context'] = ssl_context
+                    else:
+                        # Standard SSL configuration with verification
+                        ssl_cafile = self.settings.get('ssl_cafile')
+                        if ssl_cafile:
+                            consumer_params['ssl_cafile'] = ssl_cafile
+                        ssl_certfile = self.settings.get('ssl_certfile')
+                        ssl_keyfile = self.settings.get('ssl_keyfile')
+                        if ssl_certfile and ssl_keyfile:
+                            consumer_params['ssl_certfile'] = ssl_certfile
+                            consumer_params['ssl_keyfile'] = ssl_keyfile
+                        if 'ssl_check_hostname' in self.settings:
+                            consumer_params['ssl_check_hostname'] = self.settings['ssl_check_hostname']
 
             consumer = KafkaConsumer(**consumer_params)
             end_offsets = consumer.end_offsets(partitions)
