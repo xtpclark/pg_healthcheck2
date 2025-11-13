@@ -2,6 +2,10 @@ REPORT_SECTIONS = [
     {
         "title": "Kafka Health Check",
         "actions": [
+            # ========== CONNECTION & PERMISSIONS CHECK (Always First) ==========
+            # Validates user permissions and explains what checks are available
+            {'type': 'module', 'module': 'plugins.kafka.checks.check_user_permissions', 'function': 'run'},
+
             # Prometheus-based checks (Instaclustr managed clusters)
             # These checks work without SSH access and provide comprehensive monitoring
             # They will be skipped if instaclustr_prometheus_enabled is not set
