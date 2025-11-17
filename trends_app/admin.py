@@ -732,3 +732,160 @@ def refresh_provider_models(provider_id):
             conn.close()
 
 
+# --- METRICS MANAGEMENT ROUTES ---
+
+@bp.route('/metrics')
+@login_required
+def list_metrics():
+    """Admin page to list and manage all system metrics."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    metrics = []
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT metric_id, metric_name, metric_value, metric_module
+            FROM metric
+            ORDER BY metric_module NULLS LAST, metric_name;
+        """)
+        metrics = [
+            {
+                'id': row[0],
+                'name': row[1],
+                'value': row[2],
+                'module': row[3]
+            }
+            for row in cursor.fetchall()
+        ]
+    except psycopg2.Error as e:
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return render_template('admin/metrics.html', metrics=metrics)
+
+
+@bp.route('/metrics/create', methods=['POST'])
+@login_required
+def create_metric():
+    """Create a new system metric using setmetric() stored procedure."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    metric_name = request.form.get('metric_name', '').strip()
+    metric_value = request.form.get('metric_value', '').strip()
+    metric_module = request.form.get('metric_module', '').strip() or None  # Convert empty string to NULL
+
+    if not metric_name:
+        flash("Metric name is required.", "danger")
+        return redirect(url_for('admin.list_metrics'))
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Check if metric already exists (setmetric will update if exists)
+        cursor.execute("SELECT metric_id FROM metric WHERE metric_name = %s;", (metric_name,))
+        if cursor.fetchone():
+            flash(f"Metric '{metric_name}' already exists. Use edit to update it.", "danger")
+            return redirect(url_for('admin.list_metrics'))
+
+        # Use setmetric() stored procedure
+        cursor.execute("SELECT setmetric(%s, %s, %s);", (metric_name, metric_value, metric_module))
+        conn.commit()
+        flash(f"Metric '{metric_name}' created successfully.", "success")
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_metrics'))
+
+
+@bp.route('/metrics/update/<int:metric_id>', methods=['POST'])
+@login_required
+def update_metric(metric_id):
+    """Update an existing system metric using setmetric() stored procedure."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    metric_value = request.form.get('metric_value', '').strip()
+    metric_module = request.form.get('metric_module', '').strip() or None  # Convert empty string to NULL
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Get metric name from ID
+        cursor.execute("SELECT metric_name FROM metric WHERE metric_id = %s;", (metric_id,))
+        result = cursor.fetchone()
+        if not result:
+            flash("Metric not found.", "danger")
+            return redirect(url_for('admin.list_metrics'))
+
+        metric_name = result[0]
+
+        # Use setmetric() stored procedure (upsert behavior)
+        cursor.execute("SELECT setmetric(%s, %s, %s);", (metric_name, metric_value, metric_module))
+        conn.commit()
+        flash("Metric updated successfully.", "success")
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_metrics'))
+
+
+@bp.route('/metrics/delete/<int:metric_id>', methods=['POST'])
+@login_required
+def delete_metric(metric_id):
+    """Delete a system metric."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        # Get metric name for confirmation message
+        cursor.execute("SELECT metric_name FROM metric WHERE metric_id = %s;", (metric_id,))
+        result = cursor.fetchone()
+        if result:
+            metric_name = result[0]
+            cursor.execute("DELETE FROM metric WHERE metric_id = %s;", (metric_id,))
+            conn.commit()
+            flash(f"Metric '{metric_name}' deleted successfully.", "success")
+        else:
+            flash("Metric not found.", "danger")
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_metrics'))
+
+
