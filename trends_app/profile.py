@@ -311,7 +311,12 @@ def delete_ai_profile(profile_id):
 @login_required
 def report_history():
     """Renders the page that displays the user's generated report history."""
-    return render_template('profile/report_history.html')
+    from .models import _load_tech_map
+
+    # Load technology mapping for dropdown display
+    tech_map = _load_tech_map()
+
+    return render_template('profile/report_history.html', tech_map=tech_map)
 
 # --- MODIFIED: Unified route to view any type of report ---
 @bp.route('/view-report/<string:report_type>/<int:report_id>')

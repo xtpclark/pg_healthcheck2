@@ -219,3 +219,158 @@ def fetch_runs_by_ids(db_config, run_ids, accessible_company_ids):
         if conn: conn.close()
 
     return sorted(runs, key=lambda x: x['run_timestamp'], reverse=True)
+
+
+def get_enabled_technologies(db_config):
+    """Fetch enabled technologies for dropdown population."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                techtype_code AS code,
+                techtype_descrip AS description,
+                techtype_order AS order_num
+            FROM techtype
+            WHERE techtype_enabled = TRUE
+            ORDER BY techtype_order, techtype_descrip
+        """)
+
+        return cursor.fetchall()
+    except Exception as e:
+        current_app.logger.error(f"Error fetching technologies: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_all_technologies(db_config):
+    """Fetch all technologies (for admin management)."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                techtype_id AS id,
+                techtype_code AS code,
+                techtype_descrip AS description,
+                techtype_order AS order_num,
+                techtype_enabled AS enabled,
+                techtype_notes AS notes
+            FROM techtype
+            ORDER BY techtype_order, techtype_descrip
+        """)
+
+        return cursor.fetchall()
+    except Exception as e:
+        current_app.logger.error(f"Error fetching all technologies: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_technology_by_id(db_config, tech_id):
+    """Fetch a single technology by ID."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                techtype_id AS id,
+                techtype_code AS code,
+                techtype_descrip AS description,
+                techtype_order AS order_num,
+                techtype_enabled AS enabled,
+                techtype_notes AS notes
+            FROM techtype
+            WHERE techtype_id = %s
+        """, (tech_id,))
+
+        return cursor.fetchone()
+    except Exception as e:
+        current_app.logger.error(f"Error fetching technology {tech_id}: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+
+def create_technology(db_config, code, description, order_num, enabled, notes):
+    """Create a new technology."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO techtype (techtype_code, techtype_descrip, techtype_order, techtype_enabled, techtype_notes)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING techtype_id
+        """, (code, description, order_num, enabled, notes))
+
+        tech_id = cursor.fetchone()[0]
+        conn.commit()
+        return tech_id
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        current_app.logger.error(f"Error creating technology: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def update_technology(db_config, tech_id, code, description, order_num, enabled, notes):
+    """Update an existing technology."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE techtype
+            SET techtype_code = %s,
+                techtype_descrip = %s,
+                techtype_order = %s,
+                techtype_enabled = %s,
+                techtype_notes = %s
+            WHERE techtype_id = %s
+        """, (code, description, order_num, enabled, notes, tech_id))
+
+        conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        current_app.logger.error(f"Error updating technology {tech_id}: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def delete_technology(db_config, tech_id):
+    """Delete a technology."""
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM techtype WHERE techtype_id = %s", (tech_id,))
+        conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        current_app.logger.error(f"Error deleting technology {tech_id}: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()

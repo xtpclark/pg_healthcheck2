@@ -23,7 +23,7 @@ from flask_login import login_required, current_user
 
 from .database import (get_unique_targets, load_user_preferences,
                        fetch_runs_by_ids, save_user_preference,
-                       fetch_template_asset)
+                       fetch_template_asset, get_enabled_technologies)
 from . import analysis_database
 
 from .utils import load_trends_config, format_path
@@ -159,8 +159,12 @@ def dashboard():
     accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
     unique_targets = get_unique_targets(db_settings, accessible_company_ids)
 
+    # Fetch enabled technologies from techtype table
+    technologies = get_enabled_technologies(db_settings)
+
     return render_template('dashboard_table.html',
-                           unique_targets=unique_targets)
+                           unique_targets=unique_targets,
+                           technologies=technologies)
 
 @bp.route('/compare')
 @login_required
