@@ -20,8 +20,15 @@
 --   [
 --     {
 --       "id": <run_id>,
---       "timestamp": "<ISO timestamp>",
---       "target": "<host>:<port> (<db_name>)",
+--       "run_timestamp": "<ISO timestamp>",
+--       "company_name": "<company_name>",
+--       "target_host": "<host>",
+--       "target_port": <port>,
+--       "target_db_name": "<db_name>",
+--       "db_technology": "<postgres|kafka|cassandra|...>",
+--       "critical_count": <int>,
+--       "high_count": <int>,
+--       "medium_count": <int>,
 --       "is_favorite": <boolean>
 --     },
 --     ...
@@ -62,9 +69,14 @@ BEGIN
         jsonb_build_object(
             'id', id,
             'run_timestamp', run_timestamp,
+            'company_name', company_name,
             'target_host', target_host,
             'target_port', target_port,
             'target_db_name', target_db_name,
+            'db_technology', db_technology,
+            'critical_count', critical_count,
+            'high_count', high_count,
+            'medium_count', medium_count,
             'is_favorite', is_favorite
         )
         ORDER BY run_timestamp DESC
@@ -74,9 +86,24 @@ BEGIN
         SELECT
             hcr.id,
             hcr.run_timestamp,
+            c.company_name,
             hcr.target_host,
             hcr.target_port,
             hcr.target_db_name,
+            hcr.db_technology,
+            -- Calculate counts from triggered rules
+            COALESCE(
+                (SELECT COUNT(*) FROM health_check_triggered_rules
+                 WHERE run_id = hcr.id AND severity_level = 'critical'), 0
+            ) AS critical_count,
+            COALESCE(
+                (SELECT COUNT(*) FROM health_check_triggered_rules
+                 WHERE run_id = hcr.id AND severity_level = 'high'), 0
+            ) AS high_count,
+            COALESCE(
+                (SELECT COUNT(*) FROM health_check_triggered_rules
+                 WHERE run_id = hcr.id AND severity_level = 'medium'), 0
+            ) AS medium_count,
             CASE WHEN ufr.user_id IS NOT NULL THEN true ELSE false END AS is_favorite
         FROM health_check_runs hcr
         JOIN companies c ON hcr.company_id = c.id

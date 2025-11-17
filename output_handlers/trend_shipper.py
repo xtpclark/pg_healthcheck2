@@ -456,7 +456,10 @@ def ship_to_api(api_config, target_info, findings, adoc_content):
     """Sends health check data and the AsciiDoc report to an API endpoint.
 
     Args:
-        api_config (dict): Configuration for the API, including the `endpoint_url`.
+        api_config (dict): Configuration for the API, including:
+            - endpoint_url (str): The API endpoint URL
+            - api_key (str, optional): API key for authentication
+            - timeout (int, optional): Request timeout in seconds (default: 30)
         target_info (dict): Information about the target system.
         findings (dict): The complete structured findings dictionary.
         adoc_content (str): The full AsciiDoc report content.
@@ -467,19 +470,53 @@ def ship_to_api(api_config, target_info, findings, adoc_content):
 
     try:
         headers = {'Content-Type': 'application/json'}
+
+        # Add API key to headers if provided
+        api_key = api_config.get('api_key')
+        if api_key:
+            headers['X-API-Key'] = api_key
+
         full_payload = {
-            'target_info': target_info, 
+            'target_info': target_info,
             'findings': findings,
             'report_adoc': adoc_content
         }
+
+        timeout = api_config.get('timeout', 30)
+
         response = requests.post(
-            api_config['endpoint_url'], 
-            headers=headers, 
-            data=safe_json_dumps(full_payload), 
-            timeout=15
+            api_config['endpoint_url'],
+            headers=headers,
+            data=safe_json_dumps(full_payload),
+            timeout=timeout
         )
         response.raise_for_status()
+
+        result = response.json()
+
+        # Handle different response codes
+        if response.status_code == 201:
+            print(f"✅ Findings submitted successfully!")
+            print(f"   Submission ID: {result.get('submission_id', 'N/A')}")
+            if 'submissions_remaining' in result and result['submissions_remaining'] is not None:
+                print(f"   Submissions remaining: {result['submissions_remaining']}")
+        elif response.status_code == 202:
+            print(f"✅ Findings accepted for processing!")
+            print(f"   Submission ID: {result.get('submission_id', 'N/A')}")
+            print(f"   Status: Queued for processing")
+
         print(f"Log: Successfully sent raw findings to API. Status: {response.status_code}")
+
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            print(f"❌ Authentication failed: Invalid or missing API key")
+        elif e.response.status_code == 402:
+            print(f"⚠️  Trial key limit reached. Upgrade to continue.")
+            print(f"   Visit: https://health.instaclustr.com/pricing")
+        elif e.response.status_code == 503:
+            print(f"⚠️  Service temporarily unavailable. Please try again later.")
+        else:
+            print(f"❌ API error: {e.response.status_code} - {e.response.text}")
     except requests.exceptions.RequestException as e:
         print(f"Error: Failed to ship data to API. {e}")
 

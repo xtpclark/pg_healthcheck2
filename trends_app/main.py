@@ -143,39 +143,71 @@ def jinja_format_path(path):
 @bp.route('/')
 @login_required
 def dashboard():
-    """Renders the main dashboard page.
+    """Renders the main dashboard page with table-based UI.
 
-    This route fetches all necessary data for the dashboard, including a list
-    of unique targets for filtering and user preferences. If `run1` and `run2`
-    query parameters are provided, it fetches those two specific health check
-    runs and performs a `DeepDiff` to identify and display changes between them.
-
-    Args:
-        run1 (int, optional): The ID of the first run to compare, passed as a
-            URL query parameter.
-        run2 (int, optional): The ID of the second run to compare, passed as a
-            URL query parameter.
+    This route renders the new table-based dashboard that replaces the timeline view.
+    The dashboard loads runs dynamically via JavaScript from the /api/runs endpoint.
+    Comparison functionality has been moved to a separate /compare route.
 
     Returns:
-        A rendered HTML template of the dashboard.
+        A rendered HTML template of the dashboard with filter controls.
     """
 
     config = load_trends_config()
     db_settings = config.get('database')
-    
-    run_id_1 = request.args.get('run1', type=int)
-    run_id_2 = request.args.get('run2', type=int)
-    
-    runs = []
-    accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
 
-    if run_id_1 and run_id_2:
-        runs = fetch_runs_by_ids(db_settings, [run_id_1, run_id_2], accessible_company_ids)
-    
-    changes_by_check = {}
-    if len(runs) >= 2:
-        findings1 = runs[0].get('findings', {})
-        findings2 = runs[1].get('findings', {})
+    accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
+    unique_targets = get_unique_targets(db_settings, accessible_company_ids)
+
+    return render_template('dashboard_table.html',
+                           unique_targets=unique_targets)
+
+@bp.route('/compare')
+@login_required
+def compare_runs():
+    """Compare multiple health check runs and display differences.
+
+    This route is designed to open in a new browser window from the dashboard.
+    It accepts a comma-separated list of run IDs and performs DeepDiff analysis
+    between consecutive runs.
+
+    Query parameters:
+        run_ids: Comma-separated list of run IDs to compare (e.g., "1,2,3")
+
+    Returns:
+        A rendered HTML template showing run comparisons with highlighted changes.
+    """
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+
+    # Parse comma-separated run IDs
+    run_ids_str = request.args.get('run_ids', '')
+    if not run_ids_str:
+        return "No runs specified for comparison", 400
+
+    try:
+        run_ids = [int(rid.strip()) for rid in run_ids_str.split(',')]
+    except ValueError:
+        return "Invalid run IDs format", 400
+
+    if len(run_ids) < 2:
+        return "Need at least 2 runs to compare", 400
+
+    # Fetch runs
+    accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
+    runs = fetch_runs_by_ids(db_settings, run_ids, accessible_company_ids)
+
+    if len(runs) < 2:
+        return "Could not fetch requested runs or access denied", 403
+
+    # Perform comparison between consecutive runs
+    comparisons = []
+    for i in range(len(runs) - 1):
+        findings1 = runs[i].get('findings', {})
+        findings2 = runs[i + 1].get('findings', {})
+
+        changes_by_check = {}
         if isinstance(findings1, dict) and isinstance(findings2, dict):
             diff = DeepDiff(findings2, findings1, ignore_order=True, view='tree')
             if diff:
@@ -184,7 +216,7 @@ def dashboard():
                         top_level_check = item.path(output_format='list')[0]
                         if top_level_check not in changes_by_check:
                             changes_by_check[top_level_check] = []
-                        
+
                         path_str = format_path(item.path())
                         summary = ""
                         if change_type == 'values_changed':
@@ -193,18 +225,19 @@ def dashboard():
                             summary = f"➕ Item added to `{path_str}`: `{json.dumps(item.t2)}`"
                         elif change_type == 'iterable_item_removed':
                             summary = f"➖ Item removed from `{path_str}`: `{json.dumps(item.t1)}`"
-                        
+
                         if summary:
                             changes_by_check[top_level_check].append(summary)
 
-    unique_targets = get_unique_targets(db_settings, accessible_company_ids)
-    user_preferences = load_user_preferences(db_settings, current_user.username)
+        comparisons.append({
+            'run1': runs[i],
+            'run2': runs[i + 1],
+            'changes_by_check': changes_by_check
+        })
 
-    return render_template('dashboard.html', 
-                           runs=runs, 
-                           changes_by_check=changes_by_check,
-                           unique_targets=unique_targets,
-                           user_preferences=json.dumps(user_preferences))
+    return render_template('comparison.html',
+                           runs=runs,
+                           comparisons=comparisons)
 
 # --- API Routes ---
 
@@ -237,6 +270,7 @@ def get_all_runs():
     target_filter = request.args.get('target')
     start_time_str = request.args.get('start_time')
     end_time_str = request.args.get('end_time')
+    include_deleted = request.args.get('include_deleted', 'false').lower() == 'true'
 
     conn = None
     all_runs = []
@@ -257,7 +291,7 @@ def get_all_runs():
                 current_app.logger.warning(f"Invalid target filter format: {target_filter}. Error: {e}")
 
         # Use stored procedure for analytics abstraction
-        query = "SELECT get_health_check_runs(%s, %s, %s, %s, %s, %s, %s, %s);"
+        query = "SELECT get_health_check_runs(%s, %s, %s, %s, %s, %s, %s, %s, %s);"
         cursor.execute(query, (
             accessible_company_ids,
             current_user.id,
@@ -266,7 +300,8 @@ def get_all_runs():
             target_port,
             target_db_name,
             start_time_str,
-            end_time_str
+            end_time_str,
+            include_deleted  # NEW: include deleted runs parameter
         ))
         result = cursor.fetchone()[0]
 
@@ -276,14 +311,21 @@ def get_all_runs():
                 all_runs.append({
                     "id": run_obj['id'],
                     "timestamp": run_obj['run_timestamp'],
-                    "target": f"{run_obj['target_host']}:{run_obj['target_port']} ({run_obj['target_db_name']})",
-                    "is_favorite": run_obj['is_favorite']
+                    "company_name": run_obj.get('company_name', 'Unknown'),
+                    "target_system": f"{run_obj['target_host']}:{run_obj['target_port']} ({run_obj['target_db_name']})",
+                    "db_technology": run_obj.get('db_technology', 'Unknown'),
+                    "critical_count": run_obj.get('critical_count', 0),
+                    "high_count": run_obj.get('high_count', 0),
+                    "medium_count": run_obj.get('medium_count', 0),
+                    "is_favorite": run_obj.get('is_favorite', False),
+                    "deleted_at": run_obj.get('deleted_at'),  # Soft delete support
+                    "deleted_by": run_obj.get('deleted_by')   # Soft delete support
                 })
     except psycopg2.Error as e:
         current_app.logger.error(f"Database error fetching all runs with filters: {e}")
     finally:
         if conn: conn.close()
-    return jsonify(all_runs)
+    return jsonify({"runs": all_runs})
 
 @bp.route('/api/runs/toggle-favorite', methods=['POST'])
 @login_required
@@ -322,6 +364,138 @@ def toggle_favorite():
     finally:
         if conn: conn.close()
 
+@bp.route('/api/delete-run/<int:run_id>', methods=['DELETE'])
+@login_required
+def delete_run(run_id):
+    """API endpoint to delete a health check run (requires DeleteReports privilege).
+
+    Query Parameters:
+        permanent (bool): If true, permanently delete the run. Default is soft delete.
+    """
+    # Check privilege
+    if not current_user.has_privilege('DeleteReports'):
+        return jsonify({'status': 'error', 'error': 'Permission denied. DeleteReports privilege required.'}), 403
+
+    # Check if permanent delete requested (requires admin)
+    permanent = request.args.get('permanent', 'false').lower() == 'true'
+    if permanent and not current_user.is_admin:
+        return jsonify({'status': 'error', 'error': 'Permanent delete requires admin privileges.'}), 403
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        # Verify run exists and user has access to it
+        accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
+        if not accessible_company_ids:
+            return jsonify({'status': 'error', 'error': 'No accessible companies.'}), 403
+
+        cursor.execute("""
+            SELECT company_id, deleted_at
+            FROM health_check_runs
+            WHERE id = %s
+        """, (run_id,))
+
+        result = cursor.fetchone()
+        if not result:
+            return jsonify({'status': 'error', 'error': 'Run not found.'}), 404
+
+        run_company_id, deleted_at = result
+        if run_company_id not in accessible_company_ids:
+            return jsonify({'status': 'error', 'error': 'Access denied to this run.'}), 403
+
+        # Check if already soft-deleted
+        if deleted_at and not permanent:
+            return jsonify({'status': 'error', 'error': 'Run already deleted.'}), 400
+
+        if permanent:
+            # PERMANENT DELETE: Remove from database completely
+            cursor.execute("DELETE FROM health_check_triggered_rules WHERE run_id = %s", (run_id,))
+            cursor.execute("DELETE FROM user_favorite_runs WHERE run_id = %s", (run_id,))
+            cursor.execute("DELETE FROM health_check_runs WHERE id = %s", (run_id,))
+
+            conn.commit()
+            current_app.logger.info(f"User {current_user.username} permanently deleted run {run_id}")
+            return jsonify({'status': 'success', 'message': 'Run permanently deleted.'})
+        else:
+            # SOFT DELETE: Mark as deleted with timestamp
+            from datetime import datetime
+            cursor.execute("""
+                UPDATE health_check_runs
+                SET deleted_at = %s, deleted_by = %s
+                WHERE id = %s
+            """, (datetime.utcnow(), current_user.username, run_id))
+
+            conn.commit()
+            current_app.logger.info(f"User {current_user.username} soft-deleted run {run_id}")
+            return jsonify({'status': 'success', 'message': 'Run deleted successfully. Use restore to recover.'})
+
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        current_app.logger.error(f"Database error deleting run {run_id}: {e}")
+        return jsonify({'status': 'error', 'error': 'Database error.'}), 500
+    finally:
+        if conn: conn.close()
+
+@bp.route('/api/restore-run/<int:run_id>', methods=['POST'])
+@login_required
+def restore_run(run_id):
+    """API endpoint to restore a soft-deleted health check run (requires DeleteReports privilege)."""
+    # Check privilege
+    if not current_user.has_privilege('DeleteReports'):
+        return jsonify({'status': 'error', 'error': 'Permission denied. DeleteReports privilege required.'}), 403
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        # Verify run exists and user has access to it
+        accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
+        if not accessible_company_ids:
+            return jsonify({'status': 'error', 'error': 'No accessible companies.'}), 403
+
+        cursor.execute("""
+            SELECT company_id, deleted_at, deleted_by
+            FROM health_check_runs
+            WHERE id = %s
+        """, (run_id,))
+
+        result = cursor.fetchone()
+        if not result:
+            return jsonify({'status': 'error', 'error': 'Run not found.'}), 404
+
+        run_company_id, deleted_at, deleted_by = result
+        if run_company_id not in accessible_company_ids:
+            return jsonify({'status': 'error', 'error': 'Access denied to this run.'}), 403
+
+        # Check if run is actually deleted
+        if not deleted_at:
+            return jsonify({'status': 'error', 'error': 'Run is not deleted.'}), 400
+
+        # Restore the run by clearing deleted_at and deleted_by
+        cursor.execute("""
+            UPDATE health_check_runs
+            SET deleted_at = NULL, deleted_by = NULL
+            WHERE id = %s
+        """, (run_id,))
+
+        conn.commit()
+        current_app.logger.info(f"User {current_user.username} restored run {run_id} (previously deleted by {deleted_by})")
+        return jsonify({'status': 'success', 'message': f'Run restored successfully. Previously deleted by {deleted_by}.'})
+
+    except psycopg2.Error as e:
+        if conn: conn.rollback()
+        current_app.logger.error(f"Database error restoring run {run_id}: {e}")
+        return jsonify({'status': 'error', 'error': 'Database error.'}), 500
+    finally:
+        if conn: conn.close()
+
 @bp.route('/api/save-preference', methods=['POST'])
 @login_required
 def save_preference():
@@ -341,8 +515,303 @@ def save_preference():
     config = load_trends_config()
     db_settings = config.get('database')
     save_user_preference(db_settings, current_user.username, pref_name, pref_value)
-    
+
     return jsonify({'status': 'success', 'message': f'Preference {pref_name} saved.'})
+
+# ============================================================================
+# Filter Persistence API Routes
+# ============================================================================
+
+@bp.route('/api/filters/save', methods=['POST'])
+@login_required
+def save_filter():
+    """Save or update a user filter preset.
+
+    Request JSON:
+        {
+            "screen": "dashboard",
+            "filter_name": "Kafka Production Issues",
+            "filter_values": {"target": "kafka-prod", "status": "critical", ...},
+            "set_selected": true
+        }
+    """
+    data = request.get_json()
+
+    screen = data.get('screen')
+    filter_name = data.get('filter_name')
+    filter_values = data.get('filter_values')
+    set_selected = data.get('set_selected', True)
+
+    if not screen or not filter_name or not filter_values:
+        return jsonify({
+            'status': 'error',
+            'message': 'Missing required fields: screen, filter_name, filter_values'
+        }), 400
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        # Call stored procedure to save filter
+        cursor.execute("""
+            SELECT save_user_filter(%s, %s, %s, %s::jsonb, %s);
+        """, (screen, current_user.username, filter_name, json.dumps(filter_values), set_selected))
+
+        filter_id = cursor.fetchone()[0]
+        conn.commit()
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Filter saved successfully',
+            'filter_id': filter_id
+        })
+
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error saving filter: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'status': 'error', 'message': 'Database error saving filter'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@bp.route('/api/filters/list')
+@login_required
+def list_filters():
+    """Get all saved filters for current user and screen.
+
+    Query params:
+        screen: Screen identifier (dashboard, trend_analysis, etc.)
+    """
+    screen = request.args.get('screen', 'dashboard')
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM get_user_filters(%s, %s);
+        """, (screen, current_user.username))
+
+        filters = []
+        for row in cursor.fetchall():
+            filters.append({
+                'filter_id': row[0],
+                'filter_name': row[1],
+                'filter_values': row[2],
+                'filter_selected': row[3],
+                'created_at': row[4].isoformat() if row[4] else None,
+                'updated_at': row[5].isoformat() if row[5] else None
+            })
+
+        return jsonify({'status': 'success', 'filters': filters})
+
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error fetching filters: {e}")
+        return jsonify({'status': 'error', 'message': 'Database error fetching filters'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@bp.route('/api/filters/selected')
+@login_required
+def get_selected_filter():
+    """Get the currently selected filter for current user and screen.
+
+    Query params:
+        screen: Screen identifier (dashboard, trend_analysis, etc.)
+    """
+    screen = request.args.get('screen', 'dashboard')
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM get_selected_filter(%s, %s);
+        """, (screen, current_user.username))
+
+        row = cursor.fetchone()
+
+        if row:
+            return jsonify({
+                'status': 'success',
+                'filter': {
+                    'filter_id': row[0],
+                    'filter_name': row[1],
+                    'filter_values': row[2]
+                }
+            })
+        else:
+            return jsonify({'status': 'success', 'filter': None})
+
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error fetching selected filter: {e}")
+        return jsonify({'status': 'error', 'message': 'Database error fetching selected filter'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@bp.route('/api/filters/set-selected', methods=['POST'])
+@login_required
+def set_selected_filter():
+    """Set a filter as the currently selected one.
+
+    Request JSON:
+        {
+            "screen": "dashboard",
+            "filter_id": 5
+        }
+    """
+    data = request.get_json()
+
+    screen = data.get('screen')
+    filter_id = data.get('filter_id')
+
+    if not screen or not filter_id:
+        return jsonify({
+            'status': 'error',
+            'message': 'Missing required fields: screen, filter_id'
+        }), 400
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT set_selected_filter(%s, %s, %s);
+        """, (screen, current_user.username, filter_id))
+
+        conn.commit()
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Filter set as selected'
+        })
+
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error setting selected filter: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'status': 'error', 'message': 'Database error setting selected filter'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@bp.route('/api/filters/delete', methods=['DELETE'])
+@login_required
+def delete_filter():
+    """Delete a user filter.
+
+    Request JSON:
+        {
+            "filter_id": 5
+        }
+    """
+    data = request.get_json()
+    filter_id = data.get('filter_id')
+
+    if not filter_id:
+        return jsonify({
+            'status': 'error',
+            'message': 'Missing required field: filter_id'
+        }), 400
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT delete_user_filter(%s, %s);
+        """, (filter_id, current_user.username))
+
+        deleted = cursor.fetchone()[0]
+        conn.commit()
+
+        if deleted:
+            return jsonify({
+                'status': 'success',
+                'message': 'Filter deleted successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Filter not found or access denied'
+            }), 404
+
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error deleting filter: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'status': 'error', 'message': 'Database error deleting filter'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@bp.route('/api/filters/clear-selected', methods=['POST'])
+@login_required
+def clear_selected_filter():
+    """Clear the selected filter (reset to no filter selected).
+
+    Request JSON:
+        {
+            "screen": "dashboard"
+        }
+    """
+    data = request.get_json()
+    screen = data.get('screen', 'dashboard')
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    conn = None
+
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT clear_selected_filter(%s, %s);
+        """, (screen, current_user.username))
+
+        conn.commit()
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Selected filter cleared'
+        })
+
+    except psycopg2.Error as e:
+        current_app.logger.error(f"Database error clearing selected filter: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'status': 'error', 'message': 'Database error clearing selected filter'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+# ============================================================================
+# End Filter Persistence API Routes
+# ============================================================================
 
 @bp.route('/api/user-ai-profiles')
 @login_required
@@ -469,6 +938,266 @@ def generate_ai_report():
         if conn: conn.close()
 
     return send_file(io.BytesIO(ai_response.encode('utf-8')), mimetype='text/plain', as_attachment=True, download_name=f"ai_report_run_{run_id}.adoc")
+
+@bp.route('/api/estimate-bulk-report-tokens', methods=['POST'])
+@login_required
+def estimate_bulk_report_tokens():
+    """API endpoint to estimate token usage for a bulk AI report.
+
+    This helps users understand the size of the request before generating,
+    allowing them to avoid hitting rate limits.
+
+    Request JSON:
+        {
+            "run_ids": [123, 124, 125],
+            "profile_id": 1  (optional - uses default if not provided)
+        }
+
+    Returns:
+        JSON with token estimates and warnings
+    """
+    data = request.get_json()
+    run_ids = data.get('run_ids', [])
+    profile_id = data.get('profile_id')
+
+    if not run_ids or not isinstance(run_ids, list):
+        return jsonify({"error": "Missing or invalid run_ids (must be a list)."}), 400
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
+
+    # Fetch all selected runs
+    runs_data = fetch_runs_by_ids(db_settings, run_ids, accessible_company_ids)
+
+    if not runs_data:
+        return jsonify({"error": "No runs found or permission denied."}), 404
+
+    # Fetch max_output_tokens and provider info from profile if profile_id provided
+    # Default comes from metric table (database-configurable)
+    from .metrics import get_metric_int, MetricKeys
+    max_output_tokens = get_metric_int(MetricKeys.DEFAULT_MAX_OUTPUT_TOKENS, default=2000)
+    provider_info = {
+        'name': 'AI Provider',
+        'context_window': None,
+        'rpm': None,
+        'tpm': None,
+        'rpd': None,
+        'tier': 'unknown'
+    }
+    conn = None
+
+    if profile_id:
+        try:
+            conn = psycopg2.connect(**db_settings)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT up.max_output_tokens,
+                       p.provider_name,
+                       p.provider_type,
+                       p.context_window,
+                       p.requests_per_minute,
+                       p.tokens_per_minute,
+                       p.requests_per_day,
+                       p.tier_name
+                FROM user_ai_profiles up
+                JOIN ai_providers p ON up.provider_id = p.id
+                WHERE up.id = %s AND up.user_id = %s;
+            """, (profile_id, current_user.id))
+            result = cursor.fetchone()
+            if result:
+                max_output_tokens = result[0]
+                provider_info = {
+                    'name': result[1],
+                    'type': result[2],
+                    'context_window': result[3],
+                    'rpm': result[4],
+                    'tpm': result[5],
+                    'rpd': result[6],
+                    'tier': result[7] or 'unknown'
+                }
+        except psycopg2.Error as e:
+            current_app.logger.error(f"Error fetching profile settings: {e}")
+            # Continue with default
+        finally:
+            if conn:
+                conn.close()
+
+    # Generate the prompt (without sending to AI)
+    from .prompt_generator import generate_bulk_analysis_prompt, estimate_tokens
+    prompt = generate_bulk_analysis_prompt(runs_data)
+
+    if prompt.startswith("Error:"):
+        return jsonify({"error": prompt}), 500
+
+    # Estimate tokens
+    estimated_input_tokens = estimate_tokens(prompt)
+    estimated_output_tokens = max_output_tokens
+
+    # Calculate totals
+    total_estimated_tokens = estimated_input_tokens + estimated_output_tokens
+
+    # Determine warnings based on provider-specific limits (from database)
+    # Fetch configurable thresholds from metric table
+    token_warning_threshold = get_metric_int(MetricKeys.BULK_ANALYSIS_TOKEN_WARNING, default=100000)
+    recommended_batch_size = get_metric_int(MetricKeys.BULK_ANALYSIS_BATCH_SIZE, default=5)
+
+    warnings = []
+
+    if provider_info.get('context_window') and total_estimated_tokens > provider_info['context_window']:
+        warnings.append({
+            "level": "critical",
+            "message": f"Token count exceeds {provider_info['name']} context window ({provider_info['context_window']:,} tokens)"
+        })
+    elif provider_info.get('tpm') and total_estimated_tokens > provider_info['tpm']:
+        warnings.append({
+            "level": "critical",
+            "message": f"Token count exceeds {provider_info['name']} {provider_info['tier']} limit ({provider_info['tpm']:,} tokens/minute)"
+        })
+    elif total_estimated_tokens > token_warning_threshold:
+        warnings.append({
+            "level": "warning",
+            "message": f"Large token count ({total_estimated_tokens:,} tokens) - may take longer to process and cost more"
+        })
+
+    if len(run_ids) > recommended_batch_size:
+        warnings.append({
+            "level": "info",
+            "message": f"Analyzing {len(run_ids)} runs at once - consider breaking into batches of {recommended_batch_size} or fewer"
+        })
+
+    return jsonify({
+        "status": "success",
+        "run_count": len(runs_data),
+        "estimated_input_tokens": estimated_input_tokens,
+        "estimated_output_tokens": estimated_output_tokens,
+        "total_estimated_tokens": total_estimated_tokens,
+        "warnings": warnings,
+        "provider_info": {
+            "provider_name": provider_info['name'],
+            "provider_type": provider_info.get('type'),
+            "context_window": provider_info.get('context_window'),
+            "rpm": provider_info.get('rpm'),
+            "tpm": provider_info.get('tpm'),
+            "rpd": provider_info.get('rpd'),
+            "tier": provider_info.get('tier')
+        }
+    })
+
+@bp.route('/api/generate-bulk-ai-report', methods=['POST'])
+@login_required
+def generate_bulk_ai_report():
+    """API endpoint to generate an AI report for multiple selected runs.
+
+    This endpoint analyzes multiple health check runs together, providing
+    cross-run analysis, pattern detection, and prioritized recommendations.
+
+    Request JSON:
+        {
+            "run_ids": [123, 124, 125],
+            "profile_id": 1,
+            "report_name": "Weekly PostgreSQL Analysis",
+            "report_description": "Analysis of 3 production runs",
+            "analysis_style": "default"  // optional: default, technical, executive, troubleshooting
+        }
+
+    Returns:
+        JSON with report_id and download URL, or error message
+    """
+    if not current_user.has_privilege('GenerateReports'):
+        abort(403)
+
+    data = request.get_json()
+    run_ids = data.get('run_ids', [])
+    profile_id = data.get('profile_id')
+    report_name = data.get('report_name', 'Bulk Health Check Analysis')
+    report_description = data.get('report_description', '')
+    analysis_style = data.get('analysis_style', 'default')
+
+    # Validation
+    if not run_ids or not isinstance(run_ids, list):
+        return jsonify({"error": "Missing or invalid run_ids (must be a list)."}), 400
+
+    if not profile_id:
+        return jsonify({"error": "Missing required parameter: profile_id."}), 400
+
+    config = load_trends_config()
+    db_settings = config.get('database')
+    accessible_company_ids = [c['id'] for c in current_user.accessible_companies]
+
+    # Fetch all selected runs
+    runs_data = fetch_runs_by_ids(db_settings, run_ids, accessible_company_ids)
+
+    if not runs_data:
+        return jsonify({"error": "No runs found or permission denied."}), 404
+
+    if len(runs_data) != len(run_ids):
+        return jsonify({"error": f"Only {len(runs_data)} of {len(run_ids)} runs found. Check permissions."}), 404
+
+    # Generate bulk analysis prompt
+    from .prompt_generator import generate_bulk_analysis_prompt
+    prompt = generate_bulk_analysis_prompt(runs_data, analysis_style=analysis_style)
+
+    if prompt.startswith("Error:"):
+        return jsonify({"error": prompt}), 500
+
+    # Get AI response
+    from .ai_connector import get_ai_recommendation
+    ai_response = get_ai_recommendation(prompt, profile_id)
+
+    if ai_response.startswith("Error:"):
+        return jsonify({"error": ai_response}), 500
+
+    # Save the bulk report to database
+    # Note: We'll store the first run_id as the primary run, and include all run_ids in description
+    conn = None
+    report_id = None
+
+    try:
+        conn = psycopg2.connect(**db_settings)
+        cursor = conn.cursor()
+
+        # Store with the first run_id, but include all run_ids in description
+        full_description = f"{report_description}\n\nRuns analyzed: {', '.join(map(str, run_ids))}"
+
+        cursor.execute("""
+            INSERT INTO generated_ai_reports (
+                run_id, rule_set_id, ai_profile_id, generated_by_user_id,
+                report_name, report_description, template_id, report_content
+            ) VALUES (
+                %s, NULL, %s, %s, %s, %s,
+                (SELECT id FROM prompt_templates WHERE template_name = 'Dashboard Bulk Analysis' LIMIT 1),
+                pgp_sym_encrypt(%s, get_encryption_key())
+            )
+            RETURNING id;
+        """, (
+            run_ids[0],  # Primary run (first in list)
+            profile_id,
+            current_user.id,
+            report_name,
+            full_description,
+            ai_response
+        ))
+
+        report_id = cursor.fetchone()[0]
+        conn.commit()
+
+        return jsonify({
+            "status": "success",
+            "message": f"Bulk analysis report generated for {len(run_ids)} runs.",
+            "report_id": report_id,
+            "download_url": f"/api/download-report/generated/{report_id}",
+            "runs_analyzed": len(run_ids)
+        })
+
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        current_app.logger.error(f"DB error saving bulk report: {e}")
+        return jsonify({"error": "Database error saving report."}), 500
+    finally:
+        if conn:
+            conn.close()
 
 # --- FINAL CORRECTED ROUTE ---
 @bp.route('/generate-slides')

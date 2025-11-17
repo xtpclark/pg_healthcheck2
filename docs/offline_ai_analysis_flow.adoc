@@ -1,0 +1,991 @@
+= Offline AI Analysis Workflow: Addendum to Architectural Flow
+:toc: left
+:toclevels: 3
+:sectlinks:
+:icons: font
+
+[NOTE]
+====
+This document is an addendum to link:architecture_flow.adoc[Architecture Flow Documentation]. It describes the standalone offline AI analysis workflow that allows re-analysis of previously collected health check data using different AI personas and prompt templates.
+====
+
+== Overview
+
+The **Offline AI Analysis Processor** (`utils/offline_ai_processor.py`) provides a command-line interface to re-run the AI analysis portion of a health check using pre-existing findings files. This enables:
+
+* Testing different prompt templates without re-running database checks
+* Using different AI models/providers for the same dataset
+* Generating multiple perspective reports (executive, security, developer, operations)
+* Debugging the AI analysis process without database connectivity
+* Cost optimization by reusing collected data
+
+== Architecture Diagram
+
+[plantuml, offline-ai-flow, svg]
+----
+@startuml
+participant "User" as User
+participant "offline_ai_processor.py\n**main()**" as Main
+participant "config.yaml" as Config
+participant "structured_health_check_findings.json" as Findings
+participant "Prompt Template\n**{persona}.j2**" as Template
+participant "discover_plugins()" as Discovery
+participant "plugins/postgres\n**PostgresPlugin**" as Plugin
+participant "plugins/postgres\n**rules/*.json**" as Rules
+participant "utils\n**dynamic_prompt_generator**" as PromptGen
+participant "utils\n**run_recommendation**" as AI
+participant "ai_recommendations.adoc" as Output
+
+== Phase 1: Initialization & Data Loading ==
+
+User -> Main: python offline_ai_processor.py\n--config config/postgres.yaml\n--findings structured_health_check_findings.json\n--template executive_summary_template.j2\n--output executive_report.adoc
+
+activate Main
+
+Main -> Config: load_settings()
+activate Config
+Config --> Main: settings dict
+deactivate Config
+
+note right of Main
+  **Settings include:**
+  - db_type: postgres
+  - ai_provider: xai
+  - ai_model: grok-2-1212
+  - ai_endpoint: https://api.x.ai/v1/chat/completions
+  - ai_api_key: [secret]
+  - prompt_template: (optional, can be overridden)
+end note
+
+Main -> Findings: load JSON file
+activate Findings
+Findings --> Main: all_structured_findings dict
+deactivate Findings
+
+note right of Main
+  **Structured findings contain:**
+  - check_replication_lag: {...}
+  - check_bloat: {...}
+  - check_vacuum_stats: {...}
+  - check_index_usage: {...}
+  - security_audit: {...}
+  - [all other check results]
+end note
+
+Main -> Main: apply_template_override()
+note right of Main
+  If --template provided,
+  update settings['prompt_template']
+  to use custom persona
+end note
+
+== Phase 2: Plugin Discovery & Rules Loading ==
+
+Main -> Discovery: discover_plugins()
+activate Discovery
+
+Discovery -> Plugin: import & instantiate
+activate Plugin
+Plugin --> Discovery: PostgresPlugin instance
+deactivate Plugin
+
+Discovery --> Main: available_plugins dict
+deactivate Discovery
+
+Main -> Main: select active_plugin\nbased on db_type
+
+Main -> Plugin: get_rules_config()
+activate Plugin
+Plugin -> Rules: load all *.json files
+activate Rules
+Rules --> Plugin: analysis_rules dict
+deactivate Rules
+Plugin --> Main: analysis_rules
+deactivate Plugin
+
+note right of Main
+  **Rules contain expressions:**
+  - critical thresholds
+  - high/medium/low severities
+  - reasoning templates
+  - recommendations
+end note
+
+== Phase 3: Metadata Extraction ==
+
+Main -> Plugin: get_db_version_from_findings(findings)
+activate Plugin
+Plugin -> Findings: extract version from metadata
+Plugin --> Main: db_version (e.g., "16.10")
+deactivate Plugin
+
+Main -> Plugin: get_db_name_from_findings(findings)
+activate Plugin
+Plugin -> Findings: extract database name
+Plugin --> Main: db_name (e.g., "postgres")
+deactivate Plugin
+
+Main -> Main: create db_metadata dict
+note right of Main
+  **Metadata dict:**
+  - version: "16.10"
+  - db_name: "postgres"
+  - environment: "unknown"
+    (no connection available)
+  - environment_details: {}
+end note
+
+== Phase 4: Dynamic Prompt Generation ==
+
+Main -> PromptGen: generate_dynamic_prompt(\n  findings,\n  settings,\n  analysis_rules,\n  db_metadata,\n  active_plugin)
+
+activate PromptGen
+
+PromptGen -> Rules: evaluate expressions\nagainst findings data
+activate Rules
+
+loop For each rule file
+  Rules -> Rules: check data_conditions
+
+  alt Conditions match
+    Rules -> Rules: eval(expression) with findings
+
+    alt Expression evaluates to True
+      Rules --> PromptGen: TRIGGERED\n+ reasoning\n+ recommendations\n+ severity score
+    else Expression is False
+      Rules --> PromptGen: PASS (not triggered)
+    end
+  else Conditions don't match
+    Rules --> PromptGen: SKIP (not applicable)
+  end
+end
+
+deactivate Rules
+
+PromptGen -> Template: load Jinja2 template\n(from plugin's templates/prompts/)
+activate Template
+Template --> PromptGen: template content
+deactivate Template
+
+note right of PromptGen
+  **Available templates:**
+  - default_prompt.j2
+    (general technical analysis)
+  - executive_summary_template.j2
+    (business impact focus)
+  - security_audit_template.j2
+    (security posture)
+  - developer_focused_template.j2
+    (schema optimization)
+  - operations_focused_template.j2
+    (performance tuning)
+end note
+
+PromptGen -> PromptGen: render template with:\n- postgres_version\n- database_name\n- critical_issues list\n- high_priority_issues list\n- findings_json (full data)
+
+PromptGen --> Main: dynamic_analysis dict\n{prompt: "...", triggered_rules: [...]}
+deactivate PromptGen
+
+== Phase 5: AI Provider Interaction ==
+
+Main -> AI: run_recommendation(settings, full_prompt)
+activate AI
+
+AI -> AI: extract provider & model\nfrom settings
+
+alt AI Provider: xAI (Grok)
+  AI -> "xAI API\nhttps://api.x.ai": POST /v1/chat/completions\n+ model: grok-2-1212\n+ prompt
+  activate "xAI API\nhttps://api.x.ai"
+  "xAI API\nhttps://api.x.ai" --> AI: JSON response\n{choices: [{message: {content: "..."}}]}
+  deactivate "xAI API\nhttps://api.x.ai"
+
+else AI Provider: OpenAI
+  AI -> "OpenAI API": POST /v1/chat/completions
+  activate "OpenAI API"
+  "OpenAI API" --> AI: JSON response
+  deactivate "OpenAI API"
+
+else AI Provider: Anthropic
+  AI -> "Anthropic API": POST /v1/messages
+  activate "Anthropic API"
+  "Anthropic API" --> AI: JSON response
+  deactivate "Anthropic API"
+end
+
+AI -> AI: parse response content\nformat as AsciiDoc
+
+AI --> Main: (ai_adoc, response_metadata)
+deactivate AI
+
+== Phase 6: Output Generation ==
+
+Main -> Output: write ai_adoc content
+activate Output
+Output --> Main: file written
+deactivate Output
+
+Main --> User: ✅ AI analysis complete.\nReport saved to: {output_path}
+
+deactivate Main
+
+@enduml
+----
+
+== Component Details
+
+=== 1. offline_ai_processor.py
+
+**Purpose:** Command-line entry point for offline AI analysis
+
+**Key Functions:**
+
+* `main()` - Orchestrates the entire offline workflow
+* `discover_plugins()` - Loads available technology plugins
+
+**Command-Line Arguments:**
+
+[source,bash]
+----
+python utils/offline_ai_processor.py \
+  --config config/postgres.yaml \
+  --findings adoc_out/MyCompany/structured_health_check_findings.json \
+  --template executive_summary_template.j2 \
+  --output reports/executive_report.adoc
+----
+
+[cols="1,3", options="header"]
+|===
+| Argument | Description
+
+| `--config`
+| Path to configuration file (required) +
+Contains AI provider settings, model selection, API keys
+
+| `--findings`
+| Path to structured findings JSON (required) +
+Generated by main health check run
+
+| `--template`
+| Optional Jinja2 template name (overrides config) +
+Allows persona switching without editing config
+
+| `--output`
+| Output file path (default: ai_recommendations.adoc) +
+Where the AI-generated report will be saved
+|===
+
+=== 2. Structured Findings JSON Format
+
+**File:** `structured_health_check_findings.json`
+
+**Structure:**
+[source,json]
+----
+{
+  "check_replication_lag": {
+    "status": "success",
+    "timestamp": "2025-11-12T18:45:23Z",
+    "data": {
+      "max_lag_bytes": 1024000,
+      "max_lag_seconds": 2.5,
+      "replicas": [
+        {
+          "application_name": "replica_01",
+          "client_addr": "192.168.1.11",
+          "state": "streaming",
+          "sync_state": "async",
+          "replay_lag": "0 bytes",
+          "write_lag": "1 MB"
+        }
+      ]
+    }
+  },
+  "check_bloat": {
+    "status": "success",
+    "data": {
+      "total_bloat_mb": 1250.5,
+      "bloated_tables": [
+        {
+          "schema": "public",
+          "table": "large_transactions",
+          "bloat_mb": 450.2,
+          "bloat_ratio": 0.35
+        }
+      ]
+    }
+  }
+}
+----
+
+**Key Characteristics:**
+
+* Top-level keys are check module names (without `plugins.postgres.checks.` prefix)
+* Each check result has `status`, `timestamp`, and `data` fields
+* The `data` dict contains flattened fields for rules engine evaluation
+* All data needed for AI analysis is preserved from the original run
+
+=== 3. Plugin Methods for Offline Analysis
+
+**get_db_version_from_findings(findings)**
+
+Extracts database version from findings dictionary:
+
+[source,python]
+----
+def get_db_version_from_findings(self, findings):
+    """Extract PostgreSQL version from findings metadata.
+
+    Looks for version in multiple locations:
+    1. db_overview.data.version
+    2. database_summary.data.server_version
+    3. Falls back to 'unknown'
+    """
+    for key in ['db_overview', 'database_summary']:
+        if key in findings:
+            data = findings[key].get('data', {})
+            if 'version' in data:
+                return data['version']
+            if 'server_version' in data:
+                return data['server_version']
+    return 'unknown'
+----
+
+**get_db_name_from_findings(findings)**
+
+Extracts database name from findings:
+
+[source,python]
+----
+def get_db_name_from_findings(self, findings):
+    """Extract database name from findings metadata."""
+    for key in ['db_overview', 'database_summary']:
+        if key in findings:
+            data = findings[key].get('data', {})
+            if 'current_database' in data:
+                return data['current_database']
+            if 'database' in data:
+                return data['database']
+    return 'unknown'
+----
+
+=== 4. Prompt Template System
+
+**Location:** `plugins/{technology}/templates/prompts/`
+
+**Template Variables Available:**
+
+[cols="1,3", options="header"]
+|===
+| Variable | Description
+
+| `{{ postgres_version }}`
+| Database version (e.g., "16.10")
+
+| `{{ database_name }}`
+| Target database name
+
+| `{{ critical_issues }}`
+| List of critical severity findings +
+Each has: metric, analysis.reasoning, analysis.recommendations
+
+| `{{ high_priority_issues }}`
+| List of high-priority findings
+
+| `{{ medium_priority_issues }}`
+| List of medium-priority findings
+
+| `{{ findings_json }}`
+| Full JSON dump of all structured findings
+|===
+
+**Available Personas:**
+
+==== Executive Summary Template
+**File:** `executive_summary_template.j2`
+
+**Focus:** Business impact, risk assessment, cost implications
+
+**Audience:** C-level executives, non-technical decision makers
+
+**Output Style:**
+* High-level bullet points
+* Business risk language ("Risk of data loss", "Increased storage costs")
+* No technical details or SQL queries
+* Clear action items in plain English
+
+==== Security Audit Template
+**File:** `security_audit_template.j2`
+
+**Focus:** Security posture, compliance, vulnerability assessment
+
+**Audience:** Security officers, compliance teams, auditors
+
+**Output Style:**
+* PASS/FAIL/MANUAL REVIEW classifications
+* Focus on authentication, encryption, logging
+* CVE references where applicable
+* Detailed remediation steps
+
+==== Developer Focused Template
+**File:** `developer_focused_template.j2`
+
+**Focus:** Schema optimization, query performance, indexing strategy
+
+**Audience:** Database developers, application architects
+
+**Output Style:**
+* SQL optimization recommendations
+* Index suggestions with CREATE INDEX statements
+* Schema design improvements
+* Query rewrite examples
+
+==== Operations Focused Template
+**File:** `operations_focused_template.j2`
+
+**Focus:** Performance tuning, monitoring, maintenance
+
+**Audience:** DBAs, operations engineers, SREs
+
+**Output Style:**
+* Configuration parameter recommendations
+* Monitoring thresholds and alert rules
+* Maintenance schedules (vacuum, analyze)
+* Resource utilization analysis
+
+==== Default Prompt Template
+**File:** `default_prompt.j2`
+
+**Focus:** Comprehensive technical analysis
+
+**Audience:** Mixed technical audience
+
+**Output Style:**
+* Balanced coverage of all findings
+* Technical depth with context
+* Prioritized recommendations
+
+=== 5. Dynamic Prompt Generator Integration
+
+The offline processor reuses the same `generate_dynamic_prompt()` function as the main health check flow.
+
+**Differences in Offline Mode:**
+
+[cols="2,3,3", options="header"]
+|===
+| Aspect | Main Flow (Inline) | Offline Mode
+
+| Data Source
+| Live database queries
+| Pre-collected JSON file
+
+| Environment Detection
+| Active (Aurora, RDS, Patroni, etc.)
+| "unknown" (no connection)
+
+| Metadata Collection
+| From connector.get_db_metadata()
+| From plugin.get_db_version_from_findings()
+
+| Rules Evaluation
+| Against freshly collected data
+| Against stored findings
+
+| Timestamp
+| Current execution time
+| Original collection timestamp preserved
+
+| Cost
+| Database load + AI cost
+| AI cost only (no database queries)
+|===
+
+**Shared Components:**
+
+* ✅ Rules engine logic (identical expression evaluation)
+* ✅ Jinja2 template rendering
+* ✅ Severity classification
+* ✅ Triggered rules tracking
+* ✅ Recommendations formatting
+
+=== 6. AI Provider Integration
+
+**Supported Providers:**
+
+* **Corporate LLM Proxies** 
+** (MyCorpLLMProxy.MyCorp.Com)
+* **OpenAI (GPT) Compatible** 
+** (gpt.openai.com, xai.com, ollama, many others)
+* **Google Gemini** 
+** (generativelanguage.googleapis.com)
+
+**Configuration Example:**
+
+[source,yaml]
+----
+# config/postgres.yaml
+ai_analyze: true
+ai_provider: MyCorpLLMProxy
+ai_model: gpt-4
+ai_endpoint: https://CorpLLMProxy.Endpoint.com/v1/chat/completions
+ai_api_key: corp-1234....
+ai_user: myCorpUser
+ai_run_integrated: true
+prompt_template: executive_summary_template.j2  # Optional override
+----
+
+**Provider-Specific Handling:**
+
+The `run_recommendation()` function automatically detects the provider and formats requests appropriately:
+
+[source,python]
+.utils/run_recommendation.py
+----
+    try:
+        AI_TEMPERATURE = settings.get('ai_temperature', 0.7)
+        AI_MAX_OUTPUT_TOKENS = settings.get('ai_max_output_tokens', 2048)
+        headers = {'Content-Type': 'application/json'}
+        
+        AI_USER = settings.get('ai_user', 'anonymous')
+        AI_USER_HEADER = settings.get('ai_user_header', '')
+        SSL_CERT_PATH = settings.get('ssl_cert_path', '')
+        AI_SSL_VERIFY = settings.get('ai_ssl_verify', True)
+        
+        if AI_USER_HEADER:
+            headers[AI_USER_HEADER] = AI_USER
+
+        verify_ssl = AI_SSL_VERIFY
+        if verify_ssl and SSL_CERT_PATH:
+            verify_ssl = SSL_CERT_PATH
+            
+        if "generativelanguage.googleapis.com" in API_ENDPOINT:
+            API_URL = f"{API_ENDPOINT}{AI_MODEL}:generateContent?key={API_KEY}"
+            payload = {
+                "contents": [{"parts": [{"text": full_prompt}]}],
+                "generationConfig": {"temperature": AI_TEMPERATURE, "maxOutputTokens": AI_MAX_OUTPUT_TOKENS}
+            }
+        else:
+            API_URL = f"{API_ENDPOINT}v1/chat/completions"
+            headers['Authorization'] = f'Bearer {API_KEY}'
+            payload = {
+                "model": AI_MODEL,
+                "messages": [{"role": "user", "content": full_prompt}],
+                "temperature": AI_TEMPERATURE,
+                "max_tokens": AI_MAX_OUTPUT_TOKENS,
+                "user" : AI_USER
+            }
+
+----
+
+== Data Flow Summary
+
+=== Input Files
+
+[cols="1,2,2", options="header"]
+|===
+| File | Purpose | Source
+
+| `config/postgres.yaml`
+| AI provider configuration, model selection
+| User-edited configuration file
+
+| `structured_health_check_findings.json`
+| Complete health check data
+| Generated by `main.py` during normal run
+
+| `{persona}_template.j2`
+| AI prompt with persona instructions
+| Plugin's templates/prompts/ directory
+
+| `rules/*.json`
+| Analysis rules and thresholds
+| Plugin's rules/ directory
+|===
+
+=== Output Files
+
+[cols="1,2,2", options="header"]
+|===
+| File | Content | Format
+
+| `ai_recommendations.adoc` (or custom)
+| AI-generated analysis report
+| AsciiDoc
+
+| console output
+| Progress messages, success confirmation
+| Plain text
+|===
+
+== Use Cases & Workflows
+
+=== Use Case 1: Executive Briefing
+
+**Scenario:** Generate a business-focused report from technical findings
+
+[source,bash]
+----
+# Initial health check (full run with database)
+python main.py --config config/prod_postgres.yaml
+
+# Generate executive summary (offline, no database)
+python utils/offline_ai_processor.py \
+  --config config/prod_postgres.yaml \
+  --findings adoc_out/ProductionDB/structured_health_check_findings.json \
+  --template executive_summary_template.j2 \
+  --output reports/executive_briefing_2025-11-12.adoc
+----
+
+**Benefits:**
+* No additional database load
+* Can generate multiple reports at different times
+* Lower cost (no repeated data collection)
+
+=== Use Case 2: Security Audit
+
+**Scenario:** Extract security-specific analysis from comprehensive health check
+
+[source,bash]
+----
+# Use same findings, different persona
+python utils/offline_ai_processor.py \
+  --config config/prod_postgres.yaml \
+  --findings adoc_out/ProductionDB/structured_health_check_findings.json \
+  --template security_audit_template.j2 \
+  --output reports/security_audit_2025-11-12.adoc
+----
+
+**Benefits:**
+* Compliance-focused output
+* PASS/FAIL classifications
+* Security-specific recommendations
+
+=== Use Case 3: Multi-Model Comparison
+
+**Scenario:** Compare AI provider outputs for the same dataset
+
+[source,bash]
+----
+# Test with xAI Grok
+cp config/prod_postgres.yaml config/test_xai.yaml
+# Edit test_xai.yaml: ai_provider: xai, ai_model: grok-2-1212
+python utils/offline_ai_processor.py \
+  --config config/test_xai.yaml \
+  --findings structured_health_check_findings.json \
+  --output reports/analysis_xai_grok.adoc
+
+# Test with OpenAI GPT-4
+cp config/prod_postgres.yaml config/test_openai.yaml
+# Edit test_openai.yaml: ai_provider: openai, ai_model: gpt-4-turbo
+python utils/offline_ai_processor.py \
+  --config config/test_openai.yaml \
+  --findings structured_health_check_findings.json \
+  --output reports/analysis_openai_gpt4.adoc
+
+# Compare outputs
+diff reports/analysis_xai_grok.adoc reports/analysis_openai_gpt4.adoc
+----
+
+**Benefits:**
+* Model quality comparison
+* Cost/performance tradeoffs
+* Find best model for your use case
+
+=== Use Case 4: Template Development
+
+**Scenario:** Iteratively develop and test custom prompt templates
+
+[source,bash]
+----
+# Create custom template
+cp plugins/postgres/templates/prompts/default_prompt.j2 \
+   plugins/postgres/templates/prompts/my_custom_template.j2
+
+# Edit my_custom_template.j2 with new instructions
+
+# Test immediately without database
+python utils/offline_ai_processor.py \
+  --config config/postgres.yaml \
+  --findings test_data/sample_findings.json \
+  --template my_custom_template.j2 \
+  --output test_output.adoc
+
+# Review output, iterate on template, re-run
+----
+
+**Benefits:**
+* Rapid iteration
+* No database connectivity required
+* Lower cost during development
+
+=== Use Case 5: Historical Analysis
+
+**Scenario:** Re-analyze old health check data with newer AI models
+
+[source,bash]
+----
+# Findings from 6 months ago
+FINDINGS_OLD="archive/2025-05-12/structured_health_check_findings.json"
+
+# Re-analyze with latest model
+python utils/offline_ai_processor.py \
+  --config config/postgres.yaml \
+  --findings "$FINDINGS_OLD" \
+  --output reports/reanalysis_2025-11-12.adoc
+----
+
+**Benefits:**
+* Leverage AI improvements over time
+* Compare historical vs current recommendations
+* Track issue resolution progress
+
+== Performance Characteristics
+
+[cols="1,2,2", options="header"]
+|===
+| Metric | Main Flow (Inline) | Offline Mode
+
+| Database Queries
+| 15-30 queries (varies by plugin)
+| 0 queries (JSON file read only)
+
+| Database Load
+| Moderate (SELECT-only, read-only user)
+| None
+
+| Network I/O
+| Database connection + AI API
+| AI API only
+
+| Execution Time
+| 30-180 seconds (depending on database size)
+| 5-30 seconds (JSON parse + AI call)
+
+| Cost per Run
+| Database compute + AI tokens
+| AI tokens only
+
+| Repeatability
+| May vary if data changes
+| Consistent (same input data)
+|===
+
+== Error Handling
+
+=== File Not Found Errors
+
+[source,python]
+----
+try:
+    with open(args.config, 'r') as f:
+        settings = yaml.safe_load(f)
+    with open(args.findings, 'r') as f:
+        all_structured_findings = json.load(f)
+except Exception as e:
+    print(f"Error loading files: {e}")
+    sys.exit(1)
+----
+
+**Common Causes:**
+* Incorrect file paths
+* Missing findings file (health check never completed)
+* Permissions issues
+
+=== Plugin Not Found
+
+[source,python]
+----
+if not active_plugin:
+    raise ValueError(f"Unsupported or missing db_type: '{active_tech}'.")
+----
+
+**Common Causes:**
+* `db_type` in config doesn't match any installed plugin
+* Plugin failed to load due to missing dependencies
+
+=== Template Not Found
+
+If the specified template doesn't exist, Jinja2 will raise `TemplateNotFound` exception.
+
+**Resolution:**
+* Check template name spelling
+* Verify template exists in `plugins/{tech}/templates/prompts/`
+* Use default template if custom template is missing
+
+=== AI API Errors
+
+* **Authentication failures:** Invalid API key, SSL Setting, or ai_user
+* **Rate limiting:** Too many requests to AI provider
+* **Timeout:** AI provider slow to respond
+* **JSON parsing errors:** Unexpected API response format
+
+== Best Practices
+
+=== 1. Archive Findings Files
+
+[source,bash]
+----
+# Organize by date and environment
+mkdir -p archive/$(date +%Y-%m-%d)
+cp adoc_out/ProductionDB/structured_health_check_findings.json \
+   archive/$(date +%Y-%m-%d)/findings_production.json
+----
+
+=== 2. Use Version Control for Templates
+
+[source,bash]
+----
+# Track template evolution
+git add plugins/postgres/templates/prompts/custom_analysis.j2
+git commit -m "Add custom analysis template for compliance reporting"
+----
+
+=== 3. Script Batch Processing
+
+[source,bash]
+----
+#!/bin/bash
+# generate_all_reports.sh
+
+FINDINGS="structured_health_check_findings.json"
+DATE=$(date +%Y-%m-%d)
+
+# Generate all persona reports
+for template in executive_summary security_audit developer_focused; do
+  python utils/offline_ai_processor.py \
+    --config config/postgres.yaml \
+    --findings "$FINDINGS" \
+    --template "${template}_template.j2" \
+    --output "reports/${template}_${DATE}.adoc"
+done
+----
+
+=== 4. Compare AI Provider Costs
+
+Track token usage and costs:
+
+[source,bash]
+----
+# Use jq to extract token counts from verbose output
+python utils/offline_ai_processor.py \
+  --config config/test_xai.yaml \
+  --findings findings.json 2>&1 | \
+  grep -E "tokens|cost"
+----
+
+=== 5. Validate Generated Reports
+
+[source,bash]
+----
+# Convert to HTML to check formatting
+asciidoctor ai_recommendations.adoc
+
+# Open in browser
+xdg-open ai_recommendations.html
+----
+
+== Extension Points
+
+=== Custom Personas
+
+Create new personas by adding templates to `plugins/{tech}/templates/prompts/`:
+
+**Example: Capacity Planning Template**
+
+[source,jinja2]
+----
+You are a capacity planning specialist for PostgreSQL databases.
+
+**Analysis Context:**
+- PostgreSQL Version: {{ postgres_version }}
+- Target Database: {{ database_name }}
+
+**Goal:**
+Forecast resource needs (storage, memory, CPU) based on current growth trends.
+Focus on:
+- Table/index growth rates
+- Connection pool sizing
+- Buffer cache effectiveness
+- Transaction throughput trends
+
+**Output Format:**
+- === 6-Month Capacity Forecast
+- === 12-Month Capacity Forecast
+- === Resource Optimization Opportunities
+
+{% if findings_json %}
+{{ findings_json }}
+{% endif %}
+----
+
+=== Multi-Language Support
+
+Modify templates to generate reports in different languages:
+
+[source,jinja2]
+----
+You are a PostgreSQL analyst. Generate a comprehensive report IN GERMAN.
+
+Use German technical terms:
+- Datenbank (database)
+- Replikation (replication)
+- Leistung (performance)
+...
+----
+
+
+== Differences from Inline AI Analysis
+
+[cols="2,3,3", options="header"]
+|===
+| Feature | Inline (main.py) | Offline (offline_ai_processor.py)
+
+| **Execution Context**
+| During health check run
+| Standalone post-processing
+
+| **Database Connection**
+| Required (active)
+| Not required (no connection)
+
+| **Data Freshness**
+| Real-time (just collected)
+| Historical (pre-collected)
+
+| **Environment Detection**
+| Full (Aurora, RDS, Patroni, etc.)
+| Limited (metadata only, marked "unknown")
+
+| **Cost**
+| Database compute + AI tokens
+| AI tokens only
+
+| **Speed**
+| Slower (queries + AI)
+| Faster (file I/O + AI)
+
+| **Use Case**
+| Initial comprehensive analysis
+| Re-analysis, persona switching, testing
+
+| **Output Integration**
+| Appended to main health_check.adoc
+| Standalone report file
+
+| **Template Selection**
+| Via config: `prompt_template`
+| Via CLI: `--template` (overrides config)
+
+| **Repeatability**
+| May vary with database changes
+| Consistent (same input data)
+|===
+
+== Conclusion
+
+The offline AI analysis workflow provides a flexible, cost-effective way to extract multiple perspectives from collected health check data. By decoupling data collection from AI analysis, it enables:
+
+* **Rapid iteration** on prompt templates and personas
+* **Cost optimization** by reusing collected data
+* **Multi-model comparison** for quality assessment
+* **Historical re-analysis** with improved AI models
+* **Specialized reporting** for different audiences
