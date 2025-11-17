@@ -116,14 +116,17 @@
                             <td class="px-4 py-2.5 text-slate-700">{{ profile.tokens }}</td>
                             <td class="px-4 py-2.5">
                                 <div class="flex gap-1">
-                                    <button class="edit-btn px-2 py-1 text-xs border border-amber-300 text-amber-700 hover:bg-amber-50 transition-colors" 
-                                            data-profile-id="{{ profile.id }}" onclick="openEditModal({{ profile.id }})">
-                                        Edit
+                                    <button class="edit-btn inline-flex items-center px-2 py-1 text-xs border border-amber-500 text-amber-700 hover:bg-amber-50 transition-colors"
+                                            data-profile-id="{{ profile.id }}" onclick="openEditModal({{ profile.id }})"
+                                            title="Edit AI profile">
+                                        <i class="bi bi-pencil-square"></i>
                                     </button>
-                                    <form action="{{ url_for('profile.delete_ai_profile', profile_id=profile.id) }}" method="POST" 
+                                    <form action="{{ url_for('profile.delete_ai_profile', profile_id=profile.id) }}" method="POST"
                                           onsubmit="return confirm('Are you sure you want to delete this profile?');" class="inline">
-                                        <button type="submit" class="px-2 py-1 text-xs border border-red-300 text-red-700 hover:bg-red-50 transition-colors">
-                                            Delete
+                                        <button type="submit"
+                                                class="inline-flex items-center px-2 py-1 text-xs border border-red-500 text-red-700 hover:bg-red-50 transition-colors"
+                                                title="Delete AI profile">
+                                            <i class="bi bi-trash"></i>
                                         </button>
                                     </form>
                                 </div>
