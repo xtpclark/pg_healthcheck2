@@ -50,21 +50,26 @@
                     </td>
                     <td class="px-4 py-2.5">
                         <div class="flex gap-1">
-                            <a href="{{ url_for('admin.edit_user', user_id=item.user.id) }}" 
-                               class="px-2 py-1 text-xs border border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors">
-                                Edit
+                            <a href="{{ url_for('admin.edit_user', user_id=item.user.id) }}"
+                               class="inline-flex items-center px-2 py-1 text-xs border border-amber-500 text-amber-700 hover:bg-amber-50 transition-colors"
+                               title="Edit user">
+                                <i class="bi bi-pencil-square"></i>
                             </a>
-                            
+
                             {% if item.is_active %}
                             <form method="POST" action="{{ url_for('admin.disable_user', user_id=item.user.id) }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to disable this user?');">
-                                <button type="submit" class="px-2 py-1 text-xs border border-red-300 text-red-700 hover:bg-red-50 transition-colors">
-                                    Disable
+                                <button type="submit"
+                                        class="inline-flex items-center px-2 py-1 text-xs border border-red-500 text-red-700 hover:bg-red-50 transition-colors"
+                                        title="Disable user">
+                                    <i class="bi bi-x-circle"></i>
                                 </button>
                             </form>
                             {% else %}
                             <form method="POST" action="{{ url_for('admin.enable_user', user_id=item.user.id) }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to enable this user?');">
-                                <button type="submit" class="px-2 py-1 text-xs border border-green-300 text-green-700 hover:bg-green-50 transition-colors">
-                                    Enable
+                                <button type="submit"
+                                        class="inline-flex items-center px-2 py-1 text-xs border border-green-500 text-green-700 hover:bg-green-50 transition-colors"
+                                        title="Enable user">
+                                    <i class="bi bi-check-circle"></i>
                                 </button>
                             </form>
                             {% endif %}
