@@ -32,12 +32,16 @@
                     <td class="px-4 py-2.5 text-slate-700">{{ template.technology }}</td>
                     <td class="px-4 py-2.5">
                         <div class="flex gap-1">
-                            <button onclick="openEditModal({{ template.id }})" class="px-2 py-1 text-xs border border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors">
-                                Edit
+                            <button onclick="openEditModal({{ template.id }})"
+                                    class="inline-flex items-center px-2 py-1 text-xs border border-amber-500 text-amber-700 hover:bg-amber-50 transition-colors"
+                                    title="Edit template">
+                                <i class="bi bi-pencil-square"></i>
                             </button>
                             <form action="{{ url_for('profile.delete_prompt_template', template_id=template.id) }}" method="POST" onsubmit="return confirm('Are you sure?');" style="display:inline;">
-                                <button type="submit" class="px-2 py-1 text-xs border border-red-300 text-red-700 hover:bg-red-50 transition-colors">
-                                    Delete
+                                <button type="submit"
+                                        class="inline-flex items-center px-2 py-1 text-xs border border-red-500 text-red-700 hover:bg-red-50 transition-colors"
+                                        title="Delete template">
+                                    <i class="bi bi-trash"></i>
                                 </button>
                             </form>
                         </div>
