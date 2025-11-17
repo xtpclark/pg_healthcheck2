@@ -75,11 +75,12 @@
                             <td class="px-4 py-2.5 text-slate-700">{{ priv.module }}</td>
                             <td class="px-4 py-2.5 text-slate-700">{{ priv.description }}</td>
                             <td class="px-4 py-2.5">
-                                <button class="edit-btn px-2 py-1 text-xs border border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors"
+                                <button class="edit-btn inline-flex items-center px-2 py-1 text-xs border border-amber-500 text-amber-700 hover:bg-amber-50 transition-colors"
                                         data-name="{{ priv.name }}"
                                         data-module="{{ priv.module }}"
-                                        data-description="{{ priv.description }}">
-                                    Edit
+                                        data-description="{{ priv.description }}"
+                                        title="Edit privilege">
+                                    <i class="bi bi-pencil-square"></i>
                                 </button>
                             </td>
                         </tr>
