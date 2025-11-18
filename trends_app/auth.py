@@ -19,6 +19,16 @@ def login():
             conn = psycopg2.connect(**db_config)
             cursor = conn.cursor()
 
+            # Check maintenance mode
+            cursor.execute("SELECT fetchmetricbool(%s);", ('maintenance_mode',))
+            maintenance_result = cursor.fetchone()
+            maintenance_mode = maintenance_result[0] if maintenance_result and maintenance_result[0] is not None else False
+
+            if maintenance_mode:
+                flash('System is currently in maintenance mode. Please try again later.', 'warning')
+                db_connected, db_message = check_db_connection()
+                return render_template('login.html', db_connected=db_connected, db_message=db_message)
+
             cursor.execute("SELECT usercanlogin(%s);", (username,))
             can_login_result = cursor.fetchone()
             can_login = can_login_result[0] if can_login_result else False

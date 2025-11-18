@@ -138,10 +138,65 @@ def get_ai_recommendation(prompt, profile_id):
         return f"Error: Request to AI service timed out. Consider increasing ai_timeout in config."
     except requests.exceptions.RequestException as http_err:
         current_app.logger.error(f"HTTP error calling AI API: {http_err}")
-        error_detail = ""
+
+        # Provide user-friendly error messages for common HTTP status codes
         if hasattr(http_err, 'response') and http_err.response is not None:
-            error_detail = f" Status: {http_err.response.status_code}"
-        return f"Error: Could not connect to the AI service.{error_detail}"
+            status_code = http_err.response.status_code
+
+            if status_code == 429:
+                return (
+                    "Error: Rate limit exceeded. You've made too many requests to the AI provider.\n\n"
+                    "Solutions:\n"
+                    "- Wait a few minutes and try again\n"
+                    "- Check your API quota at the provider's dashboard\n"
+                    "- For Google Gemini: Visit https://aistudio.google.com/app/apikey to check limits\n"
+                    "- Consider upgrading your API plan for higher rate limits\n"
+                    "- Reduce the number of runs selected for bulk analysis"
+                )
+            elif status_code == 401:
+                return (
+                    "Error: Authentication failed. Your API key is invalid or expired.\n\n"
+                    "Solutions:\n"
+                    "- Verify your API key at /profile/ai-settings\n"
+                    "- Generate a new API key from your AI provider\n"
+                    "- Ensure the API key has not expired"
+                )
+            elif status_code == 403:
+                return (
+                    "Error: Access forbidden. Your API key doesn't have permission for this operation.\n\n"
+                    "Solutions:\n"
+                    "- Check if your API key has the required permissions\n"
+                    "- Verify the model you selected is available in your plan\n"
+                    "- Some models require special access - check provider documentation"
+                )
+            elif status_code == 404:
+                return (
+                    "Error: AI service endpoint not found.\n\n"
+                    "Solutions:\n"
+                    "- Verify the API endpoint URL is correct in AI provider settings\n"
+                    "- Check if the model name is correct\n"
+                    "- The model may have been deprecated or renamed"
+                )
+            elif status_code == 500:
+                return (
+                    "Error: AI provider server error (500).\n\n"
+                    "Solutions:\n"
+                    "- The AI provider is experiencing issues\n"
+                    "- Wait a few minutes and try again\n"
+                    "- Check the provider's status page for outages"
+                )
+            elif status_code == 503:
+                return (
+                    "Error: AI service temporarily unavailable (503).\n\n"
+                    "Solutions:\n"
+                    "- The service is temporarily down for maintenance\n"
+                    "- Wait a few minutes and try again\n"
+                    "- Try a different AI profile if available"
+                )
+            else:
+                return f"Error: Could not connect to the AI service. Status: {status_code}"
+        else:
+            return "Error: Could not connect to the AI service. No response received."
     except (KeyError, IndexError) as parse_err:
         current_app.logger.error(f"Failed to parse AI response: {parse_err}")
         return f"Error: Received unexpected response format from AI service."

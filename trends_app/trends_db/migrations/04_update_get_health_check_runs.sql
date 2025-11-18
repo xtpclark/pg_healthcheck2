@@ -1,54 +1,10 @@
--- =====================================================
--- Function: get_health_check_runs()
--- Purpose: Fetch health check runs with filtering and user favorites
---
--- This function abstracts the query for retrieving health check runs,
--- enabling future migration to ClickHouse via FDW by providing a
--- single switchpoint for routing queries.
---
--- Parameters:
---   p_company_ids: Array of company IDs the user has access to
---   p_user_id: User ID for determining favorite status
---   p_company_name: Optional company name filter (part of target filter)
---   p_target_host: Optional target host filter
---   p_target_port: Optional target port filter
---   p_target_db_name: Optional target database name filter
---   p_start_date: Optional start date for filtering runs
---   p_end_date: Optional end date for filtering runs
---
--- Returns: JSONB array of run objects with structure:
---   [
---     {
---       "id": <run_id>,
---       "run_timestamp": "<ISO timestamp>",
---       "company_name": "<company_name>",
---       "target_host": "<host>",
---       "target_port": <port>,
---       "target_db_name": "<db_name>",
---       "db_technology": "<postgres|kafka|cassandra|...>",
---       "critical_count": <int>,
---       "high_count": <int>,
---       "medium_count": <int>,
---       "is_favorite": <boolean>
---     },
---     ...
---   ]
---
--- Usage Examples:
---   -- Get all runs for user
---   SELECT get_health_check_runs(ARRAY[1,2,3], 5);
---
---   -- Get runs with date filter
---   SELECT get_health_check_runs(ARRAY[1], 5, NULL, NULL, NULL, NULL, '2024-01-01', '2024-12-31');
---
---   -- Get runs for specific target
---   SELECT get_health_check_runs(ARRAY[1], 5, 'Acme Corp', '192.168.1.100', 5432, 'production');
---
--- Migration Strategy:
---   Phase 1 (Current): Query PostgreSQL health_check_runs table
---   Phase 2 (Future): Add logic to route to ClickHouse FDW based on config flag
---
--- =====================================================
+-- Migration: Update get_health_check_runs() function
+-- Description: Adds company_name, db_technology, and count fields to return structure
+-- Date: 2025-01-XX
+
+BEGIN;
+
+DROP FUNCTION IF EXISTS get_health_check_runs(INT[], INT, TEXT, TEXT, INT, TEXT, DATE, DATE);
 
 CREATE OR REPLACE FUNCTION get_health_check_runs(
     p_company_ids INT[],
@@ -124,36 +80,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
--- Add function comment for documentation
+-- Update function comment
 COMMENT ON FUNCTION get_health_check_runs(INT[], INT, TEXT, TEXT, INT, TEXT, DATE, DATE) IS
-'Abstraction layer for health check runs query. Returns JSONB array of runs with filtering and user favorite status. Designed for future ClickHouse migration via FDW.';
+'Abstraction layer for health check runs query. Returns JSONB array of runs with company_name, db_technology, issue counts, filtering, and user favorite status. Designed for future ClickHouse migration via FDW.';
 
--- Example test queries:
-/*
--- Test 1: Get all runs for companies 1,2,3 and user 5
-SELECT get_health_check_runs(ARRAY[1,2,3], 5);
-
--- Test 2: Get runs with date range
-SELECT get_health_check_runs(
-    ARRAY[1],
-    5,
-    NULL, NULL, NULL, NULL,
-    '2024-01-01'::date,
-    '2024-12-31'::date
-);
-
--- Test 3: Get runs for specific target
-SELECT get_health_check_runs(
-    ARRAY[1],
-    5,
-    'Acme Corp',
-    '192.168.1.100',
-    5432,
-    'production',
-    NULL,
-    NULL
-);
-
--- Test 4: Verify JSONB structure
-SELECT jsonb_pretty(get_health_check_runs(ARRAY[1], 5));
-*/
+COMMIT;

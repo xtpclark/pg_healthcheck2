@@ -33,9 +33,10 @@
                     <td class="px-4 py-2.5 text-slate-700">{{ role.description }}</td>
                     <td class="px-4 py-2.5 text-center text-slate-700">{{ role.user_count }}</td>
                     <td class="px-4 py-2.5">
-                        <a href="{{ url_for('admin.edit_role', role_id=role.id) }}" 
-                           class="px-2 py-1 text-xs border border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors">
-                            Edit
+                        <a href="{{ url_for('admin.edit_role', role_id=role.id) }}"
+                           class="inline-flex items-center px-2 py-1 text-xs border border-amber-500 text-amber-700 hover:bg-amber-50 transition-colors"
+                           title="Edit role">
+                            <i class="bi bi-pencil-square"></i>
                         </a>
                     </td>
                 </tr>
