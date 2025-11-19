@@ -13,6 +13,16 @@ REPORT_SECTIONS = [
         ]
     },
     {
+        'title': 'Security',
+        'actions': [
+            {
+                'type': 'module',
+                'module': 'plugins.opensearch.checks.check_cve_vulnerabilities',
+                'function': 'run'
+            }
+        ]
+    },
+    {
         'title': 'Cluster Overview',
         'actions': [
             {

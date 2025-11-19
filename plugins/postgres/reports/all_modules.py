@@ -66,6 +66,7 @@ REPORT_SECTIONS = [
         'title': 'Security and Replication',
         'actions': [
             {'type': 'module', 'module': 'plugins.postgres.checks.security_and_encryption', 'function': 'run_security_and_encryption'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_cve_vulnerabilities', 'function': 'run'},
             {'type': 'module', 'module': 'plugins.postgres.checks.function_audit', 'function': 'run_function_audit'},
             {'type': 'module', 'module': 'plugins.postgres.checks.replication_health', 'function': 'run_replication_health'},
             {'type': 'module', 'module': 'plugins.postgres.checks.check_patroni_topology', 'function': 'check_patroni_topology'},
