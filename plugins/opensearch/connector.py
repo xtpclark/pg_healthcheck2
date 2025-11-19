@@ -9,11 +9,12 @@ from typing import Dict, List, Optional, Any
 from plugins.common.ssh_mixin import SSHSupportMixin
 from plugins.common.aws_handler import AWSSupportMixin, AWSConnectionManager
 from plugins.common.output_formatters import AsciiDocFormatter
+from plugins.common.cve_mixin import CVECheckMixin
 
 logger = logging.getLogger(__name__)
 
 
-class OpenSearchConnector(SSHSupportMixin, AWSSupportMixin):
+class OpenSearchConnector(SSHSupportMixin, AWSSupportMixin, CVECheckMixin):
     """
     Connector for OpenSearch clusters with multi-node SSH support.
 
@@ -71,8 +72,14 @@ class OpenSearchConnector(SSHSupportMixin, AWSSupportMixin):
         self._opensearch_client = None  # AWS OpenSearch Service client
         self._cloudwatch_client = None
 
+        # Technology name for CVE lookups
+        self.technology_name = 'opensearch'
+
         # Initialize SSH support (from mixin)
         self.initialize_ssh()
+
+        # Initialize CVE support (from mixin)
+        self.initialize_cve_support()
 
         logger.info("OpenSearch connector initialized")
 
@@ -186,7 +193,27 @@ class OpenSearchConnector(SSHSupportMixin, AWSSupportMixin):
 
             # 2. Get cluster info and version
             cluster_info = self.client.info()
-            self._version_info = cluster_info.get('version', {})
+            version_dict = cluster_info.get('version', {})
+            version_number = version_dict.get('number', 'Unknown')
+
+            # Extract major version
+            major_version = 0
+            if version_number and version_number != 'Unknown':
+                try:
+                    import re
+                    match = re.match(r'(\d+)', version_number)
+                    if match:
+                        major_version = int(match.group(1))
+                except (ValueError, AttributeError):
+                    logger.debug(f"Could not extract major version from: {version_number}")
+                    major_version = 0
+
+            # Store version info with major_version added
+            self._version_info = {
+                **version_dict,
+                'version_string': version_number,
+                'major_version': major_version
+            }
             self.cluster_name = cluster_info.get('cluster_name', 'Unknown')
 
             # 3. Discover cluster topology
