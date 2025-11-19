@@ -175,6 +175,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const tableBody = document.getElementById('report-history-table-body');
     const loadingSpinner = document.getElementById('loading-spinner');
 
+    // Technology code to display name mapping
+    const techMap = {{ tech_map|tojson }};
+
     // User privileges for action buttons
     const userPrivileges = {
         canEdit: {{ 'true' if current_user.has_privilege('EditReports') or current_user.has_privilege('EditAllTechnologyReports') else 'false' }},
@@ -236,11 +239,12 @@ document.addEventListener('DOMContentLoaded', function() {
             companyFilter.appendChild(option);
         });
 
-        // Populate technology filter
+        // Populate technology filter with display names
         Array.from(technologies).sort().forEach(tech => {
             const option = document.createElement('option');
             option.value = tech;
-            option.textContent = tech;
+            // Use display name from techMap, fallback to code if not found
+            option.textContent = techMap[tech.toLowerCase()] || tech;
             technologyFilter.appendChild(option);
         });
     }

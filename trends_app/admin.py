@@ -889,3 +889,192 @@ def delete_metric(metric_id):
     return redirect(url_for('admin.list_metrics'))
 
 
+
+
+# --- TECHNOLOGY MANAGEMENT ROUTES ---
+
+@bp.route('/technologies')
+@login_required
+def list_technologies():
+    """Admin page to list and manage database technologies."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    technologies = []
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        # Use stored procedure to fetch all technologies
+        cursor.execute("SELECT * FROM fetchtechtypes(FALSE) ORDER BY order_num, descrip")
+        technologies = [
+            {
+                'id': row[0],
+                'code': row[1],
+                'descrip': row[2],
+                'order_num': row[3],
+                'enabled': row[4],
+                'notes': row[5]
+            }
+            for row in cursor.fetchall()
+        ]
+    except psycopg2.Error as e:
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return render_template('admin/technologies.html', technologies=technologies)
+
+
+@bp.route('/technologies/create', methods=['POST'])
+@login_required
+def create_technology():
+    """Create a new technology via stored procedure."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    code = request.form.get('code', '').strip()
+    descrip = request.form.get('descrip', '').strip()
+    order_num = request.form.get('order_num', '999')
+    enabled = request.form.get('enabled') == 'true'
+    notes = request.form.get('notes', '').strip()
+
+    if not code or not descrip:
+        flash("Technology code and description are required.", "danger")
+        return redirect(url_for('admin.list_technologies'))
+
+    try:
+        order_num = int(order_num)
+    except ValueError:
+        flash("Order must be a number.", "danger")
+        return redirect(url_for('admin.list_technologies'))
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Use stored procedure to create/update technology
+        cursor.execute(
+            "SELECT settechtype(%s, %s, %s, %s, %s)",
+            (code, descrip, order_num, enabled, notes if notes else None)
+        )
+        conn.commit()
+        flash(f"Technology '{descrip}' created successfully.", "success")
+
+        # Clear the models.py cache so privilege checks use new data
+        from .models import clear_tech_map_cache
+        clear_tech_map_cache()
+
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_technologies'))
+
+
+@bp.route('/technologies/update/<int:tech_id>', methods=['POST'])
+@login_required
+def update_technology(tech_id):
+    """Update an existing technology via stored procedure."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    code = request.form.get('code', '').strip()
+    descrip = request.form.get('descrip', '').strip()
+    order_num = request.form.get('order_num', '999')
+    enabled = request.form.get('enabled') == 'true'
+    notes = request.form.get('notes', '').strip()
+
+    if not code or not descrip:
+        flash("Technology code and description are required.", "danger")
+        return redirect(url_for('admin.list_technologies'))
+
+    try:
+        order_num = int(order_num)
+    except ValueError:
+        flash("Order must be a number.", "danger")
+        return redirect(url_for('admin.list_technologies'))
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Use stored procedure (settechtype is upsert - it will update existing)
+        cursor.execute(
+            "SELECT settechtype(%s, %s, %s, %s, %s)",
+            (code, descrip, order_num, enabled, notes if notes else None)
+        )
+        conn.commit()
+        flash(f"Technology '{descrip}' updated successfully.", "success")
+
+        # Clear the models.py cache
+        from .models import clear_tech_map_cache
+        clear_tech_map_cache()
+
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_technologies'))
+
+
+@bp.route('/technologies/delete/<int:tech_id>', methods=['POST'])
+@login_required
+def delete_technology(tech_id):
+    """Delete a technology via stored procedure."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # First get the code to delete by code (stored procedure uses code, not ID)
+        cursor.execute(
+            "SELECT code FROM fetchtechtypes(FALSE) WHERE id = %s",
+            (tech_id,)
+        )
+        result = cursor.fetchone()
+
+        if result:
+            tech_code = result[0]
+            # Use stored procedure to delete
+            cursor.execute("SELECT deletetechtype(%s)", (tech_code,))
+            conn.commit()
+            flash(f"Technology '{tech_code}' deleted successfully.", "success")
+
+            # Clear the models.py cache
+            from .models import clear_tech_map_cache
+            clear_tech_map_cache()
+        else:
+            flash("Technology not found.", "danger")
+
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_technologies'))
