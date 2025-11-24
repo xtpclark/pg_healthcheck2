@@ -40,11 +40,18 @@
                        class="px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 transition">
                         AI Settings
                     </a>
-                    
+
                     {% if current_user.has_privilege('ManageUserTemplates') %}
-                    <a href="{{ url_for('profile.prompt_templates') }}" 
+                    <a href="{{ url_for('profile.prompt_templates') }}"
                        class="px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 transition">
                         Templates
+                    </a>
+                    {% endif %}
+
+                    {% if current_user.has_privilege('ManageAPIKeys') %}
+                    <a href="{{ url_for('api_keys.list_keys') }}"
+                       class="px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 transition">
+                        API Keys
                     </a>
                     {% endif %}
 
@@ -72,6 +79,8 @@
                                class="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">System Metrics</a>
                             <a href="{{ url_for('admin.list_technologies') }}"
                                class="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Technologies</a>
+                            <a href="{{ url_for('admin.list_api_key_types') }}"
+                               class="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">API Key Types</a>
                         </div>
                     </div>
                     {% endif %}

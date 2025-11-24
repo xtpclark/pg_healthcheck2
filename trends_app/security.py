@@ -20,7 +20,7 @@ SECURITY_DEFAULTS = {
     'enforce_https': False,              # HTTPS enforcement (disable for dev)
     'max_request_size_mb': 16,           # Maximum request payload size
     'max_json_depth': 10,                # Maximum JSON nesting depth
-    'max_json_keys': 10000,              # Maximum total keys in JSON
+    'max_json_keys': 50000,              # Maximum total keys in JSON (increased for large databases)
     'rate_limit_enabled': False,         # Rate limiting (requires redis)
     'rate_limit_per_minute': 100,        # Requests per minute per API key
     'rate_limit_per_hour': 1000,         # Requests per hour per API key

@@ -36,7 +36,7 @@ def load_user(db_config, user_id):
             user_id, username, is_admin, password_change_required = user_data
             
             cursor.execute("SELECT c.id, c.company_name FROM user_company_access uca JOIN companies c ON uca.company_id = c.id WHERE uca.user_id = %s;", (user_id,))
-            accessible_companies = [{"id": row[0], "name": row[1]} for row in cursor.fetchall()]
+            accessible_companies = [{"id": row[0], "company_name": row[1]} for row in cursor.fetchall()]
 
             # This query now correctly joins usrgrp, grppriv, and priv to get all inherited privileges
             # and combines them with any directly assigned privileges.

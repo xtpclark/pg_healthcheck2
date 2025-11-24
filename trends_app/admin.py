@@ -1078,3 +1078,277 @@ def delete_technology(tech_id):
             conn.close()
 
     return redirect(url_for('admin.list_technologies'))
+
+
+# --- API KEY TYPE MANAGEMENT ROUTES ---
+
+@bp.route('/api-key-types')
+@login_required
+def list_api_key_types():
+    """Admin page to list and manage API key types."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    key_types = []
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        # Use stored procedure to fetch all key types
+        cursor.execute("SELECT * FROM fetch_api_key_types(FALSE) ORDER BY key_type_order, key_type_name")
+        key_types = [
+            {
+                'id': row[0],
+                'code': row[1],
+                'name': row[2],
+                'description': row[3],
+                'requires_company': row[4],
+                'allows_trial_limit': row[5],
+                'default_expiry_days': row[6],
+                'order_num': row[7],
+                'enabled': row[8],
+                'notes': row[9],
+                'default_max_submissions': row[10],
+                'rate_limit_period': row[11],
+                'rate_limit_count': row[12]
+            }
+            for row in cursor.fetchall()
+        ]
+    except psycopg2.Error as e:
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return render_template('admin/api_key_types.html', key_types=key_types)
+
+
+@bp.route('/api-key-types/create', methods=['POST'])
+@login_required
+def create_api_key_type():
+    """Create a new API key type via stored procedure."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    code = request.form.get('code', '').strip()
+    name = request.form.get('name', '').strip()
+    description = request.form.get('description', '').strip()
+    requires_company = request.form.get('requires_company') == 'true'
+    allows_trial_limit = request.form.get('allows_trial_limit') == 'true'
+    default_expiry_days = request.form.get('default_expiry_days', '').strip()
+    order_num = request.form.get('order_num', '999')
+    enabled = request.form.get('enabled') == 'true'
+    notes = request.form.get('notes', '').strip()
+    default_max_submissions = request.form.get('default_max_submissions', '').strip()
+    rate_limit_period = request.form.get('rate_limit_period', '').strip() or None
+    rate_limit_count = request.form.get('rate_limit_count', '').strip()
+
+    if not code or not name:
+        flash("Key type code and name are required.", "danger")
+        return redirect(url_for('admin.list_api_key_types'))
+
+    try:
+        order_num = int(order_num)
+    except ValueError:
+        flash("Order must be a number.", "danger")
+        return redirect(url_for('admin.list_api_key_types'))
+
+    # Convert default_expiry_days to integer or None
+    if default_expiry_days:
+        try:
+            default_expiry_days = int(default_expiry_days)
+        except ValueError:
+            flash("Default expiry days must be a number.", "danger")
+            return redirect(url_for('admin.list_api_key_types'))
+    else:
+        default_expiry_days = None
+
+    # Convert default_max_submissions to integer or None
+    if default_max_submissions:
+        try:
+            default_max_submissions = int(default_max_submissions)
+        except ValueError:
+            flash("Default max submissions must be a number.", "danger")
+            return redirect(url_for('admin.list_api_key_types'))
+    else:
+        default_max_submissions = None
+
+    # Convert rate_limit_count to integer or None
+    if rate_limit_count:
+        try:
+            rate_limit_count = int(rate_limit_count)
+        except ValueError:
+            flash("Rate limit count must be a number.", "danger")
+            return redirect(url_for('admin.list_api_key_types'))
+    else:
+        rate_limit_count = None
+
+    # Validate rate limit consistency
+    if (rate_limit_period and not rate_limit_count) or (not rate_limit_period and rate_limit_count):
+        flash("Rate limit period and count must both be set or both be empty.", "danger")
+        return redirect(url_for('admin.list_api_key_types'))
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Use stored procedure to create/update key type
+        cursor.execute(
+            "SELECT set_api_key_type(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (code, name, description, requires_company, allows_trial_limit,
+             default_expiry_days, order_num, enabled, notes if notes else None,
+             default_max_submissions, rate_limit_period, rate_limit_count)
+        )
+        conn.commit()
+        flash(f"API key type '{name}' created successfully.", "success")
+
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_api_key_types'))
+
+
+@bp.route('/api-key-types/update/<int:key_type_id>', methods=['POST'])
+@login_required
+def update_api_key_type(key_type_id):
+    """Update an existing API key type via stored procedure."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    code = request.form.get('code', '').strip()
+    name = request.form.get('name', '').strip()
+    description = request.form.get('description', '').strip()
+    requires_company = request.form.get('requires_company') == 'true'
+    allows_trial_limit = request.form.get('allows_trial_limit') == 'true'
+    default_expiry_days = request.form.get('default_expiry_days', '').strip()
+    order_num = request.form.get('order_num', '999')
+    enabled = request.form.get('enabled') == 'true'
+    notes = request.form.get('notes', '').strip()
+    default_max_submissions = request.form.get('default_max_submissions', '').strip()
+    rate_limit_period = request.form.get('rate_limit_period', '').strip() or None
+    rate_limit_count = request.form.get('rate_limit_count', '').strip()
+
+    if not code or not name:
+        flash("Key type code and name are required.", "danger")
+        return redirect(url_for('admin.list_api_key_types'))
+
+    try:
+        order_num = int(order_num)
+    except ValueError:
+        flash("Order must be a number.", "danger")
+        return redirect(url_for('admin.list_api_key_types'))
+
+    # Convert default_expiry_days to integer or None
+    if default_expiry_days:
+        try:
+            default_expiry_days = int(default_expiry_days)
+        except ValueError:
+            flash("Default expiry days must be a number.", "danger")
+            return redirect(url_for('admin.list_api_key_types'))
+    else:
+        default_expiry_days = None
+
+    # Convert default_max_submissions to integer or None
+    if default_max_submissions:
+        try:
+            default_max_submissions = int(default_max_submissions)
+        except ValueError:
+            flash("Default max submissions must be a number.", "danger")
+            return redirect(url_for('admin.list_api_key_types'))
+    else:
+        default_max_submissions = None
+
+    # Convert rate_limit_count to integer or None
+    if rate_limit_count:
+        try:
+            rate_limit_count = int(rate_limit_count)
+        except ValueError:
+            flash("Rate limit count must be a number.", "danger")
+            return redirect(url_for('admin.list_api_key_types'))
+    else:
+        rate_limit_count = None
+
+    # Validate rate limit consistency
+    if (rate_limit_period and not rate_limit_count) or (not rate_limit_period and rate_limit_count):
+        flash("Rate limit period and count must both be set or both be empty.", "danger")
+        return redirect(url_for('admin.list_api_key_types'))
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Use stored procedure (set_api_key_type is upsert - it will update existing)
+        cursor.execute(
+            "SELECT set_api_key_type(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (code, name, description, requires_company, allows_trial_limit,
+             default_expiry_days, order_num, enabled, notes if notes else None,
+             default_max_submissions, rate_limit_period, rate_limit_count)
+        )
+        conn.commit()
+        flash(f"API key type '{name}' updated successfully.", "success")
+
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        flash(f"Database error: {e}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_api_key_types'))
+
+
+@bp.route('/api-key-types/delete/<int:key_type_id>', methods=['POST'])
+@login_required
+def delete_api_key_type(key_type_id):
+    """Delete an API key type via stored procedure."""
+    if not current_user.has_privilege('AdministerUsers'):
+        abort(403)
+
+    config = load_trends_config()
+    db_config = config.get('database')
+    conn = None
+    try:
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # First get the code to delete by code (stored procedure uses code, not ID)
+        cursor.execute(
+            "SELECT key_type_code FROM fetch_api_key_types(FALSE) WHERE key_type_id = %s",
+            (key_type_id,)
+        )
+        result = cursor.fetchone()
+
+        if result:
+            key_type_code = result[0]
+            # Use stored procedure to delete
+            cursor.execute("SELECT delete_api_key_type(%s)", (key_type_code,))
+            conn.commit()
+            flash(f"API key type '{key_type_code}' deleted successfully.", "success")
+        else:
+            flash("API key type not found.", "danger")
+
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        # Extract the error message (may contain usage info)
+        error_msg = str(e)
+        flash(f"Database error: {error_msg}", "danger")
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('admin.list_api_key_types'))
