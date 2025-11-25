@@ -14,11 +14,12 @@ def create_app():
     login_manager.init_app(app)
 
     # Register blueprints
-    from . import main, auth, admin, profile # Import the new profile blueprint
+    from . import main, auth, admin, profile, api_keys
     app.register_blueprint(main.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(admin.bp)
-    app.register_blueprint(profile.bp) # Register the new blueprint
+    app.register_blueprint(profile.bp)
+    app.register_blueprint(api_keys.bp)
 
     @login_manager.user_loader
     def load_user(user_id):

@@ -56,50 +56,97 @@ def require_api_key(f):
                 "message": "Provide API key in X-API-Key header"
             }), 401
 
-        # Validate API key against database
+        # Validate API key against database using stored procedure
         config = load_trends_config()
         db_settings = config.get('database')
 
         conn = None
         try:
             conn = psycopg2.connect(**db_settings)
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-            # Check if API key exists and is active
-            cursor.execute("""
-                SELECT ak.id, ak.key_name, ak.company_id, c.company_name
-                FROM api_keys ak
-                JOIN companies c ON ak.company_id = c.id
-                WHERE ak.key_hash = crypt(%s, key_hash)
-                  AND ak.is_active = true
-                  AND (ak.expires_at IS NULL OR ak.expires_at > NOW());
-            """, (api_key,))
+            # Use validate_api_key() stored procedure for comprehensive validation
+            # This checks: expiration, trial exhaustion, AND rate limiting
+            cursor.execute("SELECT * FROM validate_api_key(%s)", (api_key,))
+            validation = cursor.fetchone()
 
-            result = cursor.fetchone()
+            if not validation or not validation['is_valid']:
+                # Determine failure reason for logging
+                if validation:
+                    if validation.get('is_rate_limited'):
+                        reason = "rate_limited"
+                    elif validation.get('is_expired'):
+                        reason = "expired"
+                    elif validation.get('is_trial_exhausted'):
+                        reason = "trial_exhausted"
+                    else:
+                        reason = "invalid_or_expired"
+                else:
+                    reason = "invalid_or_expired"
 
-            if not result:
                 # Log failed authentication attempt
                 log_failed_authentication(
                     api_key[:8] if len(api_key) >= 8 else api_key,
-                    reason="invalid_or_expired"
+                    reason=reason
                 )
-                return jsonify({
-                    "error": "Invalid API key",
-                    "message": "API key is invalid, inactive, or expired"
-                }), 401
 
-            # Store API key info in request context for use in endpoint
-            request.api_key_id = result[0]
-            request.api_key_name = result[1]
-            request.api_company_id = result[2]
-            request.api_company_name = result[3]
+                # Return appropriate error response
+                if validation and validation.get('is_rate_limited'):
+                    # Rate limit exceeded - get retry info
+                    cursor.execute("SELECT * FROM check_api_key_rate_limit(%s)", (validation['key_id'],))
+                    rate_limit_info = cursor.fetchone()
 
-            # Update last_used timestamp
+                    retry_after_seconds = int(rate_limit_info['retry_after'].total_seconds()) if rate_limit_info['retry_after'] else 3600
+
+                    return jsonify({
+                        "error": validation.get('error_message', 'Rate limit exceeded'),
+                        "rate_limit": {
+                            "period": rate_limit_info['rate_limit_period'],
+                            "limit": rate_limit_info['rate_limit_count'],
+                            "current_usage": rate_limit_info['current_usage'],
+                            "period_end": rate_limit_info['period_end'].isoformat() if rate_limit_info['period_end'] else None,
+                            "retry_after_seconds": retry_after_seconds
+                        },
+                        "message": "You have exceeded your API key's rate limit. Please wait until the next period."
+                    }), 429, {'Retry-After': str(retry_after_seconds)}
+
+                elif validation and validation.get('is_trial_exhausted'):
+                    # Trial exhausted
+                    return jsonify({
+                        "error": validation.get('error_message', 'Trial key exhausted'),
+                        "submissions_remaining": validation.get('submissions_remaining', 0),
+                        "message": "Your trial key has reached its submission limit. Please contact sales for a full license."
+                    }), 403
+
+                else:
+                    # Invalid or expired
+                    return jsonify({
+                        "error": "Invalid API key",
+                        "message": validation.get('error_message', 'API key is invalid, inactive, or expired')
+                    }), 401
+
+            # Validation successful - store API key info in request context
+            request.api_key_id = validation['key_id']
+            request.api_company_id = validation['company_id']
+
+            # Get additional info (key_name, company_name)
+            cursor.execute("""
+                SELECT ak.key_name, c.company_name
+                FROM api_keys ak
+                JOIN companies c ON ak.company_id = c.id
+                WHERE ak.id = %s
+            """, (validation['key_id'],))
+            key_info = cursor.fetchone()
+
+            request.api_key_name = key_info['key_name']
+            request.api_company_name = key_info['company_name']
+
+            # Update last_used timestamp and usage count
             cursor.execute("""
                 UPDATE api_keys
                 SET last_used_at = NOW(), usage_count = usage_count + 1
                 WHERE id = %s;
-            """, (result[0],))
+            """, (validation['key_id'],))
             conn.commit()
 
         except psycopg2.Error as e:
@@ -1952,6 +1999,12 @@ def submit_health_check():
         f"for {target_info['db_type']}:{target_info['host']}:{target_info['port']}"
     )
 
+    # Get submitter's IP address (handle proxies)
+    submitted_from_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if submitted_from_ip and ',' in submitted_from_ip:
+        # X-Forwarded-For can contain multiple IPs, take the first one
+        submitted_from_ip = submitted_from_ip.split(',')[0].strip()
+
     # Submit via configured backend
     try:
         result = backend.submit(
@@ -1959,7 +2012,9 @@ def submit_health_check():
             findings_json=json.dumps(data['findings']),
             structured_findings=data['findings'],
             adoc_content=data['report_adoc'],
-            analysis_results=data.get('analysis_results')
+            analysis_results=data.get('analysis_results'),
+            api_key_id=request.api_key_id,
+            submitted_from_ip=submitted_from_ip
         )
 
         # Add API key info to response
