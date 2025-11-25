@@ -23,7 +23,7 @@ REPORT_SECTIONS = [
         'title': 'System Overview',
         'actions': [
             {'type': 'module', 'module': 'plugins.postgres.checks.postgres_overview', 'function': 'run_postgres_overview'},
-#            {'type': 'module', 'module': 'plugins.postgres.checks.check_pgbouncer_detection', 'function': 'check_pgbouncer_detection'},
+            {'type': 'module', 'module': 'plugins.postgres.checks.check_pgbouncer_detection', 'function': 'check_pgbouncer_detection'},
             {'type': 'module', 'module': 'plugins.postgres.checks.table_object_counts', 'function': 'run_table_object_counts'},
             {'type': 'module', 'module': 'plugins.postgres.checks.database_object_inventory', 'function': 'run_database_object_inventory_query'},
             {'type': 'module', 'module': 'plugins.postgres.checks.extensions_update_check', 'function': 'run_extensions_update_check'},
@@ -81,9 +81,6 @@ REPORT_SECTIONS = [
     {
         'title': 'Connection Management',
         'actions': [
-            # pgbouncer detection moved higher under system overview.
-          #  {'type': 'module', 'module': 'plugins.postgres.checks.check_pgbouncer_detection', 'function': 'check_pgbouncer_detection'},
-            # Note: check_pgbouncer_health moved to final section to count all fallback events
             {'type': 'module', 'module': 'plugins.postgres.checks.check_connection_stability', 'function': 'check_connection_stability'},
             {'type': 'module', 'module': 'plugins.postgres.checks.connection_metrics', 'function': 'run_connection_metrics'},
             {'type': 'module', 'module': 'plugins.postgres.checks.superuser_reserved', 'function': 'run_superuser_reserved'},
@@ -106,7 +103,7 @@ REPORT_SECTIONS = [
 #            {'type': 'module', 'module': 'plugins.postgres.checks.top_queries_by_execution_time', 'function': 'run_top_queries_by_execution_time'},
 #            {'type': 'module', 'module': 'plugins.postgres.checks.top_queries_by_mean_time', 'function': 'run_top_queries_by_mean_time'},
 #            {'type': 'module', 'module': 'plugins.postgres.checks.top_write_queries', 'function': 'run_top_write_queries'},
-#           {'type': 'module', 'module': 'plugins.postgres.checks.hot_queries', 'function': 'run_hot_queries'},
+#            {'type': 'module', 'module': 'plugins.postgres.checks.hot_queries', 'function': 'run_hot_queries'},
             {'type': 'module', 'module': 'plugins.postgres.checks.long_running_queries', 'function': 'run_long_running_queries'},
             {'type': 'module', 'module': 'plugins.postgres.checks.current_lock_waits', 'function': 'run_current_lock_waits'},
             {'type': 'module', 'module': 'plugins.postgres.checks.temp_files_analysis', 'function': 'run_temp_files_analysis'},
@@ -145,7 +142,7 @@ REPORT_SECTIONS = [
     },
 
     # --- Section 10: PgBouncer Health Summary (MUST BE LAST) ---
-    # This section MUST run last to count all fallback events from previous checks
+    # This section MUST run last to count all fallback events from previous pgbouncer checks
     {
         'title': 'PgBouncer Health Summary',
         'actions': [
