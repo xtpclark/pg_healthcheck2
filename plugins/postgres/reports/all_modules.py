@@ -23,7 +23,7 @@ REPORT_SECTIONS = [
         'title': 'System Overview',
         'actions': [
             {'type': 'module', 'module': 'plugins.postgres.checks.postgres_overview', 'function': 'run_postgres_overview'},
-            {'type': 'module', 'module': 'plugins.postgres.checks.check_pgbouncer_detection', 'function': 'check_pgbouncer_detection'},
+#            {'type': 'module', 'module': 'plugins.postgres.checks.check_pgbouncer_detection', 'function': 'check_pgbouncer_detection'},
             {'type': 'module', 'module': 'plugins.postgres.checks.table_object_counts', 'function': 'run_table_object_counts'},
             {'type': 'module', 'module': 'plugins.postgres.checks.database_object_inventory', 'function': 'run_database_object_inventory_query'},
             {'type': 'module', 'module': 'plugins.postgres.checks.extensions_update_check', 'function': 'run_extensions_update_check'},
