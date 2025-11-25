@@ -5,6 +5,10 @@ This module provides consistent filtering of system and user-excluded keyspaces
 across all Cassandra health check modules.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # Standard system keyspaces in Cassandra
 # These are managed internally by Cassandra and should typically be excluded from health checks
 DEFAULT_SYSTEM_KEYSPACES = {
@@ -56,6 +60,9 @@ class KeyspaceFilter:
         """
         self.settings = settings or {}
 
+        # Check for common config key mistakes and warn
+        self._check_config_keys()
+
         # Determine if system keyspaces should be excluded
         self.exclude_system = self.settings.get('exclude_system_keyspaces', True)
 
@@ -64,19 +71,105 @@ class KeyspaceFilter:
 
         if self.exclude_system:
             self.excluded_keyspaces.update(DEFAULT_SYSTEM_KEYSPACES)
+            logger.debug(f"Excluding system keyspaces: {DEFAULT_SYSTEM_KEYSPACES}")
 
         # Handle special case: system_auth may be needed for specific checks
         if self.settings.get('include_system_auth', False):
             self.excluded_keyspaces.discard('system_auth')
+            logger.debug("Including system_auth keyspace (include_system_auth=True)")
 
-        # Add custom exclusions from config
-        custom_exclusions = self.settings.get('custom_excluded_keyspaces', [])
+        # Add custom exclusions from config (with type validation)
+        custom_exclusions = self._get_custom_exclusions()
         if custom_exclusions:
             self.excluded_keyspaces.update(custom_exclusions)
+            logger.debug(f"Adding custom excluded keyspaces: {custom_exclusions}")
 
         # Add programmatic exclusions
         if additional_exclusions:
-            self.excluded_keyspaces.update(additional_exclusions)
+            validated_exclusions = self._validate_exclusion_list(additional_exclusions, "additional_exclusions")
+            self.excluded_keyspaces.update(validated_exclusions)
+            logger.debug(f"Adding programmatic exclusions: {validated_exclusions}")
+
+        logger.debug(f"Total excluded keyspaces: {self.excluded_keyspaces}")
+
+    def _check_config_keys(self):
+        """Check for common config key mistakes and log warnings."""
+        # Common misspellings or variations users might try
+        key_warnings = {
+            'excluded_keyspaces': 'custom_excluded_keyspaces',
+            'exclude_keyspaces': 'custom_excluded_keyspaces',
+            'keyspace_exclusions': 'custom_excluded_keyspaces',
+            'excluded_system_keyspaces': 'exclude_system_keyspaces',
+            'filter_system_keyspaces': 'exclude_system_keyspaces',
+            'system_keyspace_filter': 'exclude_system_keyspaces',
+        }
+
+        for wrong_key, correct_key in key_warnings.items():
+            if wrong_key in self.settings:
+                logger.warning(
+                    f"Config key '{wrong_key}' is not recognized. "
+                    f"Did you mean '{correct_key}'? "
+                    f"The value will be ignored."
+                )
+
+    def _get_custom_exclusions(self):
+        """
+        Get custom exclusions from config with proper type validation.
+
+        Returns:
+            set: Set of keyspace names to exclude
+
+        Raises:
+            Logs warning if config value is invalid type
+        """
+        custom_exclusions = self.settings.get('custom_excluded_keyspaces', [])
+
+        if not custom_exclusions:
+            return set()
+
+        return self._validate_exclusion_list(custom_exclusions, "custom_excluded_keyspaces")
+
+    def _validate_exclusion_list(self, exclusions, config_key):
+        """
+        Validate and normalize an exclusion list.
+
+        Args:
+            exclusions: Value to validate (should be list or set)
+            config_key: Name of the config key (for error messages)
+
+        Returns:
+            set: Validated set of keyspace names
+        """
+        # Handle string input (common user mistake)
+        if isinstance(exclusions, str):
+            logger.warning(
+                f"Config '{config_key}' should be a list, not a string. "
+                f"Got: '{exclusions}'. Converting to single-item list. "
+                f"Correct format:\n"
+                f"  {config_key}:\n"
+                f"    - \"{exclusions}\""
+            )
+            return {exclusions}
+
+        # Handle list or set
+        if isinstance(exclusions, (list, set, tuple)):
+            result = set()
+            for item in exclusions:
+                if isinstance(item, str):
+                    result.add(item)
+                else:
+                    logger.warning(
+                        f"Invalid item in '{config_key}': {item} (type: {type(item).__name__}). "
+                        f"Expected string. Skipping."
+                    )
+            return result
+
+        # Handle other invalid types
+        logger.warning(
+            f"Config '{config_key}' has invalid type: {type(exclusions).__name__}. "
+            f"Expected list of strings. Ignoring value."
+        )
+        return set()
 
     def filter_keyspaces(self, keyspaces, keyspace_field='keyspace_name'):
         """
@@ -103,12 +196,26 @@ class KeyspaceFilter:
             'my_app'
         """
         if not keyspaces:
+            logger.debug("No keyspaces provided to filter")
             return []
 
-        return [
-            ks for ks in keyspaces
-            if ks.get(keyspace_field) not in self.excluded_keyspaces
-        ]
+        # Track what gets filtered for debugging
+        filtered_out = []
+        result = []
+
+        for ks in keyspaces:
+            ks_name = ks.get(keyspace_field)
+            if ks_name in self.excluded_keyspaces:
+                filtered_out.append(ks_name)
+            else:
+                result.append(ks)
+
+        if filtered_out:
+            logger.debug(f"Filtered out {len(filtered_out)} keyspaces: {filtered_out}")
+
+        logger.debug(f"Returning {len(result)} user keyspaces out of {len(keyspaces)} total")
+
+        return result
 
     def is_system_keyspace(self, keyspace_name):
         """
