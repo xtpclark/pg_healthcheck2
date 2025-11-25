@@ -452,7 +452,7 @@ def ship_to_database(db_config, target_info, findings_json, structured_findings,
             conn.close()
 
 
-def ship_to_api(api_config, target_info, findings, adoc_content):
+def ship_to_api(api_config, target_info, findings, adoc_content, analysis_results=None):
     """Sends health check data and the AsciiDoc report to an API endpoint.
 
     Args:
@@ -463,6 +463,8 @@ def ship_to_api(api_config, target_info, findings, adoc_content):
         target_info (dict): Information about the target system.
         findings (dict): The complete structured findings dictionary.
         adoc_content (str): The full AsciiDoc report content.
+        analysis_results (dict, optional): Results from generate_dynamic_prompt()
+            containing triggered rules and issue lists. Defaults to None.
 
     Returns:
         None
@@ -481,6 +483,10 @@ def ship_to_api(api_config, target_info, findings, adoc_content):
             'findings': findings,
             'report_adoc': adoc_content
         }
+
+        # Include analysis_results if provided (contains triggered rules for trend analysis)
+        if analysis_results:
+            full_payload['analysis_results'] = analysis_results
 
         timeout = api_config.get('timeout', 30)
 
@@ -554,15 +560,21 @@ def run(structured_findings, target_info, adoc_content=None, analysis_results=No
     if destination == "postgresql":
         findings_as_json = safe_json_dumps(structured_findings)
         ship_to_database(
-            config.get('database'), 
-            target_info, 
-            findings_as_json, 
-            structured_findings, 
+            config.get('database'),
+            target_info,
+            findings_as_json,
+            structured_findings,
             adoc_content,
-            analysis_results  # NEW: Pass analysis results
+            analysis_results  # Pass analysis results for rule tracking
         )
     elif destination == "api":
-        ship_to_api(config.get('api'), target_info, structured_findings, adoc_content)
+        ship_to_api(
+            config.get('api'),
+            target_info,
+            structured_findings,
+            adoc_content,
+            analysis_results  # Pass analysis results for rule tracking
+        )
     else:
         print(f"Error: Unknown trend storage destination '{destination}'.")
         

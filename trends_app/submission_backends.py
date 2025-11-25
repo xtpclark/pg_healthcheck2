@@ -31,7 +31,7 @@ class SubmissionBackend(ABC):
 
     @abstractmethod
     def submit(self, target_info, findings_json, structured_findings,
-               adoc_content, analysis_results):
+               adoc_content, analysis_results, api_key_id=None, submitted_from_ip=None):
         """
         Submit health check data for processing.
 
@@ -41,6 +41,8 @@ class SubmissionBackend(ABC):
             structured_findings (dict): Findings as Python dict
             adoc_content (str): AsciiDoc report content
             analysis_results (dict): Triggered rules and analysis
+            api_key_id (int, optional): ID of the API key used for submission
+            submitted_from_ip (str, optional): IP address of the submitter
 
         Returns:
             dict: Status response with keys:
@@ -93,19 +95,21 @@ class DirectBackend(SubmissionBackend):
         self.db_config = db_config
 
     def submit(self, target_info, findings_json, structured_findings,
-               adoc_content, analysis_results):
+               adoc_content, analysis_results, api_key_id=None, submitted_from_ip=None):
         """Submit directly to database (synchronous, blocking)."""
-        from output_handlers.trend_shipper import ship_to_database
+        from .database_inserter import insert_health_check
 
         try:
-            ship_to_database(
+            run_id = insert_health_check(
                 self.db_config, target_info, findings_json,
-                structured_findings, adoc_content, analysis_results
+                structured_findings, adoc_content, analysis_results,
+                api_key_id, submitted_from_ip
             )
 
             return {
                 "status": "completed",
                 "message": "Health check stored successfully",
+                "run_id": run_id,
                 "backend": "direct"
             }
         except Exception as e:
@@ -181,7 +185,7 @@ class PooledBackend(SubmissionBackend):
         return self._pool
 
     def submit(self, target_info, findings_json, structured_findings,
-               adoc_content, analysis_results):
+               adoc_content, analysis_results, api_key_id=None, submitted_from_ip=None):
         """Submit using pooled connection."""
         pool = self._get_pool()
         conn = None
@@ -192,7 +196,8 @@ class PooledBackend(SubmissionBackend):
             # Use connection-aware version of ship_to_database
             self._ship_with_connection(
                 conn, target_info, findings_json,
-                structured_findings, adoc_content, analysis_results
+                structured_findings, adoc_content, analysis_results,
+                api_key_id, submitted_from_ip
             )
 
             return {
@@ -208,17 +213,19 @@ class PooledBackend(SubmissionBackend):
                 pool.putconn(conn)
 
     def _ship_with_connection(self, conn, target_info, findings_json,
-                             structured_findings, adoc_content, analysis_results):
+                             structured_findings, adoc_content, analysis_results,
+                             api_key_id=None, submitted_from_ip=None):
         """
         Ship to database using provided connection from pool.
-        This is a refactored version of trend_shipper.ship_to_database()
-        that accepts a connection parameter.
+
+        Note: This reimplements the core insertion logic inline to reuse
+        the pooled connection. For full implementation details, see database_inserter.py
         """
-        from output_handlers.trend_shipper import (
-            _extract_db_version, _parse_version_components,
-            _extract_cluster_name, _extract_node_count,
-            _build_infrastructure_metadata, _calculate_health_score,
-            _store_triggered_rules
+        from .database_inserter import (
+            _encrypt_findings_pgcrypto, _extract_db_version,
+            _parse_version_components, _extract_cluster_name,
+            _extract_node_count, _extract_infrastructure_metadata,
+            _insert_triggered_rules
         )
 
         cursor = conn.cursor()
@@ -229,68 +236,83 @@ class PooledBackend(SubmissionBackend):
             cursor.execute("SELECT get_or_create_company(%s);", (company_name,))
             company_id = cursor.fetchone()[0]
 
-            # Extract target information
-            db_type = target_info.get('db_type', 'unknown')
-            host = target_info.get('host', 'unknown')
-            port = target_info.get('port', 0)
-            database = target_info.get('database', 'unknown')
-
-            # Extract execution context
-            context = structured_findings.get('execution_context', {})
-            run_by_user = context.get('run_by_user', 'unknown')
-            run_from_host = context.get('run_from_host', 'unknown')
-            tool_version = context.get('tool_version', 'unknown')
-            prompt_template_name = structured_findings.get('prompt_template_name')
-
-            ai_context = context.get('ai_execution_metrics')
-            ai_context_json = json.dumps(ai_context) if ai_context else None
-
             # Extract metadata
             db_version = _extract_db_version(structured_findings)
             db_version_major, db_version_minor = _parse_version_components(db_version)
             cluster_name = _extract_cluster_name(target_info, structured_findings)
             node_count = _extract_node_count(structured_findings)
-            infrastructure_metadata = _build_infrastructure_metadata(target_info, structured_findings)
-            health_score = _calculate_health_score(analysis_results)
+            infrastructure_metadata = _extract_infrastructure_metadata(structured_findings)
 
-            infra_json = json.dumps(infrastructure_metadata) if infrastructure_metadata else None
+            # Extract execution context
+            context = structured_findings.get('execution_context', {})
+            run_by_user = context.get('run_by_user', 'api_submission')
+            run_from_host = context.get('run_from_host', 'api')
+            tool_version = context.get('tool_version', '2.1.0')
+            prompt_template_name = structured_findings.get('prompt_template_name')
+
+            # Extract AI execution context
+            ai_context = context.get('ai_execution_metrics')
+            ai_context_json = json.dumps(ai_context) if ai_context else None
+
+            # Extract health score
+            health_score = analysis_results.get('health_score') if analysis_results else None
+
+            # Encrypt findings
+            encrypted_findings = _encrypt_findings_pgcrypto(cursor, findings_json)
 
             # Insert health check run
-            insert_query = """
-            INSERT INTO health_check_runs (
-                company_id, db_technology, target_host, target_port, target_db_name,
-                findings, prompt_template_name, run_by_user, run_from_host, tool_version,
-                report_adoc, ai_execution_context,
-                db_version, db_version_major, db_version_minor, cluster_name, node_count,
-                infrastructure_metadata, health_score
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id;
-            """
-
-            cursor.execute(insert_query, (
-                company_id, db_type, host, port, database, findings_json,
-                prompt_template_name, run_by_user, run_from_host, tool_version,
-                adoc_content, ai_context_json,
-                db_version, db_version_major, db_version_minor, cluster_name, node_count,
-                infra_json, health_score
+            cursor.execute("""
+                INSERT INTO health_check_runs (
+                    company_id, db_technology, target_host, target_port, target_db_name,
+                    findings, encryption_mode, report_adoc,
+                    run_by_user, run_from_host, tool_version, prompt_template_name,
+                    ai_execution_context, db_version, db_version_major, db_version_minor,
+                    cluster_name, node_count, infrastructure_metadata, health_score,
+                    submitted_via_api_key_id, submitted_from_ip,
+                    run_timestamp, run_date
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, NOW(), CURRENT_DATE
+                )
+                RETURNING id;
+            """, (
+                company_id,
+                target_info.get('db_type', 'unknown'),
+                target_info.get('host', 'unknown'),
+                target_info.get('port', 0),
+                target_info.get('database', 'unknown'),
+                encrypted_findings,
+                'pgcrypto',
+                adoc_content,
+                run_by_user,
+                run_from_host,
+                tool_version,
+                prompt_template_name,
+                ai_context_json,
+                db_version,
+                db_version_major,
+                db_version_minor,
+                cluster_name,
+                node_count,
+                json.dumps(infrastructure_metadata) if infrastructure_metadata else None,
+                health_score,
+                api_key_id,
+                submitted_from_ip
             ))
 
             run_id = cursor.fetchone()[0]
 
-            # Store triggered rules
-            if analysis_results:
-                rules_stored = _store_triggered_rules(cursor, run_id, analysis_results)
-                current_app.logger.info(
-                    f"Stored {rules_stored} triggered rules for run {run_id}"
-                )
+            # Insert triggered rules
+            if analysis_results and 'triggered_rules' in analysis_results:
+                _insert_triggered_rules(cursor, run_id, analysis_results['triggered_rules'])
 
             conn.commit()
-            current_app.logger.info(f"Successfully stored health check run {run_id}")
+            current_app.logger.info(f"Pooled backend: Successfully stored run {run_id}")
+            return run_id
 
         except Exception as e:
             conn.rollback()
-            current_app.logger.error(f"Failed to store health check: {e}")
+            current_app.logger.error(f"Pooled backend insertion failed: {e}")
             raise
 
     def health_check(self):
@@ -413,23 +435,25 @@ class AsyncQueueBackend(SubmissionBackend):
                 default_retry_delay=retry_backoff
             )
             def process_health_check(self, target_info, findings_json,
-                                    structured_findings, adoc_content, analysis_results):
+                                    structured_findings, adoc_content, analysis_results,
+                                    api_key_id=None, submitted_from_ip=None):
                 """Background task to process health check submission."""
-                from output_handlers.trend_shipper import ship_to_database
+                from .database_inserter import insert_health_check
                 from .utils import load_trends_config
 
                 try:
                     config = load_trends_config()
                     db_config = config.get('database')
 
-                    ship_to_database(
+                    run_id = insert_health_check(
                         db_config, target_info, findings_json,
-                        structured_findings, adoc_content, analysis_results
+                        structured_findings, adoc_content, analysis_results,
+                        api_key_id, submitted_from_ip
                     )
 
                     return {
                         "status": "completed",
-                        "run_id": "stored",
+                        "run_id": run_id,
                         "processed_at": datetime.utcnow().isoformat()
                     }
 
@@ -448,7 +472,7 @@ class AsyncQueueBackend(SubmissionBackend):
         return self._celery_app
 
     def submit(self, target_info, findings_json, structured_findings,
-               adoc_content, analysis_results):
+               adoc_content, analysis_results, api_key_id=None, submitted_from_ip=None):
         """Enqueue task for asynchronous processing."""
         celery_app = self._get_celery_app()
 
@@ -456,7 +480,7 @@ class AsyncQueueBackend(SubmissionBackend):
             task = self._process_task.apply_async(
                 args=[
                     target_info, findings_json, structured_findings,
-                    adoc_content, analysis_results
+                    adoc_content, analysis_results, api_key_id, submitted_from_ip
                 ],
                 retry=True
             )
