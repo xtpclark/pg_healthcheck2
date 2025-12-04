@@ -1,6 +1,6 @@
 from plugins.cassandra.utils.qrylib.qry_gc_grace_seconds_audit import get_gc_grace_seconds_query
 from plugins.cassandra.utils.keyspace_filter import filter_tables_by_keyspace
-from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query
+from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query, format_data_as_table
 
 
 def get_weight():
@@ -55,8 +55,13 @@ def run_gc_grace_seconds_audit(connector, settings):
                     'table': tbl,
                     'gc_grace_seconds': gc_grace
                 })
-        
-        adoc_content.append(formatted)
+
+        # Format filtered data for display (only user tables)
+        filtered_table = format_data_as_table(
+            user_tables,
+            columns=['keyspace_name', 'table_name', 'gc_grace_seconds']
+        )
+        adoc_content.append(filtered_table)
         
         if problematic_tables:
             adoc_content.append(

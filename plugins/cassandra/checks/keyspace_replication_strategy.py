@@ -1,6 +1,6 @@
 from plugins.cassandra.utils.qrylib.qry_keyspace_replication_strategy import get_keyspace_replication_strategy_query
 from plugins.cassandra.utils.keyspace_filter import filter_user_keyspaces
-from plugins.common.check_helpers import format_check_header, safe_execute_query, format_recommendations
+from plugins.common.check_helpers import format_check_header, safe_execute_query, format_recommendations, format_data_as_table
 
 
 def get_weight():
@@ -64,9 +64,15 @@ def run_keyspace_replication_strategy(connector, settings):
             else:
                 # Includes SimpleStrategy or others
                 problematic_keyspaces.append(ks)
-        
+
+        # Format filtered data for display (only user keyspaces)
+        filtered_table = format_data_as_table(
+            user_keyspaces,
+            columns=['keyspace_name', 'replication']
+        )
+
         # Report results
-        adoc_content.append(formatted)
+        adoc_content.append(filtered_table)
         
         if problematic_keyspaces:
             adoc_content.append(

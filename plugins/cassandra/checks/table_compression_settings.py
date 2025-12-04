@@ -1,7 +1,7 @@
 from plugins.cassandra.utils.qrylib.qry_table_compression_settings import get_table_compression_query
 from plugins.cassandra.utils.keyspace_filter import filter_tables_by_keyspace
 
-from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query
+from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query, format_data_as_table
 
 
 def get_weight():
@@ -55,9 +55,15 @@ def run_table_compression_settings(connector, settings):
                 tables_without_compression.append(f"{keyspace}.{table_name}")
             elif 'LZ4Compressor' not in compression.get('class', ''):
                 tables_not_lz4.append(f"{keyspace}.{table_name} ({compression.get('class')})")
-        
+
+        # Format filtered data for display (only user tables)
+        filtered_table = format_data_as_table(
+            user_tables,
+            columns=['keyspace_name', 'table_name', 'compression']
+        )
+
         # Report results
-        adoc_content.append(formatted)
+        adoc_content.append(filtered_table)
         
         issues_found = False
         if tables_without_compression:

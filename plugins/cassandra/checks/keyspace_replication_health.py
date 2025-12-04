@@ -1,6 +1,6 @@
 from plugins.cassandra.utils.qrylib.qry_keyspace_replication_health import get_keyspace_replication_health_query
 from plugins.cassandra.utils.keyspace_filter import filter_user_keyspaces
-from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query
+from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query, format_data_as_table
 
 def get_weight():
     """Returns the importance score for this module (1-10)."""
@@ -63,8 +63,13 @@ def run_keyspace_replication_health(connector, settings):
                 if has_rf and min_rf < 2:
                     low_rf_keyspaces.append((keyspace_name, min_rf))
                     issues.append(f"Keyspace '{keyspace_name}' has low replication factor {min_rf} (minimum should be 3 for production).")
-        
-        adoc_content.append(formatted)
+
+        # Format filtered data for display (only user keyspaces)
+        filtered_table = format_data_as_table(
+            user_keyspaces,
+            columns=['keyspace_name', 'replication']
+        )
+        adoc_content.append(filtered_table)
         
         if issues:
             adoc_content.append("[WARNING]\n====\nReplication health issues detected:\n")

@@ -1,7 +1,7 @@
 from plugins.cassandra.utils.qrylib.qry_row_cache import get_row_cache_query
 from plugins.cassandra.utils.keyspace_filter import filter_tables_by_keyspace
 
-from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query
+from plugins.common.check_helpers import format_check_header, format_recommendations, safe_execute_query, format_data_as_table
 
 
 def get_weight():
@@ -56,6 +56,12 @@ def run_row_cache_check(connector, settings):
                     'caching': caching
                 })
         
+        # Format filtered data for display (only user tables)
+        filtered_table = format_data_as_table(
+            user_tables,
+            columns=['keyspace_name', 'table_name', 'caching']
+        )
+
         if tables_with_row_cache:
             adoc_content.append(
                 f"[WARNING]\n====\n"
@@ -63,7 +69,7 @@ def run_row_cache_check(connector, settings):
                 "This can lead to high memory usage and is discouraged for production workloads with large partitions.\n"
                 "====\n"
             )
-            adoc_content.append(formatted)
+            adoc_content.append(filtered_table)
             
             # List affected tables
             adoc_content.append("\n==== Tables with Row Cache Enabled")
@@ -88,7 +94,7 @@ def run_row_cache_check(connector, settings):
                 f"All {len(user_tables)} user table(s) have row cache disabled.\n"
                 "====\n"
             )
-            adoc_content.append(formatted)
+            adoc_content.append(filtered_table)
             status_result = "success"
         
         structured_data["row_cache"] = {

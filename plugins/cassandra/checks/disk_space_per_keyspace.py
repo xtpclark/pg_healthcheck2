@@ -206,10 +206,8 @@ def run_disk_space_per_keyspace_check(connector, settings):
         adoc_content.append("[NOTE]\n====\n"
                           f"Disk usage distributed across {len(usage_list)} user keyspace(s). "
                           f"Total live space: {total_bytes / (1024**3):.2f} GB.\n====\n")
-    
-    adoc_content.append(formatted)
-    
-    # Summary table
+
+    # Summary table (using filtered user keyspaces only)
     adoc_content.append("\n==== Keyspace Disk Usage Summary")
     adoc_content.append("|===\n| Keyspace | Live Space (GB) | Percentage (%)")
     for u in usage_list:
